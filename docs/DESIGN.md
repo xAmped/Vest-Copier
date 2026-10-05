@@ -1,6 +1,6 @@
 # Vest Trade Copier — Design
 
-**Date:** 2026-10-01
+**Last updated:** 2026-10-05
 **Form factor:** Tampermonkey/Violentmonkey userscript, scoped to `https://next.vestmarkets.com/*`
 **Status:** implemented as `src/vest-copier.user.js` (see CHANGELOG.md for the current version)
 
@@ -20,10 +20,10 @@ Scope (as shipped):
 - **Sizing:** strict 1:1 for same-size/same-type groups by default; opt-in **cap-to-fit** scales
   each follower to its own equity and allows **different-size followers** (see §4).
 - **Flat-to-arm, or adopt.** Arm when flat, or adopt a trade the master and followers already share (§6).
-- **Never back-fill.** Only *new* master actions are mirrored; an already-open master position
-  is ignored.
-- **Arm = live.** Dry-run was removed in v0.8; arming fires real orders after a one-time
-  acknowledgment. A **Flatten All** panic button closes everything on all accounts and disarms.
+- **Never back-fill.** Only *new* master actions are mirrored. A trade that's already open is adopted at arm
+  only when master and follower already hold the same position; a flat follower is never opened into it.
+- **Arm = live.** Arming fires real orders. A versioned risk acknowledgement must be accepted first (§11). A
+  **Flatten All** panic button closes everything on all accounts and disarms.
 
 ## 2. System shape
 
@@ -183,6 +183,11 @@ Per master `positionId` we store, for each follower: its own `positionId`, `orde
 `stopLossId`, `takeProfitId` (from that follower's open response). All later reduce/modify/close
 calls use the **follower's own** ids, never the master's.
 
+### Ordering
+Every follower action on one trade runs through a per-trade queue: an exit never overtakes the entry or an add still
+in flight, and two quick edits of the same leg land in the order they were made. Entries themselves never wait.
+Follower closes and reduces are retried once on a rate limit or server error.
+
 ### Refused master orders
 The hooks pass the HTTP status through; a master order Vest refused (non-2xx) is logged and never copied.
 
@@ -195,14 +200,14 @@ pre-captured `fetch`, so they aren't re-hooked). The detector acts **only** on r
 
 1. **Load** → capture the page's user token, mint per-account tokens, build the account registry.
 2. **Configure** → pick a master + followers. Strict 1:1 requires one size/type group; **cap-to-fit**
-   (Opts) allows different-size followers. Options (fast mode, auto-flatten, cap-to-fit) persist.
-3. **Acknowledge** → a one-time agreement screen before the first arm (live orders, leverage
-   auto-sync, flat-to-arm, shared risk, sizing).
+   (Settings) allows different-size followers. Options (fast mode, auto-flatten, cap-to-fit) persist.
+3. **Acknowledge** → the risk terms are shown on first load and must be accepted (tick box + button) before arming
+   or placing a Trade-tab order (§11).
 4. **Arm** → reads every selected account's `/positions/opened` + `/opened-orders` (an unreadable
    account blocks arming; it's never assumed flat). Then:
    - Everyone flat → arm normally.
    - Master holds positions → **adopt**: each follower position with the same symbol **and** side is
-     linked to the master's (`posMap[masterPositionId].followers[f] = { positionId, qty, slId, tpId }`),
+     linked to the master's (`posMap[masterPositionId].followers[f] = { positionId, qty, legs }`),
      so reduce / close / stop moves mirror as usual (reduces scale by follower:master size). Flat
      followers stay flat and join from the next trade — nothing is back-filled.
    - Refused: resting orders anywhere; a follower in the opposite direction; a follower holding a symbol
@@ -211,36 +216,43 @@ pre-captured `fetch`, so they aren't re-hooked). The detector acts **only** on r
      matching follower leg (by kind + price) is noted at arm: changes to it won't copy to that follower.
    Follower leverage is then synced to the master's per symbol — **except** for symbols with an open
    position, which are left untouched. With cap-to-fit on, equity is refreshed for a fresh baseline.
-5. **Run** → mirror new master actions; confirm fills via `/executions`.
+5. **Run** → mirror new master actions; confirm fills via `/executions`. Arming is guarded against double starts
+   and against a selection change, disarm or Flatten All while it runs (an epoch is bumped by both).
 6. **Disarm** → manual (always available), or automatic if a selected account disappears
    (closed/blown). Disarm does **not** touch open positions — use **Flatten All** for that.
 
 ## 7. Reconciliation, slippage & diagnostics
 
-- After an open/close, confirm every follower via `/v3/executions` (with retries). A follower that
-  was accepted (200) but **never filled** — the margin-ceiling case — is flagged loudly in the
-  activity log and **untracked** so later stop-moves/closes don't target a position that isn't there.
-  (It does not auto-disarm; the other followers continue.)
+- After an entry, add or close, confirm every order via `/v3/executions` (with retries); only immediate (market /
+  IOC) orders are checked, since a resting limit has nothing to find yet. A lookup distinguishes **filled**,
+  **confirmed not filled** and **lookup failed**; a failed lookup never counts as "not filled" (nothing is dropped or
+  flattened, the trader is told the fills couldn't be confirmed).
+  - Follower missed an **entry** → flagged and dropped from that trade. Missed an **add** → its size bookkeeping is
+    rolled back and sizes are re-read. Missed a **close** → "still OPEN, close it on Vest".
+  - The **master** missed its own entry → reported, the trade is forgotten, and followers that did fill are raised
+    as **orphans** (Flatten / Keep). Auto-flatten acts only when the master is confirmed to hold nothing there.
 - The **activity log** stays lean: master action, per-follower confirmations/warnings, and one fill
   summary per trade (`Fills 9/9 · avg slip 0.20pt`).
 - The **diagnostics log** (silent, structured, downloadable JSON via the *Diag* button) records the
   full story per event: intended vs actual size, the cap-to-fit math (equities, proportional/buffered
   qty), fill prices, per-account slippage, **margin used vs cap** (`marginUsed`/`marginCap`/
   `marginUtilPct`), HTTP error codes, latency, and an `met` (expectation-met) flag. Capped at 2000
-  records in `localStorage`; for sending in when something looks off.
+  records and ~1.5 MB in `localStorage` (shared with Vest's own site); for sending in when something looks off.
 
 ## 8. Health check / version detection
 
 - On load, read a Next.js **build fingerprint** (`__NEXT_DATA__.buildId`, else a content-hashed
   bundle name, else a hash of the loaded bundle paths). Store last-known-good.
 - Unchanged → green (`build <id>`). Changed → amber **"Vest updated — click to run site check"**, and
-  **arming is refused** until the new build is reviewed.
+  **arming is refused** until the new build is reviewed. A build that can't be identified also needs one check per
+  session.
 - **Site check** (click the health bar; read-only, places no orders):
   - Probes every endpoint the copier reads — accounts, balances, account-token mint (and its
     `accountId` / `canTrade` claims), `/v3/user-state` leverage, `/positions/opened` + `/opened-orders`,
     `/executions`, `/trading-performance/series` — and verifies each response still has the fields we use.
   - Scans Vest's loaded same-origin JS for the order endpoints and payload fields we send
-    (`/v3/positions/open|reduce|close|cancel-order`, `takeProfits`, `stopLosses`, `reduceOnly`, …).
+    (`/v3/positions/open|append|reduce|close|cancel-order`, `takeProfits`, `stopLosses`, `reduceOnly`, …), matched
+    as whole terms (so `/open` isn't satisfied by `/opened`).
     Stop-loss / take-profit paths are built dynamically in Vest's code, so they're covered by the live
     guard below plus a small test trade.
   - Results are pass / warn / fail. **Accept this build** is enabled only with zero fails; it stores the
@@ -256,14 +268,15 @@ pre-captured `fetch`, so they aren't re-hooked). The detector acts **only** on r
   `/v3/exchangeInfo` (NQ: tick 0.25, 4-decimal sizes; linear, $1/pt/contract).
 - **Math** (pure, unit-tested in `test/math.test.mjs`): points → tick-rounded prices; Start/Even/End splits by
   largest remainder in whole size steps (exact totals); risk sizing; breakeven price + trigger.
-- **Order shape** — read from Vest's own client code (`JXe`/`OX`/`Ave`): market IOC; stop =
+- **Order shape** — the same shape Vest's own ticket sends: market IOC; stop =
   `{executionType, triggerPrice}` (full position); targets = `{executionType, triggerPrice, quantity}` when there
   are several (sized "fixed" legs summing to the order), no `quantity` when there's one (full position). Numbers
   are sent Vest-style (no trailing zeros). Minimum leg notional $1. Sent through the page's hooked `fetch`, so the
   copier treats it as a master order.
 - **Re-anchor after fill (default):** once filled, read the master position (fill + leg ids), move any leg off by
   ≥ 1 tick to exactly N pts from the fill (legs found by the price they were sent at). Runs after entries — never
-  delays them. The copier's leg moves and exits await any follower opens still in flight (`entry.opening`).
+  delays them. The copier's leg moves and exits wait for any follower opens still in flight (the trade's queue, §5).
+  Buy/Sell stay disabled while re-anchoring or a ladder rebuild runs, so two adjustments never overlap.
 - **Adding to a trade:** before sending, the panel reads the master's position on the symbol. Opposite direction →
   refused. Same direction → `POST /v3/positions/append` (Vest's own routing), then the ladder is rebuilt for the
   WHOLE position from the new average entry (`openPrice` once `quantity` shows the add): stop moved to avg ∓ stop
@@ -288,7 +301,7 @@ follower's position (flooring each leg alone left an uncovered sliver).
 
 ### Adds (`/append`) and sizes (copier)
 A master `/append` is copied to each tracked follower's own position, scaled by `follower qty / master qty` (same as
-a reduce). The entry's `opening` promise becomes the adds, so later leg edits and exits wait for them. Master and
+a reduce). Adds run through the trade's queue (§5), so later leg edits and exits wait for them. Master and
 follower sizes are kept current through adds and reduces; an add that doesn't fill rolls its size back (the account
 keeps its original position — it isn't untracked). An add on a position the copier doesn't track (opened before arming
 and not adopted) is logged and not copied. Fill confirmation now also reports when the **master's** own order didn't
@@ -301,17 +314,47 @@ fill, and warns if followers filled an entry the master missed.
   rounded cards, **text labels (no emoji)**. Rendered in a shadow DOM so Vest's styles can't bleed in.
 - **Layout:** accounts grouped by size/type; each row shows equity, floor, room-used %, and M / Flw
   selectors. Control row = one big **ARM / DISARM** plus a red **Flatten All**. Tabs: **Accounts**,
-  **Trade**, **P&L**, **Settings** (fast mode · auto-flatten · cap-to-fit), **Rules**. Header: reload
-  accounts (↻), collapse. A health bar (build fingerprint + live `API nnn/200` rate). A compact
-  activity log with **Diag** (JSON) / **CSV** / **Clear**. Draggable + resizable; size persists.
+  **Trade**, **P&L**, **Settings** (fast mode · auto-flatten · cap-to-fit · updates · support), **Rules**. Header:
+  reload accounts (↻), collapse. A health bar (build fingerprint + live `API nnn/200` rate), then the update bar and
+  the one-time support question when they apply. A compact activity log with **Diag** (JSON) / **CSV** / **Clear**.
+  Draggable + resizable; size persists. Keyboard focus is visible and controls have accessible names.
 
-## 10. Out of scope (noted for later)
+## 10. Updates
+
+- On every page load the panel asks GitHub's API for the newest commit on `main`, then reads that commit's script and
+  compares `@version`. Reading by commit avoids the raw file server's 5-minute cache of `main`. If the API is
+  unavailable (rate limit: 60 requests an hour per IP), it falls back to the cached `main` file.
+- The bar shows "Checking…", then **Update available** (Install / What's new / Later) or "Up to date", which fades.
+  **Install** opens the commit's `.user.js`, which Tampermonkey turns into its update page. A userscript can't replace
+  itself.
+- After Install, leaving the tab and coming back reloads Vest (not armed), or shows **Reload now** (armed, since a
+  reload disarms).
+- `@updateURL` / `@downloadURL` point at `main`, so Tampermonkey's own periodic check also updates installs. Any pushed
+  version bump reaches every user.
+- A copy whose non-ASCII characters were garbled in transit (e.g. through Windows `clip.exe`) warns in the log and
+  points at a clean install.
+
+## 11. Risk acknowledgement and support code
+
+- **Terms:** a versioned acknowledgement (`TERMS_VERSION`) shown on first load. Arming and Trade-tab orders are refused
+  until it's accepted (tick box, then Accept). Raising the version asks everyone again once. Full text: DISCLAIMER.md.
+- **Support code:** after the terms, a one-time question offers code AMPED (5% off). If the account already uses
+  another code, the question names it. **Yes** (or the Settings switch) makes the panel set AMPED in Vest's purchase
+  window each time it opens: it types the code into the discount box and presses Enter, the way a person would, and
+  Vest validates and applies it. If Vest refuses it, the previous code stays. It acts once per opening and logs every
+  switch. The discount box is recognised by its styling, never by placeholder: a different box in Vest's "Do You Have
+  a Discount Code?" form shares the placeholder, and pressing Enter there would submit that form.
+- Vest's referral-link call (`/v2/referrals/join`) is also tried, but Vest refuses it for any account that already
+  has an affiliate attribution ("Account already has affiliate attribution"), so the purchase window is the path that
+  works.
+
+## 12. Out of scope (noted for later)
 
 - 24/7 headless operation (would require reproducing Privy wallet auth; fragile, deferred).
 - A payload **manifest** check that blocks arming on endpoint/field drift (today it only flags the
   build change).
 
-## 11. Risks
+## 13. Risks
 
 - **Anti-automation**: Vest sends a device-fingerprint beacon (`mt.vestmarkets.com`) on account
   switches. In-browser we are the real browser, so low risk — but worth monitoring that rapid
