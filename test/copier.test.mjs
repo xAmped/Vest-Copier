@@ -84,6 +84,7 @@ const real = window.fetch.bind(window);
 let n = 0;
 window.fetch = async (input, init = {}) => {
   const url = typeof input === 'string' ? input : input.url;
+  if (url.startsWith('https://api.github.com/')) return J({ sha: 'abcdef0123456789abcdef0123456789abcdef01' });
   if (url.startsWith('https://raw.githubusercontent.com/')) return new Response('// ==UserScript==\\n// @version      ' + (CFG.latestVersion || '0.0.1') + '\\n');
   if (url.includes('/api/v2/referrals/rewards')) {
     if (!CFG.rewards) return real(input, init);   // not mocked: unreadable, so the support question is never offered
@@ -1310,8 +1311,8 @@ try {
   );
   ok(
     (await js(`${R} return R.querySelector('.update a.ubtn').href;`)) ===
-      'https://raw.githubusercontent.com/xAmped/Vest-Copier/main/src/vest-copier.user.js',
-    'update check: Install opens the published .user.js (Tampermonkey update page)',
+      'https://raw.githubusercontent.com/xAmped/Vest-Copier/abcdef0123456789abcdef0123456789abcdef01/src/vest-copier.user.js',
+    "update check: Install opens the newest commit's .user.js (never a stale cached copy)",
   );
   await js(`${R} R.querySelector('[data-act="update-later"]').click(); return true;`);
   ok(await js(`${R} return R.querySelector('.update').hidden;`), 'update check: Later hides it until the next version');
@@ -1325,6 +1326,37 @@ try {
     ),
     'update check: Check now shows it again after Later',
   );
+  // after Install: coming back to the tab reloads Vest (not armed); armed, it offers Reload now instead
+  const leaveAndReturn = `const set = (h) => { Object.defineProperty(document, 'hidden', { get: () => h, configurable: true });
+      document.dispatchEvent(new Event('visibilitychange')); };
+    set(true); set(false); return true;`;
+  const clickInstall = `${R} window.addEventListener('click', (e) => e.preventDefault(), { capture: true, once: true });
+    R.querySelector('.update a.ubtn').click(); return true;`;
+  await panelPage({ latestVersion: '9.9.9' }, {});
+  await until(`${R} return !!R.querySelector('.update a.ubtn');`, 4000);
+  await js(clickInstall);
+  ok(
+    /Vest reloads by itself/.test(await js(`${R} return R.querySelector('.update').innerText;`)),
+    'install: the bar explains Vest will reload',
+  );
+  await js(`window.__beforeReload = 1; return true;`);
+  await js(leaveAndReturn);
+  ok(
+    await until(`return window.__beforeReload === undefined;`, 5000),
+    'install: returning to the tab reloads Vest when not armed',
+  );
+  await panelPage({ latestVersion: '9.9.9' }, { arm: ['A08'] });
+  await until(`${R} return !!R.querySelector('.update a.ubtn');`, 4000);
+  await js(clickInstall);
+  await js(`window.__beforeReload = 1; return true;`);
+  await js(leaveAndReturn);
+  await sleep(800);
+  ok(
+    (await js(`return window.__beforeReload === 1;`)) &&
+      (await js(`${R} return !!R.querySelector('[data-act="update-reload"]');`)),
+    'install: armed, it does not reload by itself but offers Reload now',
+  );
+
   // on load, an older (or equal) published version shows "Up to date" briefly, then the bar goes away
   await panelPage({ latestVersion: '0.0.1' }, {});
   ok(

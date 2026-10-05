@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vest Copier
 // @namespace    vestcopier
-// @version      0.24.0
+// @version      0.24.1
 // @description  Copies a master Vest account's trades to your other Vest accounts, live, and adds a points-based order panel.
 // @author       xAmped
 // @license      Vest Copier License — free to use, no selling; see LICENSE
@@ -22,7 +22,7 @@
   if (window.__vestCopier) return;
   window.__vestCopier = true;
 
-  const VERSION = '0.24.0';
+  const VERSION = '0.24.1';
   const API = 'https://api-gateway.hz.vestmarkets.com';
   const _fetch = window.fetch.bind(window);
   // Console echo of the activity log, for troubleshooting: localStorage.setItem('vc-debug', '1') and reload.
@@ -2371,6 +2371,10 @@
   // page, where one click installs it — a script can't replace itself), or "Up to date", which fades after a moment.
   const REPO_URL = 'https://github.com/xAmped/Vest-Copier';
   const SCRIPT_URL = 'https://raw.githubusercontent.com/xAmped/Vest-Copier/main/src/vest-copier.user.js';
+  // GitHub's raw file server caches `main` for up to 5 minutes after a push. The API names the newest commit (cached
+  // about a minute), and a file fetched by commit id is never stale, so check (and install) from that commit.
+  const LATEST_COMMIT_API = 'https://api.github.com/repos/xAmped/Vest-Copier/commits/main';
+  const scriptAt = (sha) => `https://raw.githubusercontent.com/xAmped/Vest-Copier/${sha}/src/vest-copier.user.js`;
   const UPDATE_KEY = 'vc-update'; // remembers only which version "Later" was clicked for
   const UPDATE_NOTE_MS = 4000; // how long "Up to date" / "Couldn't check" stays up
   // Numeric compare of dotted versions: 1 if a > b, -1 if a < b, 0 if equal.
@@ -2386,7 +2390,7 @@
   // S.update = { state: 'checking' | 'available' | 'current' | 'error' | null, latest, dismissed }
   function loadUpdate() {
     const u = store.get(UPDATE_KEY, {}) || {};
-    S.update = { state: null, latest: null, dismissed: u.dismissed || null };
+    S.update = { state: null, latest: null, installUrl: null, dismissed: u.dismissed || null };
   }
   const updateAvailable = () => !!(S.update && S.update.latest && cmpVersion(S.update.latest, VERSION) > 0);
   let _updateNoteTimer = null;
@@ -2396,7 +2400,14 @@
     S.update.state = 'checking';
     renderUpdate();
     try {
-      const r = await _fetch(SCRIPT_URL, { cache: 'no-store' });
+      let url = SCRIPT_URL;
+      try {
+        const c = await _fetch(LATEST_COMMIT_API, { cache: 'no-store' });
+        const sha = c.ok ? (await c.json()).sha : null;
+        if (/^[0-9a-f]{40}$/.test(sha || '')) url = scriptAt(sha);
+      } catch {} // API unavailable or rate-limited (60 an hour per IP): fall back to the cached file
+      S.update.installUrl = url;
+      const r = await _fetch(url, { cache: 'no-store' });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const m = (await r.text()).match(/^\/\/ @version\s+(\S+)/m);
       if (!m) throw new Error('no version in the published script');
@@ -2429,20 +2440,49 @@
     else if (state === 'current') html = `<span class="utext">Up to date · v${VERSION}</span>`;
     else if (state === 'error')
       html = '<span class="utext">Couldn\'t check for updates — try Settings → Check now later.</span>';
+    else if (state === 'installing')
+      html = S.armed
+        ? `<span class="utext">After updating in Tampermonkey, reload Vest to run v${esc(latest)}. Reloading disarms the
+            copier; arm again afterwards (an open trade is adopted).</span>
+          <button class="ubtn" data-act="update-reload">Reload now</button>`
+        : '<span class="utext">Click <b>Update</b> in Tampermonkey, then come back: Vest reloads by itself.</span>';
     else if (state === 'available' && dismissed !== latest) {
       html = `<span class="utext"><b>Update available: v${esc(latest)}</b> (you have v${VERSION})${S.armed ? ' · install when flat' : ''}</span>
-      <a class="ubtn" href="${SCRIPT_URL}" target="_blank" rel="noopener" title="Opens Tampermonkey's update page; then reload Vest">Install</a>
+      <a class="ubtn" href="${esc(S.update.installUrl || SCRIPT_URL)}" target="_blank" rel="noopener" title="Opens Tampermonkey's update page; then reload Vest">Install</a>
       <a class="ubtn ghost" href="${REPO_URL}/blob/main/CHANGELOG.md" target="_blank" rel="noopener">What's new</a>
       <button class="ubtn ghost" data-act="update-later" aria-label="Hide until the next version">Later</button>`;
     }
     bar.hidden = !html;
-    bar.classList.toggle('muted', state !== 'available');
+    bar.classList.toggle('muted', state !== 'available' && state !== 'installing');
     if (bar.dataset.html === html) return;
     bar.dataset.html = html;
     bar.innerHTML = html;
     const later = bar.querySelector('[data-act="update-later"]');
     if (later) later.onclick = dismissUpdate;
+    const install = bar.querySelector('a.ubtn');
+    if (install && state === 'available') install.onclick = startInstall;
+    const reload = bar.querySelector('[data-act="update-reload"]');
+    if (reload) reload.onclick = () => location.reload();
   }
+  // Tampermonkey doesn't tell the page when it updates a script, so: after Install, reload Vest when the user comes back
+  // to this tab (Tampermonkey's page opens in another tab). Armed, it asks instead, since reloading disarms.
+  let _leftForInstall = false;
+  function startInstall() {
+    S.update.state = 'installing';
+    _leftForInstall = false;
+    renderUpdate();
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (!S.update || S.update.state !== 'installing') return;
+    if (document.hidden) {
+      _leftForInstall = true;
+      return;
+    }
+    if (!_leftForInstall) return;
+    if (S.armed)
+      renderUpdate(); // shows Reload now
+    else location.reload();
+  });
 
   // ───────────────────────── support (optional referral code) ─────────────────────────
   // Asked once, after the terms are accepted: "Support the free copier with code AMPED?" If the account already uses

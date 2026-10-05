@@ -25,7 +25,8 @@ when you trade.
 4. Open or refresh **next.vestmarkets.com**. A **Vest Copier** panel appears top-right.
 
 **Updating:** the panel checks GitHub each time Vest loads. When a new version is out, a green bar shows
-**Install**: click it, click **Update** on Tampermonkey's page, then reload Vest (do it while flat).
+**Install**: click it, click **Update** on Tampermonkey's page, then come back to the Vest tab: it reloads by
+itself (if you're armed it shows **Reload now** instead, since reloading disarms).
 **Settings → Updates** has **Check now** and a switch to turn the check off. Installed from the link,
 Tampermonkey also updates the script on its own schedule. Your settings and logs are kept.
 

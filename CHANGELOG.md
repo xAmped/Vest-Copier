@@ -2,6 +2,10 @@
 
 Plain-language notes. Newest first. Paste the latest `src/vest-copier.user.js` into Tampermonkey and refresh Vest to update.
 
+## v0.24.1
+- **Updating reloads Vest for you.** After clicking **Install** and then **Update** in Tampermonkey, come back to the Vest tab and it reloads by itself, running the new version. If you're armed, it shows **Reload now** instead, because reloading disarms the copier.
+- The update check now asks GitHub for its newest commit, so a new version shows up right after it's published instead of up to 5 minutes later.
+
 ## v0.24.0
 - If you said **Yes** to code AMPED, the copier now sets it in Vest's purchase window each time it opens, replacing any other code there, and notes it in the activity log. If Vest refuses AMPED, your previous code is put back. **Settings → Support** turns this on or off.
 
