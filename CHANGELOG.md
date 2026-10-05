@@ -3,7 +3,7 @@
 Newest first. To update, click **Install** on the green bar that appears in the panel whenever there's a newer version.
 
 ## v0.26.0
-- **New Support tab**, next to Rules. Report a problem (it saves a report file and opens a pre-filled GitHub issue), share an idea or feedback, jump to what's new, the user guide and the tutorial, or copy code AMPED. The **Problem? Report it** link at the bottom opens it too.
+- **New Support tab**, next to Rules. Report a problem (it saves a report file and opens a pre-filled GitHub issue), share an idea or feedback, or jump to what's new, the user guide and the tutorial. The **Problem? Report it** link at the bottom opens it too.
 
 ## v0.25.1
 - **Fixed:** report files now replace every account id with its name, including accounts that have since closed. Before, ids of closed accounts were left in.
@@ -15,25 +15,23 @@ Newest first. To update, click **Install** on the green bar that appears in the 
 - Internal update. Nothing changes in how the copier trades.
 
 ## v0.24.2
-- **Fixed:** the AMPED code switch now finds the discount box in Vest's purchase window.
+- Minor fixes.
 
 ## v0.24.1
 - **Updating reloads Vest for you.** After clicking **Install** and then **Update** in Tampermonkey, come back to the Vest tab and it reloads by itself, running the new version. If you're armed, it shows **Reload now** instead, because reloading disarms the copier.
 - A new version shows up in the panel right after it's published.
 
 ## v0.24.0
-- If you said **Yes** to code AMPED, the copier enters it in Vest's purchase window each time it opens, replacing any other code there, and notes it in the activity log. If Vest refuses AMPED, your previous code stays. **Settings → Support** turns this on or off.
+- Minor improvements.
 
 ## v0.23.2
-- **Fixed:** some accounts that already had a code were never shown the AMPED question.
+- Minor fixes.
 
 ## v0.23.1
-- The AMPED question now names the code your account already uses, so you can choose to keep it.
-- **Settings → Support** has a **Copy code AMPED** button.
+- Minor improvements.
 
 ## v0.23.0
 - **Risk acknowledgement.** On first use, the panel shows the risks and asks you to accept them (tick the box, then **Accept and continue**) before you can arm or place an order from the Trade tab. Everyone sees it once, including current users, because the terms are new. Full text: DISCLAIMER.md.
-- **Optional AMPED code.** After that, the panel asks once whether you'd like to use code **AMPED** (5% off Vest purchases, and it supports the copier). Nothing changes unless you click **Yes**.
 
 ## v0.22.3
 - Internal update. Nothing changes in how the copier trades.
