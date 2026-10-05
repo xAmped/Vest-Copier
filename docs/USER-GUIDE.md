@@ -44,7 +44,8 @@ their own browser.
 - **Health bar:** a colored dot + `build <id>` (green = known build; amber = Vest changed its site,
   re-verify) and a live `API nnn/200` rate indicator.
 - **Accounts:** grouped by size and type. Each row shows the account, its type chip, a green/red
-  "can trade" dot, **balance** (true equity), **floor**, **room left**, **% used**, and two
+  "can trade" dot, **balance** (true equity), **floor** (or **daily floor** on plans with a daily loss limit, when it's
+  the higher one today), **room left** to that floor, **% used**, and two
   selectors — **M** (make master) and **Flw** (add follower).
 - **Controls:** a big **ARM / DISARM** button and a red **Flatten All**.
 - **Activity log:** a clean, live feed, with **Diag** / **CSV** / **Clear** buttons.
@@ -121,12 +122,21 @@ same percentage rather than the same contracts.
 Open **Trade** (top tabs). It trades your selected **master**; if the copier is armed, followers copy it
 like any other master order.
 
-- **Size** — *Contracts*, or *Risk $* (risk ÷ stop points → contracts; NQ is $1/point per contract).
+- **Size** — *Contracts*, *Risk $* (risk ÷ stop points → contracts; NQ is $1/point per contract), or *Max*: the
+  most the account can open right now, worked out the way Vest's own ticket works out its 100% (free cash × leverage,
+  less room for the fee and the spread). When the copier is armed in strict 1:1, Max is the smallest of the master's and
+  every follower's, since they all copy the same size.
 - **Stop** — in points. **Targets** — in points; **+ Add target** for more.
 - **Scale** — how the size splits across targets: **Start** (heaviest first), **Even**, **End** (heaviest last).
 - **Breakeven** — *Off*, *After TP1*, or *At +pts*; **lock** adds a point or two of profit to cover fees.
-- It shows each target's size and dollars, your risk / reward / R, and the exact stop/target prices for both
-  Buy and Sell, then sends a market order with the stop and targets attached as native Vest legs (they work on
+- It shows each target's size and dollars, your risk (plus the fees on top) / reward / R, and the exact stop/target
+  prices for both Buy and Sell, with the **fail** price (where the account's equity reaches its floor: the drawdown
+  floor, or the daily-loss floor when that's higher) and, on an evaluation, the **pass** price (where it reaches the
+  target). Both count the opening fee and the account's current equity, like Vest's own estimates.
+- **Warnings** (amber, the order can still be sent): the size is more than the account can open (Vest won't fill it;
+  **Use max** switches to Max), or a stop-out would lose more, fees included, than the room left to the floor, so the
+  account fails before the stop fills.
+- It then sends a market order with the stop and targets attached as native Vest legs (they work on
   Vest's side even if your tab closes). By default the stop and targets are then re-placed exactly N points from
   your **fill** (Measure from → *Your fill*); choose *Price at click* to leave them where they were placed.
 - **Adding to a trade** — if the master already holds the same direction, Buy/Sell **adds** to it (Vest's own
@@ -190,8 +200,12 @@ Options are saved and persist across refreshes. Active ones show as `FAST` / `CA
 - **Portfolio value = collateral + realized + unrealized PnL** — this is the "equity" the copier
   sizes and anchors on (not free collateral, which under-reports while a trade is open).
 - Vest uses **cross margin** by default; **funded** accounts cap at **50x**, primary at 100x.
-- Prop accounts also have a **drawdown floor**; you're done if equity falls below it. Your floor
-  usually binds well before liquidation.
+- The most a new order can be (Vest's 100%, "Trading Power") is your **free** cash (less any open loss) × leverage,
+  minus a little for the trading fee (0.0025% of the order value on NQ, charged on the way in and out) and the spread.
+  Cash already holding other positions isn't free. The Trade tab's **Max** uses the same rule.
+- Prop accounts also have a **drawdown floor**, and plans with a daily loss limit a **daily floor** (reset each day at
+  20:00 ET). The account closes the moment equity, open trades included, touches either one. Your floor usually binds
+  well before liquidation. Fees count: a stop sized to lose exactly your room fails the account before it fills.
 
 This is why an oversized master trade can silently fail on a smaller account (not enough margin) —
 and exactly what **Cap-to-fit** solves by sizing each account to what it can actually hold.

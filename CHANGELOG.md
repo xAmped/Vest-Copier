@@ -2,6 +2,13 @@
 
 Newest first. To update, click **Install** on the green bar that appears in the panel whenever there's a newer version.
 
+## v0.27.0
+- **Max size in the Trade tab.** Next to Contracts and Risk $, **Max** sizes the order at the most the account can open right now, the same as Vest's own 100% (free cash × leverage, less a little for the fee and the spread). Armed in strict 1:1, it uses the smallest of your accounts, so every follower can fill the same size.
+- **Fail and pass prices.** Beside each side's stop and targets, the Trade tab shows where the account would fail (equity at its floor) and, on an evaluation, pass (equity at the target), counting the opening fee.
+- **Warnings before you send:** when the size is more than the account can open (Vest wouldn't fill it; **Use max** fixes it in one click), and when a stop-out would lose more than the room left to your floor once fees are counted, so the account would fail before the stop fills.
+- The risk line now shows the fees on top of the loss at your stop.
+- **Daily loss limit counted.** On plans with a daily loss limit, the Accounts tab measures the room left to the daily floor when that's the higher floor today, and shows it as "daily floor".
+
 ## v0.26.3
 - **Flatten All acts instantly.** It's an emergency button, so it no longer asks for confirmation: one click closes every position and cancels every order on every account, and disarms.
 - More detail in the Diag file for troubleshooting (session, markets, accounts, settings changes, and any error in the copier itself), and the CSV log now says which version wrote it.

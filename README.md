@@ -52,7 +52,7 @@ through every button.
 | Tab | What's there |
 |---|---|
 | Accounts | Your accounts grouped by size, with balance, floor and room left. Pick the master and followers here. |
-| Trade | An order ticket in points: stop, any number of targets, size by contracts or by dollars at risk, scale-outs, and automatic breakeven. Adding to an open trade rebuilds the stop and targets around the new average price. |
+| Trade | An order ticket in points: stop, any number of targets, size by contracts, by dollars at risk or at the max the account allows, scale-outs, and automatic breakeven. It shows where the account would fail or pass and warns before an order that can't fill or a stop that sits past your floor. Adding to an open trade rebuilds the stop and targets around the new average price. |
 | P&L | Profit or loss per account and in total. |
 | Settings | Fast mode, Auto-flatten, Cap-to-fit, update checks, and the AMPED code switch. |
 | Rules | What the copier will and won't do, and the risk notice. |

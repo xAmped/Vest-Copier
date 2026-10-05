@@ -138,7 +138,7 @@ dd { margin: 0; font-size: 15.5px; }
   <div class="eyebrow">Tampermonkey userscript · Vest Markets</div>
   <h1>Vest Copier</h1>
   <p class="lede">Trade one Vest account and have the same trade placed on your other accounts, live, from inside the Vest page. It also adds a Trade tab where you set your stop and targets in points.</p>
-  <div class="meta"><span class="pill">v0.26.3</span><span class="pill">next.vestmarkets.com</span><span class="pill">10-minute setup</span><a class="pill" href="https://github.com/xAmped/Vest-Copier">github.com/xAmped/Vest-Copier</a></div>
+  <div class="meta"><span class="pill">v0.27.0</span><span class="pill">next.vestmarkets.com</span><span class="pill">10-minute setup</span><a class="pill" href="https://github.com/xAmped/Vest-Copier">github.com/xAmped/Vest-Copier</a></div>
 </header>
 
 <div class="wrap">
@@ -202,7 +202,7 @@ dd { margin: 0; font-size: 15.5px; }
             <table>
               <thead><tr><th>Field</th><th>What it does</th></tr></thead>
               <tbody>
-                <tr><td>Size</td><td>Contracts, or <b>Risk $</b>: the panel sizes the order so hitting your stop loses that amount. NQ is $1 per point per contract.</td></tr>
+                <tr><td>Size</td><td>Contracts, <b>Risk $</b> (the panel sizes the order so hitting your stop loses that amount; NQ is $1 per point per contract), or <b>Max</b>: the most the account can open, the same as Vest's 100%.</td></tr>
                 <tr><td>Stop</td><td>Distance from your entry, in points.</td></tr>
                 <tr><td>Targets</td><td>One or more distances in points. <b>+ Add target</b> adds another.</td></tr>
                 <tr><td>Scale</td><td>How the size splits across targets: <b>Start</b> puts the most on TP1, <b>Even</b> splits evenly, <b>End</b> puts the most on the last target.</td></tr>
@@ -211,7 +211,7 @@ dd { margin: 0; font-size: 15.5px; }
               </tbody>
             </table>
           </div>
-          <p>Before you click, the panel shows each target's size and dollar value, your risk, reward and R, and the exact prices for both Buy and Sell. Stops and targets are placed as Vest's own stop-loss and take-profit orders, so they still work if you close the tab.</p>
+          <p>Before you click, the panel shows each target's size and dollar value, your risk (and the fees on top), reward and R, and the exact prices for both Buy and Sell, including where the account would fail or pass. It warns you when the size is more than the account can open, or when a stop-out would take the account past its floor before the stop fills. Stops and targets are placed as Vest's own stop-loss and take-profit orders, so they still work if you close the tab.</p>
         </div>
         <figure>
           <div class="shot"><img src="img/trade.png" alt="The Trade tab with a 20-point stop, three targets at 20, 40 and 60 points, and the Buy and Sell buttons." width="340"></div>

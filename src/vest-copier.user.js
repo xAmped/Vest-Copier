@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vest Copier
 // @namespace    vestcopier
-// @version      0.26.3
+// @version      0.27.0
 // @description  Copies a master Vest account's trades to your other Vest accounts, live, and adds a points-based order panel.
 // @author       xAmped
 // @license      Vest Copier License — free to use, no selling; see LICENSE
@@ -22,7 +22,7 @@
   if (window.__vestCopier) return;
   window.__vestCopier = true;
 
-  const VERSION = '0.26.3';
+  const VERSION = '0.27.0';
   const API = 'https://api-gateway.hz.vestmarkets.com';
   const _fetch = window.fetch.bind(window);
   // Console echo of the activity log, for troubleshooting: localStorage.setItem('vc-debug', '1') and reload.
@@ -397,7 +397,9 @@
   const label = (a) => a.name || 'Account ' + String((a.attempt_index ?? 0) + 1).padStart(2, '0');
 
   // True equity per account (balance + unrealized PnL) from the performance series — what Vest measures
-  // drawdown against. /v3/accounts `amount` is only FREE collateral (under-reports while a position is open).
+  // drawdown against — and the unrealized PnL in it. /v3/accounts `amount` is only FREE collateral (under-reports while a
+  // position is open), which is what Vest's trading power is built on.
+  // → { accountId: { equity, upnl } }
   async function fetchEquities() {
     try {
       const now = Date.now();
@@ -409,7 +411,7 @@
           ts = it.ts || 0;
         if (latestTs[id] == null || ts > latestTs[id]) {
           latestTs[id] = ts;
-          out[id] = num(it.equity_value);
+          out[id] = { equity: num(it.equity_value), upnl: num(it.total_unrealized_pnl) || 0 };
         }
       }
       return out;
@@ -428,10 +430,10 @@
     const rows = (active.accounts || []).map((a) => {
       const initial = num(a.initial_capital),
         floor = num(a.max_drawdown_limit);
-      const eqv = eq[a.id];
+      const eqv = eq[a.id] && eq[a.id].equity;
       const equity = eqv != null && !isNaN(eqv) ? eqv : (balById[a.id] ?? initial),
         maxDD = initial - floor;
-      return {
+      const r = {
         id: a.id,
         label: label(a),
         type: typeName(a.account_type, a.plan_product_type),
@@ -439,7 +441,8 @@
         size: initial,
         floor,
         equity,
-        room: equity - floor,
+        free: balById[a.id] ?? NaN,
+        upnl: (eq[a.id] && eq[a.id].upnl) || 0,
         usedPct: maxDD > 0 ? Math.min(1, Math.max(0, (initial - equity) / maxDD)) : 0,
         leverage: num(a.max_leverage),
         accountType: a.account_type,
@@ -448,6 +451,9 @@
         canTrade: null,
         order: a.attempt_index ?? 0,
       };
+      setLimits(r, a);
+      r.room = r.equity - floorOf(r);
+      return r;
     });
     await Promise.all(
       rows.map(async (r) => {
@@ -490,22 +496,42 @@
 
   const accLabel = (id) => (S.byId[id] && S.byId[id].label) || id.slice(0, 8);
 
+  // An account's limits from /v3/capital/accounts/active. On plans with a daily loss limit, Vest also closes the account
+  // at the daily floor (reset each day at 20:00 ET), so the floor that applies is whichever of the two is higher. The
+  // target (an evaluation's pass line) is above the starting size only while there is a goal to reach.
+  function setLimits(r, a) {
+    r.floor = num(a.max_drawdown_limit);
+    const daily = num(a.daily_loss_floor);
+    r.dailyFloor = num(a.max_daily_loss_pct) > 0 && daily > 0 ? daily : null;
+    const target = num(a.target_equity);
+    r.target = target > r.size ? target : null;
+  }
+  const floorOf = (r) => Math.max(r.floor || 0, r.dailyFloor || 0);
+
   // keep balances / room fresh
   let _balTimer = null;
   async function refreshBalances() {
     if (!userTokenOk() || !Object.keys(S.byId).length) return;
     try {
-      const [accounts, eq] = await Promise.all([api('/v3/accounts').catch(() => ({ accounts: [] })), fetchEquities()]);
+      const [accounts, eq, active] = await Promise.all([
+        api('/v3/accounts').catch(() => ({ accounts: [] })),
+        fetchEquities(),
+        api('/v3/capital/accounts/active').catch(() => null), // the daily floor moves at each daily reset
+      ]);
       const bal = Object.fromEntries((accounts.accounts || []).map((a) => [a.account_id, num(a.amount)]));
+      for (const a of (active && active.accounts) || []) if (S.byId[a.id]) setLimits(S.byId[a.id], a);
       for (const id in S.byId) {
         const r = S.byId[id];
-        const e = eq[id] != null && !isNaN(eq[id]) ? eq[id] : bal[id];
-        if (e == null) continue;
+        if (bal[id] != null && !isNaN(bal[id])) r.free = bal[id];
+        if (eq[id]) r.upnl = eq[id].upnl;
+        const e = eq[id] && !isNaN(eq[id].equity) ? eq[id].equity : bal[id];
+        if (e == null || isNaN(e)) continue;
         r.equity = e;
         const maxDD = r.size - r.floor;
-        r.room = r.equity - r.floor;
+        r.room = r.equity - floorOf(r);
         r.usedPct = maxDD > 0 ? Math.min(1, Math.max(0, (r.size - r.equity) / maxDD)) : 0;
       }
+      if (S.tradeOpen) refreshTradeState();
       render();
     } catch {}
   }
@@ -1647,8 +1673,51 @@
     return false;
   }
 
+  /**
+   * Vest's "Trading Power", the order value its own ticket allows at 100%: free cash (less any open loss) times leverage,
+   * less room for the opening fee and a 0.1% allowance for the spread.
+   */
+  const TRADING_POWER_SPREAD = 0.001;
+  const tradingPower = ({ free, upnl, leverage, takerFee }) =>
+    leverage > 0 && free > 0
+      ? (Math.max(0, free + Math.min(0, upnl || 0)) * leverage) /
+        (1 + leverage * (takerFee || 0)) /
+        (1 + TRADING_POWER_SPREAD)
+      : 0;
+  /** The largest size that power buys at `price` (Vest prices margin at the margin mark price), floored to the step. */
+  const maxQtyFor = (power, price, step) => (power > 0 && price > 0 ? floorStep(power / price, step) : 0);
+
+  /**
+   * Where a position of `qty` (the whole position after this order) fails or passes, measured from the price now.
+   * `equity` is the account's equity at that price; the opening fee comes straight out of it. Fail: equity reaches the
+   * floor (drawdown, or the daily-loss floor when higher). Pass: equity reaches the target (evaluations only).
+   */
+  function failPassPrices({ side, qty, price, equity, openFee, floor, target }) {
+    if (!(qty > 0) || !(price > 0) || !Number.isFinite(equity)) return { fail: null, pass: null };
+    const dir = side === 'long' ? 1 : -1,
+      e = equity - (openFee || 0);
+    const fail = floor > 0 && e > floor ? price - (dir * (e - floor)) / qty : null;
+    const pass = target > 0 && target > e ? price + (dir * (target - e)) / qty : null;
+    return { fail: fail > 0 ? fail : null, pass: pass > 0 ? pass : null };
+  }
+  /** What a stop-out costs from the price now: the move to the stop on the whole position, plus both fees. */
+  const stopOutLoss = ({ side, qty, price, stopPrice, openFee, takerFee }) =>
+    (side === 'long' ? 1 : -1) * qty * (price - stopPrice) + (openFee || 0) + qty * stopPrice * (takerFee || 0);
+
   if (window.__VC_TEST__)
-    window.__vcMath = { roundTick, floorStep, splitQty, planPrices, riskQty, breakevenPrice, breakevenDue };
+    window.__vcMath = {
+      roundTick,
+      floorStep,
+      splitQty,
+      planPrices,
+      riskQty,
+      breakevenPrice,
+      breakevenDue,
+      tradingPower,
+      maxQtyFor,
+      failPassPrices,
+      stopOutLoss,
+    };
 
   // ───────────────────────── live price (public market data, read-only) ─────────────────────────
   // Vest's public socket streams `<SYMBOL>@ticker` with the mark price about every 750 ms. Stops and targets are computed
@@ -1672,6 +1741,11 @@
   const priceOf = (sym) => {
     const p = S.price[sym];
     return p && Date.now() - p.at < PRICE_STALE_MS ? p.px : null;
+  };
+  // The price Vest values a new market order's margin at (its ticker's margin mark price), else the mark price.
+  const marginPriceOf = (sym) => {
+    const px = priceOf(sym);
+    return px && S.price[sym].mpx > 0 ? S.price[sym].mpx : px;
   };
   function watchPrice(sym) {
     _wsSyms.add(sym);
@@ -1756,7 +1830,7 @@
         _feedWarned = false;
         logEvent('info', 'Live price feed back.');
       }
-      onPrice((m.data && m.data.symbol) || m.channel.split('@')[0], px);
+      onPrice((m.data && m.data.symbol) || m.channel.split('@')[0], px, parseFloat(m.data.marginMarkPrice));
     };
     ws.onclose = () => {
       if (ws !== _ws) return;
@@ -1776,7 +1850,7 @@
       const r = await (await _fetch(`${API}/v3/ticker/latest?symbols=${encodeURIComponent(sym)}`)).json();
       const t = (r.tickers || []).find((x) => x.symbol === sym);
       const px = t ? parseFloat(t.markPrice) : NaN;
-      if (px > 0 && !priceOf(sym)) onPrice(sym, px);
+      if (px > 0 && !priceOf(sym)) onPrice(sym, px, parseFloat(t.marginMarkPrice));
     } catch {}
   }
   // Tick, size step and margin ratios from exchangeInfo. A market's `capitalInitMarginRatio` that is absent means "not
@@ -1827,13 +1901,14 @@
         step: +step.toFixed(+x.sizeDecimals),
         label,
         pointValue: 1,
+        takerFee: parseFloat(x.takerFee) || 0, // fraction of notional per fill (NQ 0.000025)
         margin,
       };
     } catch {}
   }
   const symLabel = (sym) => (SYMBOLS[sym] && SYMBOLS[sym].label) || String(sym).replace(/-USD-PERP$|-PERP$/, '');
-  function onPrice(sym, px) {
-    S.price[sym] = { px, at: Date.now() };
+  function onPrice(sym, px, mpx) {
+    S.price[sym] = { px, mpx: mpx > 0 ? mpx : null, at: Date.now() };
     try {
       checkPlans(sym, px);
     } catch (e) {
@@ -3932,6 +4007,38 @@
     .tr-err:empty {
       display: none;
     }
+    .tr-warn {
+      font-size: 10.5px;
+      line-height: 1.5;
+      color: var(--warn);
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+    .tr-warn:empty {
+      display: none;
+    }
+    .tr-usemax {
+      cursor: pointer;
+      font-size: 10px;
+      font-weight: 650;
+      border-radius: 6px;
+      padding: 2px 7px;
+      margin-left: 4px;
+      border: 1px solid #4a3a1a;
+      background: #241c10;
+      color: var(--warn);
+    }
+    .tr-preview b.tr-fail {
+      color: var(--danger);
+    }
+    .tr-preview b.tr-pass {
+      color: var(--accent);
+    }
+    .tr-note {
+      font-family: 'Inter', -apple-system, system-ui, sans-serif;
+      margin-top: 2px;
+    }
     .tr-go {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -4332,7 +4439,7 @@
               return `<div class="row ${isM ? 'master' : isF ? 'follower' : ''}">
               <div class="badge">${esc(acctNum(r.label))}</div>
               <div class="meta"><div class="name">${label} <span class="chip">${esc(r.chip)}</span> <span class="dot ${td}" title="${tdText}"></span></div>
-                <div class="sub">bal ${money(r.equity)} · floor ${money(r.floor)}</div></div>
+                <div class="sub">bal ${money(r.equity)} · ${r.dailyFloor > r.floor ? '<span title="Daily loss floor, higher than the drawdown floor today">daily floor</span>' : 'floor'} ${money(floorOf(r))}</div></div>
               <div class="right"><div class="room">${money(r.room)}</div><div class="used">${pct(r.usedPct)} used</div>
                 <div class="bar"><i class="${bar}" style="width:${Math.round(r.usedPct * 100)}%"></i></div></div>
               <div class="sel">
@@ -4423,15 +4530,101 @@
       : '—';
   const fmtUsd = (n) => money(Math.abs(n) || 0);
 
+  // ── What the account can do: the master's open positions and resting orders and every account's saved leverage, read
+  // while the Trade tab is open (when it opens, with each balance poll, and after each order). The max size, the fail and
+  // pass prices and the warnings are worked out from them, the way Vest's own ticket does.
+  S.acctState = {}; // accountId -> { positions: [{ symbol, side, qty, openPrice, collateral }], ordersCollateral, at }
+  S.levs = null; // saved leverage by account and symbol (GET /v3/user-state)
+  const TRADE_STATE_FRESH_MS = 60000;
+  let _tradeStateBusy = false;
+  async function refreshTradeState() {
+    const master = S.master;
+    if (!master || _tradeStateBusy || !userTokenOk()) return;
+    _tradeStateBusy = true;
+    try {
+      const { token } = await mintAccountToken(master);
+      const [levs, pos, ord] = await Promise.all([
+        fetchLeverages(),
+        api('/v3/positions/opened', token),
+        api('/v3/positions/opened-orders', token),
+      ]);
+      if (levs) S.levs = levs;
+      S.acctState[master] = {
+        positions: ((pos && pos.positions) || [])
+          .map((p) => ({
+            symbol: p.symbol,
+            side: p.side,
+            qty: num(p.quantity),
+            openPrice: num(p.openPrice),
+            collateral: num(p.collateral) || 0,
+          }))
+          .filter((p) => p.qty > 0),
+        ordersCollateral: ((ord && ord.orders) || []).reduce(
+          (sum, o) => (o.reduceOnly || o.reduce_only ? sum : sum + (num(o.collateral) || 0)),
+          0,
+        ),
+        at: Date.now(),
+      };
+    } catch {
+    } finally {
+      _tradeStateBusy = false;
+    }
+    updateTrade();
+  }
+  // An account's equity and open PnL with `sym` at `px`, live where possible: cash (free + the collateral held by its
+  // positions and orders) plus each position's PnL. Positions on other markets keep the last performance-series figure.
+  // Without fresh positions it falls back to the polled equity.
+  function liveAccount(id, sym, px) {
+    const r = S.byId[id],
+      st = S.acctState[id];
+    if (!r) return { equity: NaN, upnl: 0 };
+    if (!st || Date.now() - st.at > TRADE_STATE_FRESH_MS || !(r.free >= 0) || !(px > 0))
+      return { equity: r.equity, upnl: r.upnl || 0 };
+    const here = st.positions.filter((p) => p.symbol === sym);
+    const upHere = here.reduce((a, p) => a + (p.side === 'long' ? 1 : -1) * p.qty * (px - p.openPrice), 0);
+    const upnl = upHere + (st.positions.length > here.length ? (r.upnl || 0) - upHere : 0);
+    const cash = r.free + st.positions.reduce((a, p) => a + p.collateral, 0) + st.ordersCollateral;
+    return { equity: cash + upnl, upnl };
+  }
+
   /** Everything the panel shows / would send, from the current settings + live price. Pure apart from reading state. */
   function tradeCalc() {
     const t = S.trade,
-      meta = SYMBOLS[t.symbol],
-      price = priceOf(t.symbol);
+      sym = t.symbol,
+      meta = SYMBOLS[sym],
+      price = priceOf(sym),
+      fee = meta.takerFee || 0,
+      master = S.master && S.byId[S.master] ? S.master : null;
+    const st = master && S.acctState[master];
+    const held =
+      (st && Date.now() - st.at < TRADE_STATE_FRESH_MS && st.positions.find((p) => p.symbol === sym)) || null;
+    const live = master ? liveAccount(master, sym, price) : null;
+
+    // Max size: Vest's 100% for the master and, in strict 1:1 while armed, for every follower too (they copy the same
+    // size), so the smallest of them. Followers copy at the master's leverage. Cap-to-fit scales followers to fit.
+    const lev = master ? orderLeverage(levFor(S.levs, master, sym), maxLeverageFor(sym, master)) : null;
+    const mpx = marginPriceOf(sym);
+    let maxQty = null,
+      limitedBy = null;
+    if (master && lev > 0 && mpx > 0) {
+      for (const id of [master, ...(S.armed && !S.capFit ? [...S.followers] : [])]) {
+        const r = S.byId[id];
+        if (!r || !(r.free >= 0)) {
+          maxQty = limitedBy = null; // a balance couldn't be read: no max rather than a wrong one
+          break;
+        }
+        const upnl = id === master ? live.upnl : r.upnl;
+        const q = maxQtyFor(tradingPower({ free: r.free, upnl, leverage: lev, takerFee: fee }), mpx, meta.step);
+        if (maxQty === null || q < maxQty) [maxQty, limitedBy] = [q, id];
+      }
+    }
+
     const qty =
-      t.sizeMode === 'risk'
-        ? riskQty(+t.risk, +t.stopPts, meta.pointValue, meta.step)
-        : floorStep(+t.qty || 0, meta.step);
+      t.sizeMode === 'max'
+        ? maxQty || 0
+        : t.sizeMode === 'risk'
+          ? riskQty(+t.risk, +t.stopPts, meta.pointValue, meta.step)
+          : floorStep(+t.qty || 0, meta.step);
     const split = splitQty(qty, t.targets.length, t.scale, meta.step);
     const long = planPrices({
       side: 'long',
@@ -4450,15 +4643,78 @@
     const qtys = split.qtys || [];
     const risk = qty * (+t.stopPts || 0) * meta.pointValue;
     const reward = qtys.reduce((sum, q, i) => sum + q * (+t.targets[i] || 0) * meta.pointValue, 0);
+    const openFee = price > 0 ? qty * price * fee : 0;
+    const fees = price > 0 ? openFee + qty * Math.max(0, price - (+t.stopPts || 0)) * fee : 0; // in and out at the stop
+
+    // Fail / pass prices and the stop-out cost per side, for the whole position after this order (an add is measured
+    // from the new average entry, as the ladder is rebuilt).
+    const r = master && S.byId[master];
+    const floor = r ? floorOf(r) : 0;
+    const outcome = (side) => {
+      if (!r || !(price > 0) || !(qty > 0) || (held && held.side !== side)) return null;
+      const total = (held ? held.qty : 0) + qty,
+        dir = side === 'long' ? 1 : -1;
+      const avg = held ? (held.qty * held.openPrice + qty * price) / total : price;
+      const fp = failPassPrices({ side, qty: total, price, equity: live.equity, openFee, floor, target: r.target });
+      const loss = stopOutLoss({
+        side,
+        qty: total,
+        price,
+        stopPrice: avg - dir * (+t.stopPts || 0),
+        openFee,
+        takerFee: fee,
+      });
+      return { ...fp, loss, room: live.equity - floor };
+    };
+    const sides = { long: outcome('long'), short: outcome('short') };
+
     let error = null;
-    if (!S.master || !S.byId[S.master]) error = 'Pick a master account (M) first.';
+    if (!master) error = 'Pick a master account (M) first.';
+    else if (t.sizeMode === 'max' && maxQty === null)
+      error = price > 0 ? 'Working out the max size…' : 'Waiting for a live price…';
+    else if (t.sizeMode === 'max' && !(maxQty > 0))
+      error = `No trading power left on ${accLabel(limitedBy)} for ${meta.label} at ${lev}x.`;
     else if (!(qty > 0))
       error = t.sizeMode === 'risk' ? 'Risk and stop must be above zero.' : 'Size must be above zero.';
     else if (split.error) error = split.error;
     else if (!(price > 0)) error = 'Waiting for a live price…';
     else if (long.error) error = long.error;
     else if (t.beMode === 'points' && !(+t.beTrigger > 0)) error = 'Breakeven trigger must be above zero points.';
-    return { t, meta, price, qty, qtys, long, short, risk, reward, error };
+
+    // Warnings: the order can go, but it's probably not what you want.
+    const warnings = [];
+    if (!error && maxQty !== null && t.sizeMode !== 'max' && qty > maxQty + meta.step / 2)
+      warnings.push({
+        kind: 'power',
+        text: `${fmtQty(qty, sym)} is more than ${accLabel(limitedBy)} can open at ${lev}x (max ${fmtQty(maxQty, sym)}): Vest won't fill it.`,
+      });
+    const risky = held ? sides[held.side] : sides.long; // a new position's stop-out costs the same either way
+    if (!error && risky && risky.room > 0 && risky.loss >= risky.room)
+      warnings.push({
+        kind: 'fail',
+        text: `A stop-out would lose about ${fmtUsd(risky.loss)} with fees, more than the ${fmtUsd(risky.room)} left to the ${
+          r.dailyFloor > r.floor ? 'daily ' : ''
+        }floor: the account fails before the stop fills. Use a smaller size or a closer stop.`,
+      });
+    return {
+      t,
+      meta,
+      price,
+      qty,
+      qtys,
+      long,
+      short,
+      risk,
+      reward,
+      fees,
+      lev,
+      maxQty,
+      limitedBy,
+      held,
+      sides,
+      warnings,
+      error,
+    };
   }
 
   function renderTrade(body) {
@@ -4478,6 +4734,7 @@
           <div class="tr-row">${seg('sizeMode', [
             ['qty', 'Contracts'],
             ['risk', 'Risk $'],
+            ['max', 'Max'],
           ])}<input class="tr-in" id="tr-size" inputmode="decimal" aria-label="Size"></div>
           <div class="tr-calc" id="tr-sizecalc"></div>
         </div>
@@ -4518,6 +4775,7 @@
           </div>
         </div>
         <div class="tr-sum" id="tr-sum"></div>
+        <div class="tr-warn" id="tr-warn"></div>
         <div class="tr-err" id="tr-err"></div>
         <div class="tr-go"><button class="tr-buy" id="tr-buy">Buy</button><button class="tr-sell" id="tr-sell">Sell</button></div>
         <div class="tr-preview" id="tr-preview"></div>
@@ -4569,6 +4827,7 @@
     renderTargets(body);
     watchPrice(t.symbol);
     loadSymbolRules(t.symbol).then(updateTrade);
+    refreshTradeState();
     updateTrade();
   }
 
@@ -4642,6 +4901,16 @@
     const c = tradeCalc();
     if (c.error) return toast(c.error);
     const t = { ...c.t, targets: c.t.targets.map(Number) }; // edits made while this order is in flight don't apply to it
+    // how the size was chosen, for diagnostics: the mode, Vest's max and who limits it, and any warning shown
+    const sizing = {
+      mode: t.sizeMode,
+      qty: c.qty,
+      maxQty: c.maxQty,
+      limitedBy: c.limitedBy ? accLabel(c.limitedBy) : null,
+      leverage: c.lev,
+      fail: c.sides.long && c.sides.long.fail,
+      warnings: c.warnings.map((w) => w.kind),
+    };
     const stopPts = +t.stopPts,
       sym = t.symbol,
       meta = c.meta,
@@ -4667,7 +4936,7 @@
           `${accLabel(master)} is ${held.side} ${held.quantity} ${meta.label} — close or reduce it first (the panel only adds in the same direction)`,
         );
       }
-      if (held) return await addToTrade({ t, qty: c.qty, meta, side, held, lev });
+      if (held) return await addToTrade({ t, qty: c.qty, meta, side, held, lev, sizing });
       const many = c.qtys.length > 1;
       const takeProfits = plan.targets.map((tp, i) => ({
         executionType: 'market',
@@ -4701,6 +4970,7 @@
       diag('trade_panel', {
         outcome: 'placed',
         side,
+        sizing,
         body,
         positionId: res.positionId,
         orderId: res.orderId,
@@ -4748,10 +5018,11 @@
       }
     } catch (e) {
       logEvent('warn', `Trade panel: order NOT placed — ${e.message}.`);
-      diag('trade_panel', { outcome: 'not-placed', side, error: e.message, errorCode: errCode(e) });
+      diag('trade_panel', { outcome: 'not-placed', side, sizing, error: e.message, errorCode: errCode(e) });
     } finally {
       S.placing = false;
       updateTrade();
+      setTimeout(refreshBalances, BALANCE_AFTER_TRADE_MS); // the next max size and fail price start from the new balance
     }
   }
 
@@ -4785,7 +5056,7 @@
   // position — the stop and targets re-placed from the new average entry at the panel's points, with the full size split
   // across the targets by the chosen scale. The add and every leg change go through the hooked fetch, so an armed
   // copier adds to each follower (scaled) and moves/resizes their legs to match.
-  async function addToTrade({ t, qty, meta, side, held, lev }) {
+  async function addToTrade({ t, qty, meta, side, held, lev, sizing }) {
     const sym = t.symbol,
       master = S.master,
       positionId = posIdOf(held),
@@ -4818,7 +5089,7 @@
       'ok',
       `Trade panel: ADD ${body.quantity} ${meta.label} to the ${side} (${fmtQty(prevQty, sym)} → ${fmtQty(prevQty + qty, sym)}) — rebuilding stop & targets from the new average entry.`,
     );
-    diag('trade_panel', { outcome: 'added', side, body, orderId: res.orderId, prevQty });
+    diag('trade_panel', { outcome: 'added', side, sizing, body, orderId: res.orderId, prevQty });
     adjust(() =>
       rebuildLadder({
         master,
@@ -5357,14 +5628,23 @@
       .forEach((g) =>
         g.querySelectorAll('button').forEach((b) => b.classList.toggle('on', S.trade[g.dataset.seg] === b.dataset.v)),
       );
+    $('tr-size').style.display = c.t.sizeMode === 'max' ? 'none' : '';
+    const maxNote =
+      c.maxQty === null
+        ? ''
+        : `Vest's 100% at ${c.lev}x${c.limitedBy && c.limitedBy !== S.master ? `, limited by ${accLabel(c.limitedBy)}` : ''}`;
     $('tr-sizecalc').textContent =
-      c.t.sizeMode === 'risk'
+      c.t.sizeMode === 'max'
         ? c.qty > 0
-          ? `= ${fmtQty(c.qty, c.t.symbol)} contracts at a ${c.t.stopPts}-pt stop`
+          ? `= ${fmtQty(c.qty, c.t.symbol)} contracts · ${maxNote}`
           : ''
-        : c.qty > 0 && +c.t.stopPts > 0
-          ? `risks ${fmtUsd(c.risk)} at the stop`
-          : '';
+        : c.t.sizeMode === 'risk'
+          ? c.qty > 0
+            ? `= ${fmtQty(c.qty, c.t.symbol)} contracts at a ${c.t.stopPts}-pt stop`
+            : ''
+          : c.qty > 0 && +c.t.stopPts > 0
+            ? `risks ${fmtUsd(c.risk)} at the stop`
+            : '';
     $('tr-stopcalc').textContent = c.qty > 0 && +c.t.stopPts > 0 ? `−${fmtUsd(c.risk)}` : '';
     c.t.targets.forEach((p, i) => {
       const q = c.qtys[i],
@@ -5382,18 +5662,47 @@
     body.querySelector('.tr-be').style.display = c.t.beMode === 'off' ? 'none' : '';
     $('tr-sum').innerHTML =
       c.qty > 0 && c.qtys.length
-        ? `Risk <b>${fmtUsd(c.risk)}</b> · Reward <b>${fmtUsd(c.reward)}</b> · <b>${c.risk > 0 ? (c.reward / c.risk).toFixed(2) : '—'}R</b>`
+        ? `Risk <b>${fmtUsd(c.risk)}</b>${c.fees > 0 ? ` + ${fmtUsd(c.fees)} fees` : ''} · Reward <b>${fmtUsd(c.reward)}</b> · <b>${c.risk > 0 ? (c.reward / c.risk).toFixed(2) : '—'}R</b>`
         : '';
+    const warnHtml = c.warnings
+      .map(
+        (w) =>
+          `<div>${esc(w.text)}${w.kind === 'power' ? ` <button class="tr-usemax" data-act="usemax">Use max (${esc(fmtQty(c.maxQty, c.t.symbol))})</button>` : ''}</div>`,
+      )
+      .join('');
+    const warnBox = $('tr-warn');
+    if (warnBox.dataset.html !== warnHtml) {
+      // rewrite only on change, so a click on Use max isn't lost to a price tick
+      warnBox.dataset.html = warnHtml;
+      warnBox.innerHTML = warnHtml;
+      const use = warnBox.querySelector('[data-act="usemax"]');
+      if (use)
+        use.onclick = () => {
+          S.trade.sizeMode = 'max';
+          saveTrade();
+          updateTrade();
+        };
+    }
     $('tr-err').textContent = c.error || (S.adjusting ? 'Adjusting stop & targets…' : '');
     const q = c.qty > 0 ? fmtQty(c.qty, c.t.symbol) : '';
     $('tr-buy').textContent = `Buy ${q}`;
     $('tr-sell').textContent = `Sell ${q}`;
     $('tr-buy').disabled = $('tr-sell').disabled = !!c.error || !!S.placing || !!S.adjusting;
-    const row = (lbl, pr) => {
+    const row = (lbl, pr, o) => {
       const tps = pr.targets.map((x, i) => `TP${i + 1} <b>${fmtPx(x, c.meta.tick)}</b>`).join(' · ');
-      return `<div><span class="tr-pl">${lbl}</span> stop <b>${fmtPx(pr.stop, c.meta.tick)}</b> · ${tps}</div>`;
+      const px = (n) => fmtPx(roundTick(n, c.meta.tick), c.meta.tick);
+      const ends =
+        (o && o.fail ? ` · fail <b class="tr-fail">${px(o.fail)}</b>` : '') +
+        (o && o.pass ? ` · pass <b class="tr-pass">${px(o.pass)}</b>` : '');
+      return `<div><span class="tr-pl">${lbl}</span> stop <b>${fmtPx(pr.stop, c.meta.tick)}</b> · ${tps}${ends}</div>`;
     };
-    $('tr-preview').innerHTML = !c.error ? row('Buy', c.long) + row('Sell', c.short) : '';
+    $('tr-preview').innerHTML = !c.error
+      ? row('Buy', c.long, c.sides.long) +
+        row('Sell', c.short, c.sides.short) +
+        (c.sides.long && (c.sides.long.fail || c.sides.long.pass)
+          ? '<div class="tr-note">Fail and pass: where your equity reaches the floor or the target, counting the opening fee. Estimates, like Vest\'s own.</div>'
+          : '')
+      : '';
     const plans = Object.values(S.plans);
     const plansHtml = plans.length
       ? `<div class="tr-lbl">Breakeven watch</div>` +
@@ -5613,6 +5922,9 @@
       size: r.size,
       equity: r.equity,
       floor: r.floor,
+      dailyFloor: r.dailyFloor,
+      target: r.target,
+      free: r.free,
       canTrade: r.canTrade,
       role: r.id === S.master ? 'master' : S.followers.has(r.id) ? 'follower' : null,
     }));
@@ -5819,6 +6131,9 @@
           size: r.size,
           equity: r.equity,
           floor: r.floor,
+          dailyFloor: r.dailyFloor,
+          target: r.target,
+          free: r.free,
           canTrade: r.canTrade,
         })),
       });
