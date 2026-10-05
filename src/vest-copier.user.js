@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vest Copier
 // @namespace    vestcopier
-// @version      0.22.3
+// @version      0.23.0
 // @description  Copies a master Vest account's trades to your other Vest accounts, live, and adds a points-based order panel.
 // @author       xAmped
 // @license      Vest Copier License — free to use, no selling; see LICENSE
@@ -22,7 +22,7 @@
   if (window.__vestCopier) return;
   window.__vestCopier = true;
 
-  const VERSION = '0.22.3';
+  const VERSION = '0.23.0';
   const API = 'https://api-gateway.hz.vestmarkets.com';
   const _fetch = window.fetch.bind(window);
   // Console echo of the activity log, for troubleshooting: localStorage.setItem('vc-debug', '1') and reload.
@@ -85,6 +85,8 @@
     arming: false, // an arm is in progress
     update: null, // { state, latest, dismissed } from the GitHub version check
     checkUpdates: true, // look for new versions on GitHub
+    supportOffer: false, // the one-time "support with code AMPED" question is showing
+    ackThenArm: false, // ARM was clicked before the terms were accepted
     placing: false, // a trade-panel order is in flight
     flattenConfirm: false, // flatten-all panic button is awaiting confirmation
     flattening: false, // a flatten-all sweep is in progress
@@ -1967,6 +1969,7 @@
     if (S.arming) return;
     if (S.flattening) return toast('Wait for Flatten All to finish.');
     if (!S.ack) {
+      S.ackThenArm = true; // arm right after the terms are accepted
       S.rulesOpen = true;
       render();
       return;
@@ -2127,11 +2130,14 @@
     const l = store.get(LOG_KEY, []);
     S.log = Array.isArray(l) ? l.map((e) => ({ t: new Date(e.t), level: e.level, msg: e.msg })) : [];
   }
+  // The risk acknowledgement is versioned: raising TERMS_VERSION asks everyone to accept the new terms once.
+  const TERMS_VERSION = 2;
   function loadAck() {
-    S.ack = store.get(ACK_KEY, 0) === 1;
+    const a = store.get(ACK_KEY, null);
+    S.ack = !!(a && typeof a === 'object' && a.v >= TERMS_VERSION);
   }
   function saveAck() {
-    store.set(ACK_KEY, 1);
+    store.set(ACK_KEY, { v: TERMS_VERSION, at: new Date().toISOString() });
   }
   function loadOpts() {
     const o = store.get(OPTS_KEY, {}) || {};
@@ -2435,6 +2441,70 @@
     bar.innerHTML = html;
     const later = bar.querySelector('[data-act="update-later"]');
     if (later) later.onclick = dismissUpdate;
+  }
+
+  // ───────────────────────── support (optional referral code) ─────────────────────────
+  // Asked once, only when the Vest account has no referral code attached yet: "Support the free copier with code AMPED?"
+  // Yes links the code to the account through Vest's own referral-join call (the same one Vest's "enter a referral
+  // code" dialog uses), so Vest applies it at checkout from then on. No, or closing it, records the answer and it is
+  // never asked again. An existing code is never replaced, and nothing happens without the click.
+  const SUPPORT_CODE = 'AMPED';
+  const SUPPORT_KEY = 'vc-support'; // { answered: 'yes' | 'no' | 'had-code', at }
+  const supportAnswer = () => (store.get(SUPPORT_KEY, null) || {}).answered || null;
+  const saveSupport = (answered) => store.set(SUPPORT_KEY, { answered, at: new Date().toISOString() });
+  // The account's attached referral code, '' when none, or null when it can't be read (then nothing is offered).
+  async function attachedRefCode() {
+    try {
+      const r = await _fetch(location.origin + '/api/v2/referrals/rewards', {
+        headers: { Accept: 'application/json', Authorization: 'Bearer ' + userToken },
+      });
+      if (!r.ok) return null;
+      const d = await r.json();
+      return (d && d.signup_ref_discount && d.signup_ref_discount.code) || '';
+    } catch {
+      return null;
+    }
+  }
+  async function maybeOfferSupport() {
+    if (!S.ack || supportAnswer() || !userTokenOk()) return;
+    const code = await attachedRefCode();
+    if (code === null) return; // unknown: ask another time
+    if (code) return saveSupport('had-code'); // already referred: never asked
+    S.supportOffer = true;
+    renderSupport();
+  }
+  async function acceptSupport() {
+    S.supportOffer = false;
+    renderSupport();
+    try {
+      await api('/v2/referrals/join', userToken, { method: 'POST', body: JSON.stringify({ refCode: SUPPORT_CODE }) });
+      saveSupport('yes');
+      logEvent('ok', `Thank you! Code ${SUPPORT_CODE} is now linked to your Vest account.`);
+      diag('support', { outcome: 'joined' });
+    } catch (e) {
+      saveSupport('no');
+      logEvent('info', `Vest didn't accept code ${SUPPORT_CODE} (${e.message}). Nothing was changed.`);
+      diag('support', { outcome: 'refused', error: e.message, errorCode: errCode(e) });
+    }
+  }
+  function declineSupport() {
+    S.supportOffer = false;
+    saveSupport('no');
+    renderSupport();
+  }
+  function renderSupport() {
+    const bar = _root && _root.querySelector('.support');
+    if (!bar) return;
+    bar.hidden = !S.supportOffer;
+    if (!S.supportOffer || bar.dataset.ready) return;
+    bar.dataset.ready = '1';
+    bar.innerHTML = `<span class="utext"><b>Vest Copier is free.</b> Use referral code <b>${SUPPORT_CODE}</b>? It takes
+        <b>5% off</b> your Vest purchases (the highest discount available) and helps keep the copier maintained until Vest
+        releases its own. It's linked to your Vest account once and applies at every checkout. Asked only this once.</span>
+      <button class="ubtn" data-act="support-yes">Yes, use ${SUPPORT_CODE}</button>
+      <button class="ubtn ghost" data-act="support-no">No thanks</button>`;
+    bar.querySelector('[data-act="support-yes"]').onclick = acceptSupport;
+    bar.querySelector('[data-act="support-no"]').onclick = declineSupport;
   }
 
   // ───────────────────────── site check (run after Vest ships an update) ─────────────────────────
@@ -3235,6 +3305,32 @@
     .rules-list b {
       color: var(--text);
     }
+    .rules-accept {
+      display: flex;
+      gap: 9px;
+      align-items: flex-start;
+      margin: 4px 0 14px;
+      padding: 10px 11px;
+      border: 1px solid var(--line2);
+      border-radius: 9px;
+      background: var(--elev);
+      font-size: 11.5px;
+      line-height: 1.5;
+      color: var(--text);
+      cursor: pointer;
+    }
+    .rules-accept input {
+      margin-top: 2px;
+      accent-color: var(--accent);
+    }
+    .rules-terms {
+      font-size: 11px;
+      color: var(--dim);
+      margin: -6px 0 14px;
+    }
+    .rules-terms a {
+      color: var(--accent);
+    }
     .rules-btns {
       display: flex;
       gap: 8px;
@@ -3716,6 +3812,7 @@
           <span class="dot gray"></span><span class="htext">Starting…</span><span class="spacer"></span><span class="rate" id="rate"></span>
         </div>
         <div class="update" hidden></div>
+        <div class="support update" hidden></div>
         <div class="body"><div class="empty">Waiting for your Vest session…</div></div>
         <div class="ctl">
           <button class="armbtn" data-act="arm" disabled>ARM</button>
@@ -3833,6 +3930,7 @@
     _root.querySelector('.health').classList.toggle('amber-bar', h.changed);
     renderRate();
     renderUpdate();
+    renderSupport();
   }
   function renderRate() {
     if (!_root) return;
@@ -4211,6 +4309,12 @@
 
   async function placeTrade(side) {
     if (S.placing || S.adjusting) return;
+    if (!S.ack) {
+      S.rulesOpen = true;
+      S.tradeOpen = false;
+      render();
+      return toast('Read and accept the terms first.');
+    }
     const c = tradeCalc();
     if (c.error) return toast(c.error);
     const t = { ...c.t, targets: c.t.targets.map(Number) }; // edits made while this order is in flight don't apply to it
@@ -5055,11 +5159,10 @@
     body.querySelector('[data-act="check-now"]').onclick = () => checkForUpdate(true);
   }
 
+  // Rules tab, and the one-time risk acknowledgement (shown on first load; required before arming or trading).
   function renderRules(body) {
     const first = !S.ack;
-    body.innerHTML = `
-      <div class="rules">
-        <div class="rules-h">Before you arm</div>
+    const how = `
         <ul class="rules-list">
           <li><b>Live copying.</b> Arming copies your <b>master</b> account's orders to the selected <b>followers</b>
             as <b>real orders</b> on live accounts.</li>
@@ -5074,28 +5177,62 @@
             sizes each follower to its own equity: same % risk, same stop distance, smaller size.</li>
           <li><b>Shared risk.</b> One bad trade hits <b>every</b> linked account at once. Size so a simultaneous loss
             is survivable.</li>
+        </ul>`;
+    const risk = `
+        <div class="rules-h">Your risk</div>
+        <ul class="rules-list">
+          <li>Vest Copier <b>places real orders on live accounts</b>, automatically, using your logged-in Vest session.</li>
+          <li>Copies can be late, fail, fill at a different price or size, or be missed entirely, for example when Vest
+            changes its site, rejects an order or is slow. <b>Watch your accounts</b> while it runs.</li>
+          <li><b>You alone are responsible</b> for every order it sends and every trade on your accounts, including any
+            loss, drawdown breach or failed evaluation.</li>
+          <li>It is provided free and <b>as is, with no warranty</b>. Its author accepts <b>no responsibility or liability</b>
+            for anything that happens while you use it.</li>
+          <li>It is not affiliated with or endorsed by Vest Markets. Whether your prop program allows a trade copier is
+            yours to check. Nothing here is financial advice.</li>
         </ul>
-        <div class="rules-btns">
-          ${
-            first
-              ? '<button class="armbtn" id="rl-agree">I understand — agree &amp; continue</button>'
-              : '<button class="ghostbtn" id="rl-close">Close</button>'
-          }
-        </div>
+        <div class="rules-terms">Full terms: <a href="${REPO_URL}/blob/main/DISCLAIMER.md" target="_blank" rel="noopener">Disclaimer</a>
+          · <a href="${REPO_URL}/blob/main/LICENSE" target="_blank" rel="noopener">License</a></div>`;
+    body.innerHTML = first
+      ? `
+      <div class="rules">
+        <div class="rules-h">Before you use Vest Copier</div>
+        ${risk}
+        <div class="rules-h">How it works</div>
+        ${how}
+        <label class="rules-accept"><input type="checkbox" id="rl-check">
+          I have read this. I use Vest Copier entirely at my own risk, and its author is not responsible for any loss.</label>
+        <div class="rules-btns"><button class="armbtn" id="rl-agree" disabled>Accept and continue</button></div>
+      </div>`
+      : `
+      <div class="rules">
+        <div class="rules-h">Before you arm</div>
+        ${how}
+        ${risk}
+        <div class="rules-btns"><button class="ghostbtn" id="rl-close">Close</button></div>
       </div>`;
-    if (first)
-      body.querySelector('#rl-agree').onclick = () => {
+    if (first) {
+      const check = body.querySelector('#rl-check'),
+        agree = body.querySelector('#rl-agree');
+      check.onchange = () => (agree.disabled = !check.checked);
+      agree.onclick = () => {
+        if (!check.checked) return;
         S.ack = true;
         saveAck();
+        diag('terms_accepted', { version: TERMS_VERSION });
+        logEvent('info', 'Terms accepted.');
         S.rulesOpen = false;
         render();
-        arm();
+        if (S.ackThenArm) arm();
+        S.ackThenArm = false;
+        maybeOfferSupport();
       };
-    else
+    } else {
       body.querySelector('#rl-close').onclick = () => {
         S.rulesOpen = false;
         render();
       };
+    }
   }
 
   // Account P&L summary — profit = equity − starting capital, per account and summed. Auto-updates with the balance poll.
@@ -5202,6 +5339,11 @@
       render();
       logEvent('info', `Loaded ${Object.keys(S.byId).length} active accounts.`);
       startBalancePoll();
+      if (!S.ack) {
+        S.rulesOpen = true; // first use: the risk acknowledgement comes first
+        S.tradeOpen = S.summaryOpen = S.settingsOpen = false;
+        render();
+      } else maybeOfferSupport();
     } catch (e) {
       show(`<div class="empty">Failed to load accounts: ${esc(e.message)}</div>`);
     }

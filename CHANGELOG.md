@@ -2,6 +2,10 @@
 
 Plain-language notes. Newest first. Paste the latest `src/vest-copier.user.js` into Tampermonkey and refresh Vest to update.
 
+## v0.23.0
+- **Risk acknowledgement.** On first use, the panel shows the risks and asks you to accept them (tick the box, then **Accept and continue**) before you can arm or place an order from the Trade tab. Everyone sees it once, including current users, because the terms are new. Full text: DISCLAIMER.md on GitHub.
+- **Optional referral code.** After that, the panel asks once whether you'd like to use code **AMPED** (5% off Vest purchases, and it supports the copier). Nothing is changed unless you click **Yes**, and it is never offered if your account already has a referral code.
+
 ## v0.22.3
 - Maintenance release to confirm the in-panel updater works end to end. No changes to copying or trading.
 

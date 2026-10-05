@@ -104,7 +104,7 @@ same percentage rather than the same contracts.
    - Strict 1:1: followers must match the master's group. For different sizes, turn on **Cap-to-fit**
      in **Settings** first.
 3. Set your leverage on Vest the way you'll trade for the session.
-4. Click **ARM**. First time, read and accept the one-time agreement.
+4. Click **ARM**. On first use, read the risk terms, tick the box and click **Accept and continue**.
    - It flat-checks everyone, syncs follower leverage to your master, and (with Cap-to-fit) refreshes
      equity for a fresh sizing baseline.
    - If anything isn't flat, it won't arm and names the account that's holding something.
@@ -210,6 +210,12 @@ and exactly what **Cap-to-fit** solves by sizing each account to what it can act
 - Keep sizes small enough that a **simultaneous loss across every account** is survivable.
 
 ---
+
+## Support the project
+
+On first use (after accepting the terms) the panel asks once whether you'd like to use referral code **AMPED**:
+5% off your Vest purchases, and it helps keep the copier maintained. **Yes** links it to your Vest account; **No**
+changes nothing. It is never offered if your account already has a referral code.
 
 ## 12. Troubleshooting
 

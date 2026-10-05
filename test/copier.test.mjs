@@ -29,7 +29,7 @@ var p={takeProfits:[],stopLosses:[],reduceOnly:!0,timeInForce:"IOC",triggerPrice
 const page = (cfg) => `<!doctype html><html><head><script>
 localStorage.clear();
 localStorage.setItem('vc-known-build-v3', ${JSON.stringify(cfg.knownBuild || 'OLDBUILD00')});   // last accepted build
-localStorage.setItem('vc-ack', '1');                       // agreement already accepted
+if (!${JSON.stringify(!!cfg.noAck)}) localStorage.setItem('vc-ack', JSON.stringify({ v: 2 }));   // terms already accepted
 if (${JSON.stringify(!!cfg.opts)}) localStorage.setItem('vc-opts', ${JSON.stringify(JSON.stringify(cfg.opts || {}))});
 if (${JSON.stringify(!!cfg.plans)}) localStorage.setItem('vc-plans', ${JSON.stringify(JSON.stringify(cfg.plans || {}))});
 if (${JSON.stringify(!!cfg.trade)}) localStorage.setItem('vc-trade', ${JSON.stringify(JSON.stringify(cfg.trade || {}))});
@@ -61,6 +61,10 @@ let n = 0;
 window.fetch = async (input, init = {}) => {
   const url = typeof input === 'string' ? input : input.url;
   if (url.startsWith('https://raw.githubusercontent.com/')) return new Response('// ==UserScript==\\n// @version      ' + (CFG.latestVersion || '0.0.1') + '\\n');
+  if (url.includes('/api/v2/referrals/rewards')) {
+    if (!CFG.rewards) return real(input, init);   // not mocked: unreadable, so the support question is never offered
+    return J({ rewards: [], signup_ref_discount: CFG.rewards.code ? { code: CFG.rewards.code } : null });
+  }
   if (!url.startsWith('https://api-gateway')) return real(input, init);
   const p = new URL(url).pathname;
   const acct = (a, i) => ({ id: a, initial_capital: '500', max_drawdown_limit: '490', account_type: 3, plan_product_type: 'instant_funded', plan_id: 'plan-x', attempt_index: i, max_leverage: '5.0000' });
@@ -78,6 +82,7 @@ window.fetch = async (input, init = {}) => {
   const body = init.body ? JSON.parse(init.body) : {};
   if (who === 'A07' && (CFG.netFail || []).includes(method + ' ' + p)) { SENT.push({ acct: who, method, path: p, body, failed: true }); throw new TypeError('Failed to fetch'); }
   if (who === 'A07' && (CFG.refuse || []).includes(method + ' ' + p)) { SENT.push({ acct: who, method, path: p, body, refused: true }); return J({ message: 'refused' }, 400); }
+  if (p === '/v2/referrals/join') { SENT.push({ acct: who, method, path: p, body }); return J({ ref_code: body.refCode }); }
   if (p === '/v3/positions/close' || p === '/v3/positions/reduce' || p === '/v3/positions/cancel-order') { SENT.push({ acct: who, method, path: p, body }); n++; return J({ orderId: 'C' + n }); }
   if (p === '/v3/positions/open') {
     n++; SENT.push({ acct: who, method, path: p, body, at: performance.now() });
@@ -1133,6 +1138,79 @@ try {
   ok(/garbled when it was copied/.test(await logText()), 'encoding check: a garbled copy warns in the log');
   await panelPage({}, {});
   ok(!/garbled when it was copied/.test(await logText()), 'encoding check: a clean copy says nothing');
+
+  // risk acknowledgement: shown on first load; Accept stays disabled until the box is ticked; trading is refused before
+  CFG = { knownBuild: 'NEWBUILD12', markPrice: 31221.3, fillPrice: 31221.25, noAck: true, rewards: {} };
+  await send('Page.navigate', { url: ORIGIN + '?ack' });
+  ok(await until(`${R} return !!R.querySelector('#rl-agree');`, 8000), 'terms: shown on first load');
+  ok(
+    await js(`${R} return R.querySelector('#rl-agree').disabled;`),
+    'terms: Accept is disabled until the box is ticked',
+  );
+  ok(
+    await js(`${R} return R.querySelector('.support').hidden;`),
+    'terms: the support question waits until the terms are accepted',
+  );
+  await js(`${R} R.querySelector('[data-tab="accounts"]').click(); R.querySelector('[data-m="A07"]').click();
+    R.querySelector('[data-tab="trade"]').click(); return true;`);
+  await until(`${R} const b = R.querySelector('#tr-buy'); return b && !b.disabled;`, 6000);
+  await js(`${R} R.querySelector('#tr-buy').click(); return true;`);
+  await sleep(600);
+  ok(
+    (await js(`return SENT.filter(x => x.path === '/v3/positions/open').length;`)) === 0 &&
+      !!(await js(`${R} return R.querySelector('#rl-agree');`)),
+    'terms: the Trade tab refuses to place an order before acceptance',
+  );
+  await js(
+    `${R} const c = R.querySelector('#rl-check'); c.checked = true; c.dispatchEvent(new Event('change')); R.querySelector('#rl-agree').click(); return true;`,
+  );
+  ok(
+    await js(`return JSON.parse(localStorage.getItem('vc-ack')).v === 2;`),
+    'terms: acceptance is recorded with its version',
+  );
+  ok(
+    await until(`${R} return !R.querySelector('.support').hidden;`, 4000),
+    'terms: after accepting, the one-time support question appears',
+  );
+
+  // one-time support question: shown only when the account has no referral code; Yes joins AMPED, No sends nothing
+  await panelPage({ rewards: {} }, {});
+  ok(
+    await until(
+      `${R} const b = R.querySelector('.support'); return !b.hidden && /code AMPED/.test(b.innerText);`,
+      4000,
+    ),
+    'support: offered once when the account has no referral code',
+  );
+  await js(`${R} R.querySelector('[data-act="support-yes"]').click(); return true;`);
+  await until(`return SENT.some(x => x.path === '/v2/referrals/join');`, 3000);
+  const join = (await js(`return SENT.filter(x => x.path === '/v2/referrals/join');`))[0];
+  ok(
+    !!join && join.method === 'POST' && join.body.refCode === 'AMPED' && /Thank you! Code AMPED/.test(await logText()),
+    "support: Yes links code AMPED through Vest's referral join",
+  );
+  ok(
+    await js(
+      `${R} return R.querySelector('.support').hidden && JSON.parse(localStorage.getItem('vc-support')).answered === 'yes';`,
+    ),
+    'support: answered — the question is gone and remembered',
+  );
+  await panelPage({ rewards: {} }, {});
+  await until(`${R} return !R.querySelector('.support').hidden;`, 4000);
+  await js(`${R} R.querySelector('[data-act="support-no"]').click(); return true;`);
+  await sleep(500);
+  ok(
+    (await js(`return SENT.filter(x => x.path === '/v2/referrals/join').length;`)) === 0 &&
+      (await js(`return JSON.parse(localStorage.getItem('vc-support')).answered;`)) === 'no',
+    'support: No sends nothing and is remembered',
+  );
+  await panelPage({ rewards: { code: 'FRIEND' } }, {});
+  await sleep(1500);
+  ok(
+    (await js(`${R} return R.querySelector('.support').hidden;`)) &&
+      (await js(`return SENT.filter(x => x.path === '/v2/referrals/join').length;`)) === 0,
+    'support: an account that already has a referral code is never asked',
+  );
 
   // update check on load: a newer published version shows the bar with an Install link; Later hides it
   await panelPage({ latestVersion: '9.9.9' }, {});

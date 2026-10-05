@@ -23,7 +23,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Example accounts: three $50k funded accounts (no real data).
 const page = `<!doctype html><html><head><meta charset="utf-8"><script>
 localStorage.clear();
-localStorage.setItem('vc-ack', '1');
+localStorage.setItem('vc-ack', JSON.stringify({ v: 2 }));
+localStorage.setItem('vc-support', JSON.stringify({ answered: 'no' }));
 localStorage.setItem('vc-trade', JSON.stringify({ symbol: 'NDX-USD-PERP', sizeMode: 'risk', qty: 1, risk: 300, stopPts: 20,
   targets: [20, 40, 60], scale: 'end', beMode: 'tp1', beTrigger: 15, beOffset: 1, anchor: 'fill' }));
 window.__NEXT_DATA__ = { buildId: 'EXAMPLE123' };

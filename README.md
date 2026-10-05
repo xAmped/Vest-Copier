@@ -44,7 +44,8 @@ browser and acts only on orders you place.
 
 1. On **Accounts**, click **M** on the account you'll trade (the master) and **Flw** on each account that should
    copy it.
-2. Set your leverage on Vest, then click **ARM**. The first time, read and accept the rules.
+2. Set your leverage on Vest, then click **ARM**. On first use, the panel asks you to read and accept the
+   [risk terms](DISCLAIMER.md).
 3. Trade the master on Vest's own ticket or the **Trade** tab. Each copy is logged, with a fill summary.
 4. Click **DISARM** when you're done. Disarming stops copying; it doesn't close anything.
 
@@ -59,6 +60,7 @@ Read the **[tutorial](docs/tutorial/index.html)** (download and open it, or see 
 | [Tutorial](docs/tutorial/index.html) | Step by step, with screenshots. |
 | [User guide](docs/USER-GUIDE.md) | Everything in detail, plus troubleshooting. |
 | [Changelog](CHANGELOG.md) | What changed in each version. |
+| [Disclaimer](DISCLAIMER.md) | The risk you accept by using it. |
 | [Design](docs/DESIGN.md) | How it works: the order hooks, sizing math, safety rules. |
 
 ## Reporting a problem
@@ -76,6 +78,19 @@ CHROME_PATH=/path/to/chrome node test/copier.test.mjs    # end-to-end, headless 
 npx prettier --check src test                            # formatting (.prettierrc)
 python3 tools/package.py                                 # shareable zip in dist/
 ```
+
+## Support the project
+
+Vest Copier is free. On first use the panel asks, once, whether you'd like to use referral code **AMPED**: it takes
+**5% off** your Vest purchases and helps keep the copier maintained until Vest releases its own. It's applied only if
+you click **Yes**, and never offered if your account already has a referral code. You can also enter it yourself in
+Vest's purchase window.
+
+## Disclaimer
+
+Vest Copier places real orders on live accounts. You use it entirely at your own risk and are solely responsible for
+every trade on your accounts. It is provided as is, without warranty, and its author accepts no liability for any
+loss. Read the full [disclaimer](DISCLAIMER.md) before using it.
 
 ## License
 
