@@ -2,6 +2,9 @@
 
 Newest first. To update, click **Install** on the green bar that appears in the panel whenever there's a newer version.
 
+## v0.26.0
+- **New Support tab**, next to Rules. Report a problem (it saves a report file and opens a pre-filled GitHub issue), share an idea or feedback, jump to what's new, the user guide and the tutorial, or copy code AMPED. The **Problem? Report it** link at the bottom opens it too.
+
 ## v0.25.1
 - **Fixed:** report files now replace every account id with its name, including accounts that have since closed. Before, ids of closed accounts were left in.
 

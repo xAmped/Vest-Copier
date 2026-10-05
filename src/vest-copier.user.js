@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vest Copier
 // @namespace    vestcopier
-// @version      0.25.1
+// @version      0.26.0
 // @description  Copies a master Vest account's trades to your other Vest accounts, live, and adds a points-based order panel.
 // @author       xAmped
 // @license      Vest Copier License — free to use, no selling; see LICENSE
@@ -22,7 +22,7 @@
   if (window.__vestCopier) return;
   window.__vestCopier = true;
 
-  const VERSION = '0.25.1';
+  const VERSION = '0.26.0';
   const API = 'https://api-gateway.hz.vestmarkets.com';
   const _fetch = window.fetch.bind(window);
   // Console echo of the activity log, for troubleshooting: localStorage.setItem('vc-debug', '1') and reload.
@@ -88,7 +88,7 @@
     supportOffer: false, // the one-time "support with code AMPED" question is showing
     supportCurrent: null, // the code the account already uses, named in that question
     ackThenArm: false, // ARM was clicked before the terms were accepted
-    reportOpen: false, // the Report a problem view is showing
+    supportOpen: false, // the Support tab is showing
     placing: false, // a trade-panel order is in flight
     flattenConfirm: false, // flatten-all panic button is awaiting confirmation
     flattening: false, // a flatten-all sweep is in progress
@@ -2897,7 +2897,7 @@
   function openSiteCheck() {
     S.siteOpen = true;
     S.rulesOpen = false;
-    S.reportOpen = false;
+    S.supportOpen = false;
     S.summaryOpen = false;
     S.settingsOpen = false;
     S.tradeOpen = false;
@@ -3575,6 +3575,24 @@
     .linkbtn:hover {
       color: var(--text);
     }
+    .tab.tab-support {
+      color: var(--accent);
+    }
+    .support-tab .sc-sub a {
+      color: var(--accent);
+    }
+    .sup-card {
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      background: var(--elev);
+      padding: 12px 13px;
+      margin-bottom: 10px;
+    }
+    .sup-h {
+      font-weight: 650;
+      font-size: 12.5px;
+      margin-bottom: 4px;
+    }
     .report-note {
       width: 100%;
       margin: 2px 0 10px;
@@ -3660,8 +3678,14 @@
       background: #101216;
       border-bottom: 1px solid var(--line);
       flex: none;
+      overflow-x: auto; /* a narrow panel scrolls the tabs instead of squashing them */
+      scrollbar-width: none;
+    }
+    .tabs::-webkit-scrollbar {
+      display: none;
     }
     .tab {
+      flex: none;
       cursor: pointer;
       background: none;
       border: none;
@@ -4068,6 +4092,7 @@
           <button class="tab" role="tab" data-tab="summary" title="Profit and loss per account">P&amp;L</button>
           <button class="tab" role="tab" data-tab="settings">Settings</button>
           <button class="tab" role="tab" data-tab="rules">Rules</button>
+          <button class="tab tab-support" role="tab" data-tab="support" title="Report a problem, share ideas, get help">Support</button>
         </div>
         <div class="health" role="button" tabindex="0" title="Click to run the site check">
           <span class="dot gray"></span><span class="htext">Starting…</span><span class="spacer"></span><span class="rate" id="rate"></span>
@@ -4181,7 +4206,7 @@
     on('[data-act="dldiag"]', () => downloadDiag());
     on('[data-act="dllog"]', () => downloadLog());
     on('[data-act="clearlog"]', () => clearLog());
-    on('[data-act="report"]', () => setView('report'));
+    on('[data-act="report"]', () => setView('support'));
     return root;
   }
 
@@ -4213,8 +4238,8 @@
   const currentView = () =>
     S.siteOpen
       ? 'site'
-      : S.reportOpen
-        ? 'report'
+      : S.supportOpen
+        ? 'support'
         : S.tradeOpen
           ? 'trade'
           : S.summaryOpen
@@ -4229,7 +4254,7 @@
     S.summaryOpen = v === 'summary';
     S.settingsOpen = v === 'settings';
     S.rulesOpen = v === 'rules';
-    S.reportOpen = v === 'report';
+    S.supportOpen = v === 'support';
     S.siteOpen = false;
     if (!S.tradeOpen) unwatchUnused(); // the price feed is only needed by the Trade tab and breakeven
     render();
@@ -4239,11 +4264,11 @@
     if (!_root) return;
     renderHealth();
     const body = _root.querySelector('.body');
-    if (!(S.tradeOpen || S.reportOpen) || S.siteOpen) body.dataset.view = '';
+    if (!(S.tradeOpen || S.supportOpen) || S.siteOpen) body.dataset.view = '';
     if (S.siteOpen) {
       renderSiteCheck(body);
-    } else if (S.reportOpen) {
-      renderReport(body);
+    } else if (S.supportOpen) {
+      renderSupportTab(body);
     } else if (S.tradeOpen) {
       renderTrade(body);
     } else if (S.settingsOpen) {
@@ -4297,7 +4322,7 @@
 
     const armBtn = _root.querySelector('[data-act="arm"]');
     // DISARM is never blocked; only ARM is gated on a valid selection and the accounts view.
-    const otherView = S.rulesOpen || S.summaryOpen || S.settingsOpen || S.siteOpen || S.reportOpen;
+    const otherView = S.rulesOpen || S.summaryOpen || S.settingsOpen || S.siteOpen || S.supportOpen;
     armBtn.disabled = S.armed ? false : S.arming || otherView || !(S.master && S.followers.size);
     armBtn.textContent = S.armed ? 'DISARM' : S.arming ? 'ARMING…' : 'ARM';
     armBtn.classList.toggle('armed', S.armed);
@@ -5599,28 +5624,52 @@
     logEvent('info', `Report saved as ${name}. Drag it into the GitHub issue that just opened.`);
     diag('report', { file: name, hasNote: !!note });
   }
-  function renderReport(body) {
-    if (body.dataset.view === 'report' && body.querySelector('.report')) return; // built once: keep what's being typed
-    body.dataset.view = 'report';
+  // Support tab: report a problem (one report file + a pre-filled GitHub issue), share ideas, quick links, and the
+  // project's support code. Built once, so a description being typed survives the panel's regular refreshes.
+  function shareIdea() {
+    const params = new URLSearchParams({ template: 'feature_request.yml', title: 'Idea: ', version: VERSION });
+    window.open(`${REPO_URL}/issues/new?${params}`, '_blank', 'noopener');
+  }
+  function renderSupportTab(body) {
+    if (body.dataset.view === 'support' && body.querySelector('.support-tab')) return;
+    body.dataset.view = 'support';
+    const link = (href, text) => `<a href="${href}" target="_blank" rel="noopener">${text}</a>`;
     body.innerHTML = `
-      <div class="rules report">
-        <div class="rules-h">Report a problem</div>
-        <p class="sc-sub">Describe what happened and what you expected. The copier then saves a report file and opens a
-          GitHub issue with your description filled in: drag the file into it and submit. You need a free GitHub account
-          to post it.</p>
-        <textarea class="report-note" id="rp-note" rows="6" aria-label="What happened"
-          placeholder="What happened, and what did you expect? Which accounts, roughly when?"></textarea>
-        <p class="sc-sub">The file holds the activity log, the diagnostics record, your settings, your copier version and
-          your accounts' balances. Account ids are replaced by their names. It never contains passwords or login tokens.</p>
-        <div class="rules-btns">
+      <div class="rules support-tab">
+        <div class="rules-h">Support</div>
+        <p class="sc-sub">Vest Copier v${VERSION} · ${link(`${REPO_URL}/blob/main/CHANGELOG.md`, "What's new")} ·
+          ${link(`${REPO_URL}/blob/main/docs/USER-GUIDE.md`, 'User guide')} ·
+          ${link('https://xamped.github.io/Vest-Copier/tutorial/', 'Tutorial')}</p>
+        <div class="sup-card">
+          <div class="sup-h">Report a problem</div>
+          <p class="sc-sub">Describe what happened and what you expected. The copier saves a report file and opens a
+            GitHub issue with your description filled in: drag the file into it and submit. Posting needs a free GitHub
+            account.</p>
+          <textarea class="report-note" id="rp-note" rows="5" aria-label="What happened"
+            placeholder="What happened, and what did you expect? Which accounts, roughly when?"></textarea>
+          <p class="sc-sub">The file holds the activity log, the diagnostics record, your settings, your copier version
+            and your accounts' balances. Account ids are replaced by their names. It never contains passwords or login
+            tokens.</p>
           <button class="armbtn sm" id="rp-send">Save report &amp; open issue</button>
-          <button class="ghostbtn" id="rp-close">Close</button>
+        </div>
+        <div class="sup-card">
+          <div class="sup-h">Ideas and feedback</div>
+          <p class="sc-sub">Something that could work better, or a feature you'd use? Ideas go on GitHub too.</p>
+          <button class="ghostbtn" id="sp-idea">Share an idea or feedback</button>
+        </div>
+        <div class="sup-card">
+          <div class="sup-h">Support the project</div>
+          <p class="sc-sub">Vest Copier is free. Code <b>${SUPPORT_CODE}</b> takes 5% off Vest purchases and helps keep it
+            maintained. Settings → Support can enter it at checkout for you.</p>
+          <button class="ghostbtn" id="sp-copy">Copy code ${SUPPORT_CODE}</button>
         </div>
       </div>`;
     const note = body.querySelector('#rp-note');
     ['keydown', 'keyup', 'keypress'].forEach((ev) => note.addEventListener(ev, (e) => e.stopPropagation())); // not Vest's shortcuts
     body.querySelector('#rp-send').onclick = () => sendReport(note.value.trim());
-    body.querySelector('#rp-close').onclick = () => setView('accounts');
+    body.querySelector('#sp-idea').onclick = shareIdea;
+    body.querySelector('#sp-copy').onclick = () =>
+      copySupportCode().then((ok) => toast(ok ? `Code ${SUPPORT_CODE} copied.` : `Code: ${SUPPORT_CODE}`));
   }
 
   function renderSummary(body) {

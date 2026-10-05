@@ -1,0 +1,22 @@
+name: Idea or feedback
+description: Something that could work better, or a feature you'd use.
+title: "Idea: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: Your idea or feedback
+      description: What would you like the copier to do, or do differently?
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: How it would help
+      description: The situation where you'd use it, if you have one in mind.
+  - type: input
+    id: version
+    attributes:
+      label: Copier version
+      description: Shown on the Support tab.

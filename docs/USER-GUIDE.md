@@ -39,7 +39,8 @@ their own browser.
 
 - **Header:** `Vest Copier`, an **Armed · live / Ready / Idle** tag, small `FAST`/`CAP` markers when those
   options are on, **Reload accounts** (↻) and collapse (`–`).
-- **Tabs:** **Accounts**, **Trade**, **P&L**, **Settings**, **Rules**.
+- **Tabs:** **Accounts**, **Trade**, **P&L**, **Settings**, **Rules**, and **Support** (report a problem, share an idea,
+  links to the guides, the AMPED code).
 - **Health bar:** a colored dot + `build <id>` (green = known build; amber = Vest changed its site,
   re-verify) and a live `API nnn/200` rate indicator.
 - **Accounts:** grouped by size and type. Each row shows the account, its type chip, a green/red
@@ -233,7 +234,8 @@ Support** turns the switching on or off and has a **Copy code AMPED** button.
 - **An order didn't fill** — the log says which account (master included). Vest accepted it but didn't execute
   it, usually because there wasn't enough margin for that size. A follower that misses an entry is dropped from
   tracking; one that misses an add keeps its original position.
-- **Something looks wrong** — click **Problem? Report it** at the bottom of the panel. Describe what happened and
+- **Something looks wrong** — open the **Support** tab (or click **Problem? Report it** at the bottom of the panel).
+  Describe what happened and
   click **Save report & open issue**: it saves one report file (activity log, diagnostics, settings, balances;
   account ids replaced by names) and opens a GitHub issue with your description filled in. Drag the file in and
   submit (a free GitHub account is needed).
