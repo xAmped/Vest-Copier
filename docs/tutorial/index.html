@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vest Copier Tutorial</title>
+</head>
+<body>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@600;700&display=swap">
+<style>
+/* Layout: one reading column (~68ch) with a sticky contents rail on wide screens; screenshots sit beside the steps they illustrate. */
+:root {
+  --bg: #f7f8f6;
+  --surface: #ffffff;
+  --ink: #15191c;
+  --body: #343b40;
+  --dim: #69737a;
+  --line: #e1e5e2;
+  --accent: #14855a;        /* the panel's own green, deepened for text on light */
+  --accent-soft: #e6f4ed;
+  --accent-line: #b9dfcb;
+  --warn: #9a5b00;
+  --warn-soft: #fdf3e2;
+  --warn-line: #efd6a8;
+  --danger: #b4372b;
+  --danger-soft: #fbecea;
+  --chip: #eef1ef;
+  --shot-bg: #0d0f12;       /* the panel's onyx */
+  --display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --text: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #101315; --surface: #161a1d; --ink: #eef1ef; --body: #c9d0cc; --dim: #8d978f; --line: #262c2f;
+    --accent: #3ccf8e; --accent-soft: #12271e; --accent-line: #1f4a36;
+    --warn: #e7a94a; --warn-soft: #2a2213; --warn-line: #4a3a1c;
+    --danger: #f07a6e; --danger-soft: #2c1714; --chip: #1f2427; --shot-bg: #07090a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #101315; --surface: #161a1d; --ink: #eef1ef; --body: #c9d0cc; --dim: #8d978f; --line: #262c2f;
+  --accent: #3ccf8e; --accent-soft: #12271e; --accent-line: #1f4a36;
+  --warn: #e7a94a; --warn-soft: #2a2213; --warn-line: #4a3a1c;
+  --danger: #f07a6e; --danger-soft: #2c1714; --chip: #1f2427; --shot-bg: #07090a;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--body); font-family: var(--text); font-size: 16px; line-height: 1.6; padding-inline: 16px; padding-block: 0 64px; }
+.wrap { max-width: 1080px; margin: 0 auto; display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 56px; }
+@media (max-width: 860px) { .wrap { grid-template-columns: minmax(0, 1fr); gap: 0; } nav.toc { display: none; } }
+
+header.top { max-width: 1080px; margin: 0 auto; padding-block: 48px 32px; border-bottom: 1px solid var(--line); margin-bottom: 40px; }
+.eyebrow { font-family: var(--mono); font-size: 12.5px; letter-spacing: 0.06em; color: var(--accent); text-transform: uppercase; font-weight: 600; }
+h1 { font-family: var(--display); font-weight: 700; font-size: clamp(36px, 6vw, 56px); line-height: 1.02; letter-spacing: -0.01em; color: var(--ink); margin: 10px 0 14px; text-wrap: balance; }
+.lede { font-size: 19px; max-width: 62ch; color: var(--body); margin: 0; }
+.meta { margin-top: 18px; display: flex; flex-wrap: wrap; gap: 8px; }
+.pill { font-family: var(--mono); font-size: 12.5px; background: var(--chip); color: var(--ink); border-radius: 6px; padding: 3px 9px; }
+a.pill { text-decoration: none; color: var(--accent); }
+
+nav.toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 24px); align-self: start; font-size: 14px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; counter-reset: t; }
+nav.toc li { counter-increment: t; }
+nav.toc a { display: flex; gap: 10px; padding: 5px 8px; border-radius: 6px; color: var(--body); text-decoration: none; }
+nav.toc a::before { content: counter(t); font-family: var(--mono); color: var(--dim); min-width: 1.2em; }
+nav.toc a:hover, nav.toc a:focus-visible { background: var(--chip); color: var(--ink); outline: none; }
+
+main { min-width: 0; }
+section { padding-block: 8px 36px; border-bottom: 1px solid var(--line); margin-bottom: 36px; }
+section:last-child { border-bottom: 0; }
+h2 { font-family: var(--display); font-weight: 700; font-size: 30px; line-height: 1.15; color: var(--ink); margin: 0 0 6px; display: flex; align-items: baseline; gap: 12px; text-wrap: balance; }
+h2 .n { font-family: var(--mono); font-size: 15px; color: var(--accent); font-weight: 600; }
+h3 { font-size: 17px; color: var(--ink); margin: 26px 0 8px; font-weight: 600; }
+p { margin: 0 0 14px; max-width: 68ch; }
+.sub { color: var(--dim); margin-bottom: 20px; }
+a { color: var(--accent); }
+b, strong { color: var(--ink); font-weight: 600; }
+code, .k { font-family: var(--mono); font-size: 0.86em; background: var(--chip); color: var(--ink); padding: 1px 6px; border-radius: 5px; white-space: nowrap; }
+
+ol.steps { list-style: none; counter-reset: s; padding: 0; margin: 0 0 18px; display: grid; gap: 14px; max-width: 68ch; }
+ol.steps > li { counter-increment: s; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; }
+ol.steps > li::before { content: counter(s); width: 26px; height: 26px; border-radius: 50%; background: var(--ink); color: var(--bg); font-family: var(--mono); font-size: 13px; font-weight: 600; display: grid; place-items: center; margin-top: 1px; }
+ol.steps .why { display: block; color: var(--dim); font-size: 14.5px; margin-top: 2px; }
+
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 340px); gap: 32px; align-items: start; }
+@media (max-width: 980px) { .split { grid-template-columns: minmax(0, 1fr); } }
+figure { margin: 0; }
+.shot { background: var(--shot-bg); border-radius: 12px; padding: 14px; display: grid; place-items: center; }
+.shot img { display: block; max-width: 100%; height: auto; border-radius: 8px; }
+figcaption { font-size: 13.5px; color: var(--dim); margin-top: 8px; }
+
+.callout { border-radius: 10px; padding: 14px 16px; margin: 6px 0 20px; max-width: 68ch; font-size: 15px; border: 1px solid; }
+.callout p { margin: 0; }
+.callout p + p { margin-top: 8px; }
+.callout.warn { background: var(--warn-soft); border-color: var(--warn-line); }
+.callout.warn b { color: var(--warn); }
+.callout.risk { background: var(--danger-soft); border-color: transparent; border-left: 4px solid var(--danger); border-radius: 4px 10px 10px 4px; }
+.callout.risk b { color: var(--danger); }
+.callout.tip { background: var(--accent-soft); border-color: var(--accent-line); }
+
+.table-wrap { overflow-x: auto; margin: 4px 0 20px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 15px; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+th { font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim); font-weight: 600; background: var(--chip); }
+td:first-child { white-space: nowrap; color: var(--ink); font-weight: 600; }
+.yes { color: var(--accent); font-weight: 600; }
+.no { color: var(--danger); font-weight: 600; }
+
+.formula { font-family: var(--mono); font-size: 15px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin: 4px 0 18px; overflow-x: auto; color: var(--ink); max-width: 68ch; }
+.formula .c { color: var(--dim); }
+
+.cols2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 18px; }
+@media (max-width: 640px) { .cols2 { grid-template-columns: minmax(0, 1fr); } }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+.card h4 { margin: 0 0 6px; font-size: 16px; color: var(--ink); }
+.card p { font-size: 15px; margin: 0; }
+
+ul.rules { padding: 0; margin: 0 0 16px; list-style: none; display: grid; gap: 10px; max-width: 68ch; }
+ul.rules li { padding-left: 22px; position: relative; }
+ul.rules li::before { content: ""; position: absolute; left: 2px; top: 0.62em; width: 8px; height: 8px; border-radius: 2px; background: var(--accent); }
+
+dl.trouble { margin: 0; display: grid; gap: 0; max-width: 72ch; }
+dl.trouble div { padding: 14px 0; border-bottom: 1px solid var(--line); }
+dl.trouble div:last-child { border-bottom: 0; }
+dt { font-family: var(--mono); font-size: 14px; color: var(--ink); font-weight: 600; margin-bottom: 4px; }
+dd { margin: 0; font-size: 15.5px; }
+
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+</style>
+
+<header class="top">
+  <div class="eyebrow">Tampermonkey userscript · Vest Markets</div>
+  <h1>Vest Copier</h1>
+  <p class="lede">Trade one Vest account and have the same trade placed on your other accounts, live, from inside the Vest page. It also adds a Trade tab where you set your stop and targets in points.</p>
+  <div class="meta"><span class="pill">v0.21.0</span><span class="pill">next.vestmarkets.com</span><span class="pill">10-minute setup</span><a class="pill" href="https://github.com/xAmped/Vest-Copier">github.com/xAmped/Vest-Copier</a></div>
+</header>
+
+<div class="wrap">
+  <nav class="toc" aria-label="Contents">
+    <ol>
+      <li><a href="#install">Install</a></li>
+      <li><a href="#copy">Copy your first trade</a></li>
+      <li><a href="#trade">The Trade tab</a></li>
+      <li><a href="#sizing">Sizing</a></li>
+      <li><a href="#copies">What gets copied</a></li>
+      <li><a href="#safety">Safety controls</a></li>
+      <li><a href="#habits">Good habits</a></li>
+      <li><a href="#trouble">Troubleshooting</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <div class="callout risk">
+      <p><b>It places real orders on live accounts.</b> Once armed, every order on your master is sent to every follower within a fraction of a second. One bad trade hits every linked account at once. Vest has no official copier, and you are responsible for every order this sends. Start with the smallest size.</p>
+    </div>
+
+    <section id="install">
+      <h2><span class="n">1</span>Install</h2>
+      <p class="sub">About two minutes. You need Chrome, Edge, Brave or Firefox on a computer.</p>
+      <ol class="steps">
+        <li><div>Install the <b>Tampermonkey</b> extension from your browser's extension store.</div></li>
+        <li><div><b>Chrome, Edge, Brave:</b> open <code>chrome://extensions</code>, click <b>Details</b> on Tampermonkey, and turn on <b>Allow User Scripts</b>.<span class="why">Without this, Tampermonkey installs the script but never runs it. Older browser versions call it Developer mode (top-right of the extensions page). Firefox doesn't need it.</span></div></li>
+        <li><div>Open the install link: <a href="https://raw.githubusercontent.com/xAmped/Vest-Copier/main/src/vest-copier.user.js">vest-copier.user.js on GitHub</a>. Tampermonkey shows an install page; click <b>Install</b>. It then updates itself when a new version is released.<span class="why">No link? Click the Tampermonkey icon, <b>Create a new script</b>, delete the template, paste the entire contents of <code>vest-copier.user.js</code> and press <b>Ctrl+S</b>. Paste the text itself: a .txt file opened in the browser isn't installed.</span></div></li>
+        <li><div>Open or refresh <b>next.vestmarkets.com</b> and log in. The <b>Vest Copier</b> panel appears in the top-right. Drag its header to move it and its bottom-right corner to resize it.</div></li>
+      </ol>
+      <div class="callout tip"><p><b>Updating:</b> installed from the link, Tampermonkey checks for new versions daily (or use its <b>Check for updates</b>). Pasted by hand, paste the new version over the old one, save, and refresh Vest. Your settings are kept either way.</p></div>
+    </section>
+
+    <section id="copy">
+      <h2><span class="n">2</span>Copy your first trade</h2>
+      <div class="split">
+        <div>
+          <ol class="steps">
+            <li><div>On the <b>Accounts</b> tab, click <span class="k">M</span> on the account you'll trade. That's the <b>master</b>.</div></li>
+            <li><div>Click <span class="k">Flw</span> on each account that should copy it. Those are the <b>followers</b>.<span class="why">By default followers must be the same size and type as the master. To mix sizes, turn on Cap-to-fit in Settings first (see Sizing).</span></div></li>
+            <li><div>Set your leverage on Vest the way you'll trade, then click <b>ARM</b>. The first time, read and accept the agreement.<span class="why">Arming checks every account, then sets each follower's leverage to match the master.</span></div></li>
+            <li><div>Trade the master as you normally would, on Vest's own ticket or the Trade tab. Each order appears in the log, followed by one line per follower and a fill summary such as <code>Fills 3/3 confirmed · avg slip 0.25pt</code>.</div></li>
+            <li><div>Click <b>DISARM</b> when you're finished. Disarming stops copying. It does not close anything.</div></li>
+          </ol>
+        </div>
+        <figure>
+          <div class="shot"><img src="img/accounts.png" alt="The Accounts tab: one account marked M as master, two marked Flw as followers, and the ARM button showing DISARM." width="340"></div>
+          <figcaption>Master and followers selected, copier armed.</figcaption>
+        </figure>
+      </div>
+      <h3>When ARM refuses</h3>
+      <p>The log names the account and the reason. Arming is allowed when everyone is flat, or when the master and followers already hold the <b>same trade</b> (same market, same direction): that trade is adopted and managed from then on. It refuses when a follower is in the opposite direction, holds a trade the master doesn't, or has a resting order. Fix that account on Vest and arm again.</p>
+    </section>
+
+    <section id="trade">
+      <h2><span class="n">3</span>The Trade tab</h2>
+      <p class="sub">An order ticket built around points. It trades the master; when armed, followers copy it like any other master order.</p>
+      <div class="split">
+        <div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Field</th><th>What it does</th></tr></thead>
+              <tbody>
+                <tr><td>Size</td><td>Contracts, or <b>Risk $</b>: the panel sizes the order so hitting your stop loses that amount. NQ is $1 per point per contract.</td></tr>
+                <tr><td>Stop</td><td>Distance from your entry, in points.</td></tr>
+                <tr><td>Targets</td><td>One or more distances in points. <b>+ Add target</b> adds another.</td></tr>
+                <tr><td>Scale</td><td>How the size splits across targets: <b>Start</b> puts the most on TP1, <b>Even</b> splits evenly, <b>End</b> puts the most on the last target.</td></tr>
+                <tr><td>Measure from</td><td><b>Your fill</b> (default) moves the stop and targets to exactly your points from the price you actually got. <b>Price at click</b> leaves them where they were placed.</td></tr>
+                <tr><td>Breakeven</td><td><b>After TP1</b> or <b>At +pts</b> moves the stop to your entry. <b>Lock</b> adds a point or two of profit to cover fees.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>Before you click, the panel shows each target's size and dollar value, your risk, reward and R, and the exact prices for both Buy and Sell. Stops and targets are placed as Vest's own stop-loss and take-profit orders, so they still work if you close the tab.</p>
+        </div>
+        <figure>
+          <div class="shot"><img src="img/trade.png" alt="The Trade tab with a 20-point stop, three targets at 20, 40 and 60 points, and the Buy and Sell buttons." width="340"></div>
+          <figcaption>Stop 20, targets 20 / 40 / 60, scaled End.</figcaption>
+        </figure>
+      </div>
+      <h3>Adding to a trade</h3>
+      <p>If the master already holds a position in the same direction, Buy or Sell <b>adds</b> to it, and followers add to theirs. The stop and targets are then rebuilt for the whole position from the <b>new average entry</b>, and the full size is re-split by your Scale setting. An order in the opposite direction is refused: close or reduce the trade first.</p>
+      <div class="callout warn"><p><b>Breakeven runs in your browser.</b> Keep the Vest tab open for it to move your stop. It survives a page refresh and stops watching once the trade closes.</p></div>
+    </section>
+
+    <section id="sizing">
+      <h2><span class="n">4</span>Sizing</h2>
+      <div class="cols2">
+        <div class="card"><h4>Strict 1:1 (default)</h4><p>Every follower gets the master's exact size. Followers must be the same size and type as the master. Simple and predictable for matched accounts.</p></div>
+        <div class="card"><h4>Cap-to-fit (Settings)</h4><p>Each follower is sized to its own equity, so you can mix account sizes. Every account takes the same percentage risk with the same stop distance.</p></div>
+      </div>
+      <div class="formula">follower size = master size × (follower equity ÷ master equity)<br><span class="c">// only when scaling down: × 0.95 buffer, rounded down to Vest's 0.0001 size step</span></div>
+      <p>Example: a $25k master trading 1 NQ drives a $5k follower at about 0.19 NQ. Both lose the same share of their account if the stop is hit. An account too small to hold even the minimum size is skipped, with a line in the log saying so.</p>
+    </section>
+
+    <section id="copies">
+      <h2><span class="n">5</span>What gets copied</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>On the master</th><th>On each follower</th></tr></thead>
+          <tbody>
+            <tr><td>Open, with stop and targets</td><td><span class="yes">Copied.</span> Same prices; sizes scaled with Cap-to-fit.</td></tr>
+            <tr><td>Add to position</td><td><span class="yes">Copied,</span> scaled to the follower's size.</td></tr>
+            <tr><td>Partial close / close</td><td><span class="yes">Copied,</span> in proportion.</td></tr>
+            <tr><td>Move, add or remove a stop or target</td><td><span class="yes">Copied</span> to the matching order.</td></tr>
+            <tr><td>Cancel a resting limit order</td><td><span class="yes">Copied.</span></td></tr>
+            <tr><td>Stop or target fills</td><td>Each account's own stop and targets fill on Vest at the same prices.</td></tr>
+            <tr><td>Anything while disarmed</td><td><span class="no">Not copied.</span></td></tr>
+            <tr><td>Orders Vest refuses on the master</td><td><span class="no">Not copied.</span></td></tr>
+            <tr><td>Vest closing the master for you</td><td><span class="no">Not copied.</span> A drawdown breach or liquidation isn't an order you placed, so followers stay open. Close them yourself or use Flatten All.</td></tr>
+            <tr><td>Trades placed on a follower</td><td>Ignored. Only the master is watched.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="safety">
+      <h2><span class="n">6</span>Safety controls</h2>
+      <div class="cols2">
+        <div class="card"><h4>DISARM</h4><p>Stops copying immediately. Open positions stay open.</p></div>
+        <div class="card"><h4>Flatten All</h4><p>Closes every position and cancels every order on <b>all</b> loaded accounts, then disarms. It asks you to confirm. Use it in an emergency, not as a routine close.</p></div>
+        <div class="card"><h4>Fill check</h4><p>After each entry, the copier confirms every account actually filled. One that didn't is named in the log and dropped from that trade.</p></div>
+        <div class="card"><h4>Site check</h4><p>When Vest updates its website, the status bar turns amber and arming pauses. Click the bar to run a read-only check. If nothing is red, click <b>Accept this build</b>.</p></div>
+      </div>
+      <div class="callout warn"><p><b>After a Vest update,</b> do one small test before trading size: one follower, open with a stop, move the stop, close.</p></div>
+    </section>
+
+    <section id="habits">
+      <h2><span class="n">7</span>Good habits</h2>
+      <ul class="rules">
+        <li>Start with the smallest size across every account, and confirm the fills line before trading bigger.</li>
+        <li>Size so that losing on every account at the same time is survivable.</li>
+        <li>Set your stop when you enter, so every account is protected from the first second.</li>
+        <li>Disarm before placing a trade on the master that you don't want copied.</li>
+        <li>Changed leverage or market? Disarm and arm again so followers match.</li>
+        <li>Disarm and go flat when you're done for the day.</li>
+      </ul>
+    </section>
+
+    <section id="trouble">
+      <h2><span class="n">8</span>Troubleshooting</h2>
+      <dl class="trouble">
+        <div><dt>The panel doesn't appear</dt><dd>Check that the script is enabled in Tampermonkey, that <b>Allow User Scripts</b> is on (step 2), and that you're on next.vestmarkets.com. Then refresh.</dd></div>
+        <div><dt>Can't select a follower</dt><dd>It's a different size or type than the master. Turn on <b>Cap-to-fit</b> in Settings, or pick matching accounts.</dd></div>
+        <div><dt>"… did NOT fill"</dt><dd>Vest accepted the order but didn't execute it, usually because the account lacks margin for that size. Trade smaller or turn on Cap-to-fit.</dd></div>
+        <div><dt>"Vest updated" (amber bar)</dt><dd>Click it and run the site check. Arming stays paused until you accept the new build.</dd></div>
+        <div><dt>Something looks wrong</dt><dd>Click <b>Diag</b> under the activity log. It downloads a file describing every order, size and fill, with no passwords or login tokens in it. Send that file with a note on what you expected.</dd></div>
+      </dl>
+    </section>
+  </main>
+</div>
+
+</body>
+</html>
