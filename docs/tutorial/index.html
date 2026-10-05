@@ -60,6 +60,9 @@ header.top { max-width: 1080px; margin: 0 auto; padding-block: 48px 32px; border
 h1 { font-family: var(--display); font-weight: 700; font-size: clamp(36px, 6vw, 56px); line-height: 1.02; letter-spacing: -0.01em; color: var(--ink); margin: 10px 0 14px; text-wrap: balance; }
 .lede { font-size: 19px; max-width: 62ch; color: var(--body); margin: 0; }
 .meta { margin-top: 18px; display: flex; flex-wrap: wrap; gap: 8px; }
+.video { margin-top: 22px; max-width: 760px; aspect-ratio: 16 / 9; border-radius: 12px; overflow: hidden; background: #000; }
+.video iframe { width: 100%; height: 100%; border: 0; display: block; }
+.video-link { margin: 8px 0 0; font-size: 14px; color: var(--body); }
 .pill { font-family: var(--mono); font-size: 12.5px; background: var(--chip); color: var(--ink); border-radius: 6px; padding: 3px 9px; }
 a.pill { text-decoration: none; color: var(--accent); }
 
@@ -138,6 +141,8 @@ dd { margin: 0; font-size: 15.5px; }
   <div class="eyebrow">Tampermonkey userscript · Vest Markets</div>
   <h1>Vest Copier</h1>
   <p class="lede">Trade one Vest account and have the same trade placed on your other accounts, live, from inside the Vest page. It also adds a Trade tab where you set your stop and targets in points.</p>
+  <div class="video"><iframe src="https://www.youtube-nocookie.com/embed/EMpVqls6D8o" title="Vest Copier setup video" loading="lazy" allow="accelerometer; encrypted-media; gyroscope; picture-in-picture; fullscreen" allowfullscreen></iframe></div>
+  <p class="video-link">Prefer YouTube? <a href="https://youtu.be/EMpVqls6D8o">Watch the setup video there</a> (6 minutes).</p>
   <div class="meta"><span class="pill">v0.28.0</span><span class="pill">next.vestmarkets.com</span><span class="pill">10-minute setup</span><a class="pill" href="https://github.com/xAmped/Vest-Copier">github.com/xAmped/Vest-Copier</a></div>
 </header>
 

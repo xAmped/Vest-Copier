@@ -1,5 +1,9 @@
 # Vest Copier
 
+<a href="https://youtu.be/EMpVqls6D8o"><img src="docs/tutorial/img/video.jpg" alt="Vest Copier setup video: copy trades on Vest, free, full setup" width="640"></a>
+
+**[Watch the 6-minute setup video on YouTube](https://youtu.be/EMpVqls6D8o)**
+
 Trade copier for prop accounts on [Vest Markets](https://next.vestmarkets.com). One account leads, the others mirror
 it. Runs as a Tampermonkey userscript inside the Vest page.
 
