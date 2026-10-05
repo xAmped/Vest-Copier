@@ -33,6 +33,6 @@ financial or trading advice.
 
 ## Referral code
 
-On first use, the panel asks once whether you'd like to use referral code **AMPED**, which takes 5% off Vest
-purchases and supports the project. It is linked to your Vest account only if you click **Yes**. It is never
-offered if your account already has a referral code, and it is never asked again after you answer.
+On first use, the panel asks once whether you'd like to use code **AMPED**, which takes 5% off Vest purchases and
+supports the project. If you already use another code, the question names it so you can choose to keep it. Nothing
+changes unless you click **Yes**, and you are never asked again after you answer.

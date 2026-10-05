@@ -82,6 +82,7 @@ window.fetch = async (input, init = {}) => {
   const body = init.body ? JSON.parse(init.body) : {};
   if (who === 'A07' && (CFG.netFail || []).includes(method + ' ' + p)) { SENT.push({ acct: who, method, path: p, body, failed: true }); throw new TypeError('Failed to fetch'); }
   if (who === 'A07' && (CFG.refuse || []).includes(method + ' ' + p)) { SENT.push({ acct: who, method, path: p, body, refused: true }); return J({ message: 'refused' }, 400); }
+  if (p === '/v2/referrals/join' && CFG.joinFail) { SENT.push({ acct: who, method, path: p, body }); return J({ message: 'invalid referral code' }, 400); }
   if (p === '/v2/referrals/join') { SENT.push({ acct: who, method, path: p, body }); return J({ ref_code: body.refCode }); }
   if (p === '/v3/positions/close' || p === '/v3/positions/reduce' || p === '/v3/positions/cancel-order') { SENT.push({ acct: who, method, path: p, body }); n++; return J({ orderId: 'C' + n }); }
   if (p === '/v3/positions/open') {
@@ -1204,12 +1205,30 @@ try {
       (await js(`return JSON.parse(localStorage.getItem('vc-support')).answered;`)) === 'no',
     'support: No sends nothing and is remembered',
   );
+  await panelPage({ rewards: {}, joinFail: true }, {});
+  await until(`${R} return !R.querySelector('.support').hidden;`, 4000);
+  await js(`${R} R.querySelector('[data-act="support-yes"]').click(); return true;`);
+  ok(
+    (await until(`${R} return /enter it once in the discount box/.test(R.querySelector('.log').innerText);`, 4000)) &&
+      (await js(`return JSON.parse(localStorage.getItem('vc-support')).answered;`)) === 'manual',
+    "support: if Vest won't link the code, the user is told to enter it in the purchase window",
+  );
+  // an account already using another code is still asked once, and the question names that code
   await panelPage({ rewards: { code: 'FRIEND' } }, {});
+  ok(
+    await until(
+      `${R} const b = R.querySelector('.support'); return !b.hidden && /You currently use code FRIEND/.test(b.innerText) && /Keep FRIEND/.test(b.innerText);`,
+      4000,
+    ),
+    'support: an account with another code is asked once, naming its current code',
+  );
+  // an account already using AMPED is never asked
+  await panelPage({ rewards: { code: 'AMPED' } }, {});
   await sleep(1500);
   ok(
     (await js(`${R} return R.querySelector('.support').hidden;`)) &&
-      (await js(`return SENT.filter(x => x.path === '/v2/referrals/join').length;`)) === 0,
-    'support: an account that already has a referral code is never asked',
+      (await js(`return JSON.parse(localStorage.getItem('vc-support')).answered;`)) === 'had-code',
+    'support: an account already using AMPED is never asked',
   );
 
   // update check on load: a newer published version shows the bar with an Install link; Later hides it

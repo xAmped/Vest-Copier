@@ -213,9 +213,11 @@ and exactly what **Cap-to-fit** solves by sizing each account to what it can act
 
 ## Support the project
 
-On first use (after accepting the terms) the panel asks once whether you'd like to use referral code **AMPED**:
-5% off your Vest purchases, and it helps keep the copier maintained. **Yes** links it to your Vest account; **No**
-changes nothing. It is never offered if your account already has a referral code.
+On first use (after accepting the terms) the panel asks once whether you'd like to use code **AMPED**: 5% off your
+Vest purchases, and it helps keep the copier maintained. If you already use another code, the question names it.
+**Yes** links AMPED to your Vest account, or, if Vest won't link it automatically, copies it so you can enter it once
+in the discount box of Vest's purchase window. **No** changes nothing. **Settings → Support** has a **Copy code AMPED**
+button any time.
 
 ## 12. Troubleshooting
 

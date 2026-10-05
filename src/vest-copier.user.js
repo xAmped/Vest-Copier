@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vest Copier
 // @namespace    vestcopier
-// @version      0.23.0
+// @version      0.23.1
 // @description  Copies a master Vest account's trades to your other Vest accounts, live, and adds a points-based order panel.
 // @author       xAmped
 // @license      Vest Copier License — free to use, no selling; see LICENSE
@@ -22,7 +22,7 @@
   if (window.__vestCopier) return;
   window.__vestCopier = true;
 
-  const VERSION = '0.23.0';
+  const VERSION = '0.23.1';
   const API = 'https://api-gateway.hz.vestmarkets.com';
   const _fetch = window.fetch.bind(window);
   // Console echo of the activity log, for troubleshooting: localStorage.setItem('vc-debug', '1') and reload.
@@ -86,6 +86,7 @@
     update: null, // { state, latest, dismissed } from the GitHub version check
     checkUpdates: true, // look for new versions on GitHub
     supportOffer: false, // the one-time "support with code AMPED" question is showing
+    supportCurrent: null, // the code the account already uses, named in that question
     ackThenArm: false, // ARM was clicked before the terms were accepted
     placing: false, // a trade-panel order is in flight
     flattenConfirm: false, // flatten-all panic button is awaiting confirmation
@@ -2444,12 +2445,13 @@
   }
 
   // ───────────────────────── support (optional referral code) ─────────────────────────
-  // Asked once, only when the Vest account has no referral code attached yet: "Support the free copier with code AMPED?"
-  // Yes links the code to the account through Vest's own referral-join call (the same one Vest's "enter a referral
-  // code" dialog uses), so Vest applies it at checkout from then on. No, or closing it, records the answer and it is
-  // never asked again. An existing code is never replaced, and nothing happens without the click.
+  // Asked once, after the terms are accepted: "Support the free copier with code AMPED?" If the account already uses
+  // another code, the question names it, so switching is the user's informed choice. Yes tries Vest's own referral-join
+  // call (the one behind Vest's "Have a Referral Code?" dialog); if Vest won't link it, the user is told to enter the
+  // code once in the purchase window's discount box (and it's put on the clipboard). No records the answer and it is
+  // never asked again. Nothing changes without the click; an account already using AMPED is never asked.
   const SUPPORT_CODE = 'AMPED';
-  const SUPPORT_KEY = 'vc-support'; // { answered: 'yes' | 'no' | 'had-code', at }
+  const SUPPORT_KEY = 'vc-support'; // { answered: 'yes' | 'manual' | 'no' | 'had-code', at }
   const supportAnswer = () => (store.get(SUPPORT_KEY, null) || {}).answered || null;
   const saveSupport = (answered) => store.set(SUPPORT_KEY, { answered, at: new Date().toISOString() });
   // The account's attached referral code, '' when none, or null when it can't be read (then nothing is offered).
@@ -2467,24 +2469,37 @@
   }
   async function maybeOfferSupport() {
     if (!S.ack || supportAnswer() || !userTokenOk()) return;
-    const code = await attachedRefCode();
-    if (code === null) return; // unknown: ask another time
-    if (code) return saveSupport('had-code'); // already referred: never asked
+    const code = await attachedRefCode(); // null when it can't be read: ask without naming a current code
+    if (code && code.toUpperCase() === SUPPORT_CODE) return saveSupport('had-code'); // already supporting
+    S.supportCurrent = code || null;
     S.supportOffer = true;
     renderSupport();
   }
+  // Put the code on the clipboard (the click that triggered this counts as the user gesture browsers ask for).
+  const copySupportCode = () =>
+    navigator.clipboard.writeText(SUPPORT_CODE).then(
+      () => true,
+      () => false,
+    );
   async function acceptSupport() {
     S.supportOffer = false;
     renderSupport();
+    const copying = copySupportCode(); // started inside the click, before any network wait
     try {
       await api('/v2/referrals/join', userToken, { method: 'POST', body: JSON.stringify({ refCode: SUPPORT_CODE }) });
       saveSupport('yes');
       logEvent('ok', `Thank you! Code ${SUPPORT_CODE} is now linked to your Vest account.`);
       diag('support', { outcome: 'joined' });
     } catch (e) {
-      saveSupport('no');
-      logEvent('info', `Vest didn't accept code ${SUPPORT_CODE} (${e.message}). Nothing was changed.`);
-      diag('support', { outcome: 'refused', error: e.message, errorCode: errCode(e) });
+      // Vest's referral link didn't take the code: the checkout discount box always does.
+      saveSupport('manual');
+      const copied = await copying;
+      logEvent(
+        'info',
+        `Thank you! To use ${SUPPORT_CODE}, enter it once in the discount box of Vest's purchase window` +
+          (copied ? ' (it is on your clipboard).' : '.'),
+      );
+      diag('support', { outcome: 'manual', error: e.message, errorCode: errCode(e) });
     }
   }
   function declineSupport() {
@@ -2498,11 +2513,15 @@
     bar.hidden = !S.supportOffer;
     if (!S.supportOffer || bar.dataset.ready) return;
     bar.dataset.ready = '1';
-    bar.innerHTML = `<span class="utext"><b>Vest Copier is free.</b> Use referral code <b>${SUPPORT_CODE}</b>? It takes
-        <b>5% off</b> your Vest purchases (the highest discount available) and helps keep the copier maintained until Vest
-        releases its own. It's linked to your Vest account once and applies at every checkout. Asked only this once.</span>
-      <button class="ubtn" data-act="support-yes">Yes, use ${SUPPORT_CODE}</button>
-      <button class="ubtn ghost" data-act="support-no">No thanks</button>`;
+    const cur = S.supportCurrent ? esc(S.supportCurrent) : null;
+    const ask = cur
+      ? `You currently use code <b>${cur}</b>. Switch to <b>${SUPPORT_CODE}</b>?`
+      : `Use code <b>${SUPPORT_CODE}</b>?`;
+    bar.innerHTML = `<span class="utext"><b>Vest Copier is free.</b> ${ask} It takes <b>5% off</b> your Vest purchases
+        (the highest discount available) and helps keep the copier maintained until Vest releases its own. Asked only
+        this once.</span>
+      <button class="ubtn" data-act="support-yes">${cur ? 'Yes, switch to' : 'Yes, use'} ${SUPPORT_CODE}</button>
+      <button class="ubtn ghost" data-act="support-no">${cur ? `Keep ${cur}` : 'No thanks'}</button>`;
     bar.querySelector('[data-act="support-yes"]').onclick = acceptSupport;
     bar.querySelector('[data-act="support-no"]').onclick = declineSupport;
   }
@@ -5141,6 +5160,10 @@
         )}
         <div class="set-row"><button class="ghostbtn" data-act="check-now">Check now</button>
           <a class="ghostbtn" href="${REPO_URL}" target="_blank" rel="noopener">GitHub</a></div>
+        <div class="set-h">Support</div>
+        <div class="opt-desc">Vest Copier is free. Code <b>${SUPPORT_CODE}</b> takes 5% off Vest purchases and helps keep it
+          maintained. Enter it in the discount box of Vest's purchase window.</div>
+        <div class="set-row"><button class="ghostbtn" data-act="copy-code">Copy code ${SUPPORT_CODE}</button></div>
       </div>`;
     body.querySelectorAll('[data-opt]').forEach(
       (b) =>
@@ -5157,6 +5180,8 @@
         }),
     );
     body.querySelector('[data-act="check-now"]').onclick = () => checkForUpdate(true);
+    body.querySelector('[data-act="copy-code"]').onclick = () =>
+      copySupportCode().then((ok) => toast(ok ? `Code ${SUPPORT_CODE} copied.` : `Code: ${SUPPORT_CODE}`));
   }
 
   // Rules tab, and the one-time risk acknowledgement (shown on first load; required before arming or trading).

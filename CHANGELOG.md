@@ -2,6 +2,11 @@
 
 Plain-language notes. Newest first. Paste the latest `src/vest-copier.user.js` into Tampermonkey and refresh Vest to update.
 
+## v0.23.1
+- The one-time AMPED question is now shown to everyone. If you already use another code, it names it ("You currently use code X. Switch to AMPED?") and **Keep X** leaves it as it is.
+- If Vest won't link the code automatically, **Yes** copies AMPED and tells you to enter it once in the discount box of Vest's purchase window.
+- **Settings → Support** has a **Copy code AMPED** button.
+
 ## v0.23.0
 - **Risk acknowledgement.** On first use, the panel shows the risks and asks you to accept them (tick the box, then **Accept and continue**) before you can arm or place an order from the Trade tab. Everyone sees it once, including current users, because the terms are new. Full text: DISCLAIMER.md on GitHub.
 - **Optional referral code.** After that, the panel asks once whether you'd like to use code **AMPED** (5% off Vest purchases, and it supports the copier). Nothing is changed unless you click **Yes**, and it is never offered if your account already has a referral code.

@@ -81,10 +81,10 @@ python3 tools/package.py                                 # shareable zip in dist
 
 ## Support the project
 
-Vest Copier is free. On first use the panel asks, once, whether you'd like to use referral code **AMPED**: it takes
-**5% off** your Vest purchases and helps keep the copier maintained until Vest releases its own. It's applied only if
-you click **Yes**, and never offered if your account already has a referral code. You can also enter it yourself in
-Vest's purchase window.
+Vest Copier is free. On first use the panel asks, once, whether you'd like to use code **AMPED**: it takes **5% off**
+your Vest purchases and helps keep the copier maintained until Vest releases its own. If you already use another code,
+the question names it so you can keep it. Nothing changes unless you click **Yes**. You can also enter AMPED yourself
+in the discount box of Vest's purchase window (Settings → Support has a Copy button).
 
 ## Disclaimer
 
