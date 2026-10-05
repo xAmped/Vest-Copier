@@ -99,7 +99,7 @@ same percentage rather than the same contracts.
 
 ## 5. Using it, step by step
 
-1. **Refresh** so your accounts load. Check the green "can trade" dots.
+1. Your accounts load by themselves (click **Reload accounts** ↻ if not). Check the green "can trade" dots.
 2. Click **M** on your master. Click **Flw** on each follower.
    - Strict 1:1: followers must match the master's group. For different sizes, turn on **Cap-to-fit**
      in **Settings** first.
@@ -211,7 +211,7 @@ and exactly what **Cap-to-fit** solves by sizing each account to what it can act
 
 ---
 
-## The AMPED code
+## 12. The AMPED code
 
 On first use (after accepting the terms) the panel asks once whether you'd like to use code **AMPED**: 5% off your
 Vest purchases, and it helps keep the copier maintained. If you already use another code, the question names it.
@@ -219,7 +219,7 @@ Vest purchases, and it helps keep the copier maintained. If you already use anot
 the activity log. If Vest refuses AMPED, your previous code is put back. **No** changes nothing. **Settings →
 Support** turns the switching on or off and has a **Copy code AMPED** button.
 
-## 12. Troubleshooting
+## 13. Troubleshooting
 
 - **Panel didn't appear** — confirm the script is enabled in Tampermonkey and you're on
   `next.vestmarkets.com`; refresh.
@@ -231,6 +231,6 @@ Support** turns the switching on or off and has a **Copy code AMPED** button.
   master isn't, or a resting order. Fix that account on Vest, then arm. (Same trade on master and
   followers is fine — it's adopted.)
 - **An order didn't fill** — the log says which account (master included). Vest accepted it but didn't execute
-  it: usually not enough margin for that size, or (before v0.20) a second entry sent while already in the trade. A
-  follower that misses an entry is dropped from tracking; one that misses an add keeps its original position.
+  it, usually because there wasn't enough margin for that size. A follower that misses an entry is dropped from
+  tracking; one that misses an add keeps its original position.
 - **Something looks wrong** — hit **Diag**, save the JSON, and send it along with what you expected.

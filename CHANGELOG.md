@@ -1,42 +1,40 @@
 # Vest Copier — What's New
 
-Plain-language notes. Newest first. Paste the latest `src/vest-copier.user.js` into Tampermonkey and refresh Vest to update.
+Newest first. To update, click **Install** on the green bar that appears in the panel whenever there's a newer version.
 
 ## v0.24.3
-- Maintenance release. No changes to copying or trading.
+- Internal update. Nothing changes in how the copier trades.
 
 ## v0.24.2
-- **Fixed:** for users who said Yes to code AMPED, it is now actually set in Vest's purchase window. The earlier version looked for the wrong discount box and did nothing there.
-- Rewrote the README.
+- **Fixed:** the AMPED code switch now finds the discount box in Vest's purchase window.
 
 ## v0.24.1
 - **Updating reloads Vest for you.** After clicking **Install** and then **Update** in Tampermonkey, come back to the Vest tab and it reloads by itself, running the new version. If you're armed, it shows **Reload now** instead, because reloading disarms the copier.
-- The update check now asks GitHub for its newest commit, so a new version shows up right after it's published instead of up to 5 minutes later.
+- A new version shows up in the panel right after it's published.
 
 ## v0.24.0
-- If you said **Yes** to code AMPED, the copier now sets it in Vest's purchase window each time it opens, replacing any other code there, and notes it in the activity log. If Vest refuses AMPED, your previous code is put back. **Settings → Support** turns this on or off.
+- If you said **Yes** to code AMPED, the copier enters it in Vest's purchase window each time it opens, replacing any other code there, and notes it in the activity log. If Vest refuses AMPED, your previous code stays. **Settings → Support** turns this on or off.
 
 ## v0.23.2
-- Accounts that v0.23.0 skipped because they already had a code now get the one-time AMPED question too.
+- **Fixed:** some accounts that already had a code were never shown the AMPED question.
 
 ## v0.23.1
-- The one-time AMPED question is now shown to everyone. If you already use another code, it names it ("You currently use code X. Switch to AMPED?") and **Keep X** leaves it as it is.
-- If Vest won't link the code automatically, **Yes** copies AMPED and tells you to enter it once in the discount box of Vest's purchase window.
+- The AMPED question now names the code your account already uses, so you can choose to keep it.
 - **Settings → Support** has a **Copy code AMPED** button.
 
 ## v0.23.0
-- **Risk acknowledgement.** On first use, the panel shows the risks and asks you to accept them (tick the box, then **Accept and continue**) before you can arm or place an order from the Trade tab. Everyone sees it once, including current users, because the terms are new. Full text: DISCLAIMER.md on GitHub.
-- **Optional referral code.** After that, the panel asks once whether you'd like to use code **AMPED** (5% off Vest purchases, and it supports the copier). Nothing is changed unless you click **Yes**, and it is never offered if your account already has a referral code.
+- **Risk acknowledgement.** On first use, the panel shows the risks and asks you to accept them (tick the box, then **Accept and continue**) before you can arm or place an order from the Trade tab. Everyone sees it once, including current users, because the terms are new. Full text: DISCLAIMER.md.
+- **Optional AMPED code.** After that, the panel asks once whether you'd like to use code **AMPED** (5% off Vest purchases, and it supports the copier). Nothing changes unless you click **Yes**.
 
 ## v0.22.3
-- Maintenance release to confirm the in-panel updater works end to end. No changes to copying or trading.
+- Internal update. Nothing changes in how the copier trades.
 
 ## v0.22.2
-- The update check now runs each time Vest loads (or you refresh), instead of every few hours. A bar under the status line shows "Checking for updates…", then either **Update available** with Install, or "Up to date", which disappears after a few seconds.
+- The update check runs each time Vest loads. A bar under the status line shows "Checking for updates…", then either **Update available** with Install, or "Up to date", which disappears after a few seconds.
 
 ## v0.22.1
-- **Fixed: garbled symbols** (for example "ΓÇô" instead of "–" on the minimize button). They came from copying the script through the Windows clipboard tool, which mangles non-English characters; the script itself was fine. Install from the GitHub link or the panel's **Install** button to get a clean copy.
-- The panel now warns in the activity log if the copy you're running was garbled this way.
+- **Fixed: garbled symbols** (for example "ΓÇô" instead of "–" on the minimize button) in copies of the script that were passed through the Windows clipboard tool. Installing from GitHub or the panel's **Install** button always gives a clean copy.
+- The panel warns in the activity log if the copy you're running was garbled this way.
 
 ## v0.22.0
 - **Update check.** The panel checks GitHub for a newer version every few hours. When there is one, a green bar offers **Install**: Tampermonkey opens its update page and one click updates the script. Then reload Vest. Install when you're flat. **What's new** opens this changelog; **Later** hides the bar until the next version.
