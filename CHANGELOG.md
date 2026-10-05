@@ -2,6 +2,10 @@
 
 Newest first. To update, click **Install** on the green bar that appears in the panel whenever there's a newer version.
 
+## v0.26.1
+- **Discord:** the Support tab has a **Join the Discord** button for questions, setup help and chatting with other users.
+- New versions now come from GitHub releases, and the panel's **Install** button downloads the release file.
+
 ## v0.26.0
 - **New Support tab**, next to Rules. Report a problem (it saves a report file and opens a pre-filled GitHub issue), share an idea or feedback, or jump to what's new, the user guide and the tutorial. The **Problem? Report it** link at the bottom opens it too.
 

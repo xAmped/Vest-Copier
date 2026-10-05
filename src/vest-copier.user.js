@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         Vest Copier
 // @namespace    vestcopier
-// @version      0.26.0
+// @version      0.26.1
 // @description  Copies a master Vest account's trades to your other Vest accounts, live, and adds a points-based order panel.
 // @author       xAmped
 // @license      Vest Copier License — free to use, no selling; see LICENSE
 // @homepageURL  https://github.com/xAmped/Vest-Copier
 // @supportURL   https://github.com/xAmped/Vest-Copier/issues
 // @updateURL    https://raw.githubusercontent.com/xAmped/Vest-Copier/main/src/vest-copier.user.js
-// @downloadURL  https://raw.githubusercontent.com/xAmped/Vest-Copier/main/src/vest-copier.user.js
+// @downloadURL  https://github.com/xAmped/Vest-Copier/releases/latest/download/vest-copier.user.js
 // @match        https://next.vestmarkets.com/*
 // @run-at       document-start
 // @grant        none
@@ -22,7 +22,7 @@
   if (window.__vestCopier) return;
   window.__vestCopier = true;
 
-  const VERSION = '0.26.0';
+  const VERSION = '0.26.1';
   const API = 'https://api-gateway.hz.vestmarkets.com';
   const _fetch = window.fetch.bind(window);
   // Console echo of the activity log, for troubleshooting: localStorage.setItem('vc-debug', '1') and reload.
@@ -2371,11 +2371,15 @@
   // "Checking…", then "Update available" with Install (opening the .user.js link makes Tampermonkey show its own update
   // page, where one click installs it — a script can't replace itself), or "Up to date", which fades after a moment.
   const REPO_URL = 'https://github.com/xAmped/Vest-Copier';
+  const DISCORD_URL = 'https://discord.gg/Aa69y9KnM3';
   const SCRIPT_URL = 'https://raw.githubusercontent.com/xAmped/Vest-Copier/main/src/vest-copier.user.js';
   // GitHub's raw file server caches `main` for up to 5 minutes after a push. The API names the newest commit (cached
   // about a minute), and a file fetched by commit id is never stale, so check (and install) from that commit.
-  const LATEST_COMMIT_API = 'https://api.github.com/repos/xAmped/Vest-Copier/commits/main';
-  const scriptAt = (sha) => `https://raw.githubusercontent.com/xAmped/Vest-Copier/${sha}/src/vest-copier.user.js`;
+  // New versions are published as GitHub releases with the script attached. The panel reads the latest release and
+  // installs that release's file, which GitHub counts as a download (the only usage number there is: the copier itself
+  // reports nothing). If the API is unavailable (60 requests an hour per IP), it falls back to the raw file on `main`.
+  const LATEST_RELEASE_API = 'https://api.github.com/repos/xAmped/Vest-Copier/releases/latest';
+  const releaseAsset = (tag) => `https://github.com/xAmped/Vest-Copier/releases/download/${tag}/vest-copier.user.js`;
   const UPDATE_KEY = 'vc-update'; // remembers only which version "Later" was clicked for
   const UPDATE_NOTE_MS = 4000; // how long "Up to date" / "Couldn't check" stays up
   // Numeric compare of dotted versions: 1 if a > b, -1 if a < b, 0 if equal.
@@ -2401,18 +2405,25 @@
     S.update.state = 'checking';
     renderUpdate();
     try {
-      let url = SCRIPT_URL;
+      let latest = null;
       try {
-        const c = await _fetch(LATEST_COMMIT_API, { cache: 'no-store' });
-        const sha = c.ok ? (await c.json()).sha : null;
-        if (/^[0-9a-f]{40}$/.test(sha || '')) url = scriptAt(sha);
-      } catch {} // API unavailable or rate-limited (60 an hour per IP): fall back to the cached file
-      S.update.installUrl = url;
-      const r = await _fetch(url, { cache: 'no-store' });
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      const m = (await r.text()).match(/^\/\/ @version\s+(\S+)/m);
-      if (!m) throw new Error('no version in the published script');
-      S.update.latest = m[1];
+        const rel = await _fetch(LATEST_RELEASE_API, { cache: 'no-store' });
+        const j = rel.ok ? await rel.json() : null;
+        const asset = j && (j.assets || []).find((a) => a.name === 'vest-copier.user.js');
+        if (j && /^v?\d+(\.\d+)*$/.test(j.tag_name || '') && asset) {
+          latest = j.tag_name.replace(/^v/, '');
+          S.update.installUrl = asset.browser_download_url || releaseAsset(j.tag_name);
+        }
+      } catch {} // API unavailable or rate-limited: fall back to the raw file
+      if (!latest) {
+        const r = await _fetch(SCRIPT_URL, { cache: 'no-store' });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const m = (await r.text()).match(/^\/\/ @version\s+(\S+)/m);
+        if (!m) throw new Error('no version in the published script');
+        latest = m[1];
+        S.update.installUrl = SCRIPT_URL;
+      }
+      S.update.latest = latest;
       S.update.state = updateAvailable() ? 'available' : 'current';
       if (manual && S.update.state === 'available') S.update.dismissed = null; // Check now always shows it
     } catch (e) {
@@ -5651,6 +5662,11 @@
             and your accounts' balances. Account ids are replaced by their names. It never contains passwords or login
             tokens.</p>
           <button class="armbtn sm" id="rp-send">Save report &amp; open issue</button>
+        </div>
+        <div class="sup-card">
+          <div class="sup-h">Help and community</div>
+          <p class="sc-sub">Questions, setup help, or just talking trades with other users: join the Vest Copier Discord.</p>
+          <a class="ghostbtn" href="${DISCORD_URL}" target="_blank" rel="noopener">Join the Discord</a>
         </div>
         <div class="sup-card">
           <div class="sup-h">Ideas and feedback</div>

@@ -35,7 +35,7 @@ distance, so every account risks the same percent.
 
 ## Getting it running
 
-1. Open **[vest-copier.user.js](https://raw.githubusercontent.com/xAmped/Vest-Copier/main/src/vest-copier.user.js)**.
+1. Open **[vest-copier.user.js](https://github.com/xAmped/Vest-Copier/releases/latest/download/vest-copier.user.js)**.
    Tampermonkey shows an install page. Click **Install**.
 2. Log in at [next.vestmarkets.com](https://next.vestmarkets.com). A dark panel titled Vest Copier opens in the top
    right.
@@ -56,7 +56,7 @@ through every button.
 | P&L | Profit or loss per account and in total. |
 | Settings | Fast mode, Auto-flatten, Cap-to-fit, update checks, and the AMPED code switch. |
 | Rules | What the copier will and won't do, and the risk notice. |
-| Support | Report a problem, share an idea, links to the guides, and the AMPED code. |
+| Support | Report a problem, share an idea, the Discord, links to the guides, and the AMPED code. |
 
 Below the tabs: **ARM / DISARM**, a red **Flatten All** that closes everything on every account, and an activity log
 with **Diag** and **CSV** exports.
@@ -79,6 +79,7 @@ with **Diag** and **CSV** exports.
 | ARM refuses | The log names the account and the reason, usually a resting order or an opposite position. Clear it on Vest and arm again. |
 | "did NOT fill" in the log | Vest accepted the order but didn't execute it, usually not enough margin for that size. Trade smaller or use Cap-to-fit. |
 | Amber status bar | Vest updated its site. Click the bar, let the check finish, then Accept. |
+| Need a hand | Ask in the [Vest Copier Discord](https://discord.gg/Aa69y9KnM3). |
 | Anything else | Open the **Support** tab and use Report a problem. It saves a report file and opens a pre-filled [GitHub issue](https://github.com/xAmped/Vest-Copier/issues); drag the file in. The file has sizes, prices and balances but no login data. |
 
 ## Updates

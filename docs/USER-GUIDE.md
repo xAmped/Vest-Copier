@@ -17,7 +17,7 @@ your own logged-in browser session: nothing logs in on your behalf, and it only 
    go to `chrome://extensions`, open Tampermonkey's **Details** page and switch **Allow User Scripts** on
    (without it the script is installed but never runs).
 2. Open the install link,
-   <https://raw.githubusercontent.com/xAmped/Vest-Copier/main/src/vest-copier.user.js>, and click
+   <https://github.com/xAmped/Vest-Copier/releases/latest/download/vest-copier.user.js>, and click
    **Install**. After that, Tampermonkey keeps it updated by itself.
 3. No link? Open Tampermonkey → **Create a new script**, delete the template, paste the entire contents of
    `vest-copier.user.js`, and **Save** (Ctrl/Cmd-S).
@@ -40,7 +40,7 @@ their own browser.
 - **Header:** `Vest Copier`, an **Armed · live / Ready / Idle** tag, small `FAST`/`CAP` markers when those
   options are on, **Reload accounts** (↻) and collapse (`–`).
 - **Tabs:** **Accounts**, **Trade**, **P&L**, **Settings**, **Rules**, and **Support** (report a problem, share an idea,
-  links to the guides, the AMPED code).
+  the Discord, links to the guides, the AMPED code).
 - **Health bar:** a colored dot + `build <id>` (green = known build; amber = Vest changed its site,
   re-verify) and a live `API nnn/200` rate indicator.
 - **Accounts:** grouped by size and type. Each row shows the account, its type chip, a green/red
@@ -221,6 +221,8 @@ the activity log. If Vest refuses AMPED, your previous code is put back. **No** 
 Support** turns the switching on or off and has a **Copy code AMPED** button.
 
 ## 13. Troubleshooting
+
+Questions or setup help: ask in the [Vest Copier Discord](https://discord.gg/Aa69y9KnM3).
 
 - **Panel didn't appear** — confirm the script is enabled in Tampermonkey and you're on
   `next.vestmarkets.com`; refresh.
