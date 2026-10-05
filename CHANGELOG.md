@@ -2,6 +2,9 @@
 
 Plain-language notes. Newest first. Paste the latest `src/vest-copier.user.js` into Tampermonkey and refresh Vest to update.
 
+## v0.24.3
+- Maintenance release. No changes to copying or trading.
+
 ## v0.24.2
 - **Fixed:** for users who said Yes to code AMPED, it is now actually set in Vest's purchase window. The earlier version looked for the wrong discount box and did nothing there.
 - Rewrote the README.
