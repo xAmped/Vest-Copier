@@ -48,6 +48,7 @@ window.WebSocket = class {
 const real = window.fetch.bind(window);
 window.fetch = async (input, init = {}) => {
   const url = typeof input === 'string' ? input : input.url;
+  if (url.startsWith('https://raw.githubusercontent.com/')) return new Response('// @version 0.0.1\\n');
   if (!url.startsWith('https://api-gateway')) return real(input, init);
   const p = new URL(url).pathname;
   const acct = (id, i) => ({ id, initial_capital: '50000', max_drawdown_limit: '47500', account_type: 3, plan_product_type: 'funded',

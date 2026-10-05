@@ -24,9 +24,10 @@ when you trade.
    `vest-copier.user.js`, and **Save** (Ctrl/Cmd-S).
 4. Open or refresh **next.vestmarkets.com**. A **Vest Copier** panel appears top-right.
 
-**Updating:** installed from the link, Tampermonkey checks for updates daily (or use its **Check for
-updates**). Pasted by hand, paste the new version over the old one, Save, and refresh Vest. Your settings
-and logs are kept either way.
+**Updating:** the panel checks GitHub every few hours. When a new version is out, a green bar shows
+**Install**: click it, click **Update** on Tampermonkey's page, then reload Vest (do it while flat).
+**Settings → Updates** has **Check now** and a switch to turn the check off. Installed from the link,
+Tampermonkey also updates the script on its own schedule. Your settings and logs are kept.
 
 **Sharing with a friend:** the userscript contains **no personal information** — no tokens, keys,
 emails, or account ids. It's safe to send. It only ever uses the session of whoever installs it in

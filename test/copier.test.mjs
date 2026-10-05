@@ -60,6 +60,7 @@ const real = window.fetch.bind(window);
 let n = 0;
 window.fetch = async (input, init = {}) => {
   const url = typeof input === 'string' ? input : input.url;
+  if (url.startsWith('https://raw.githubusercontent.com/')) return new Response('// ==UserScript==\\n// @version      ' + (CFG.latestVersion || '0.0.1') + '\\n');
   if (!url.startsWith('https://api-gateway')) return real(input, init);
   const p = new URL(url).pathname;
   const acct = (a, i) => ({ id: a, initial_capital: '500', max_drawdown_limit: '490', account_type: 3, plan_product_type: 'instant_funded', plan_id: 'plan-x', attempt_index: i, max_leverage: '5.0000' });
@@ -134,7 +135,8 @@ let CFG = {};
 const server = createServer((req, res) => {
   if (req.url === '/vest-copier.user.js') {
     res.setHeader('content-type', 'text/javascript; charset=utf-8');
-    return res.end(SCRIPT);
+    // CFG.garbled: the script as a legacy-code-page tool would mangle it (every non-ASCII character re-encoded)
+    return res.end(CFG.garbled ? Buffer.from(Buffer.from(SCRIPT, 'utf8').toString('latin1'), 'utf8') : SCRIPT);
   }
   if (req.url === '/vest-bundle.js') {
     res.setHeader('content-type', 'text/javascript');
@@ -1124,6 +1126,41 @@ try {
       5000,
     ),
     'reload mid-adjustment: the saved breakeven plan still fires',
+  );
+
+  // a garbled copy (e.g. pasted through clip.exe) still runs and says so; a clean copy doesn't
+  await panelPage({ garbled: true }, {});
+  ok(/garbled when it was copied/.test(await logText()), 'encoding check: a garbled copy warns in the log');
+  await panelPage({}, {});
+  ok(!/garbled when it was copied/.test(await logText()), 'encoding check: a clean copy says nothing');
+
+  // update check: a newer published version shows the banner with an Install link; Later hides it
+  await panelPage({ latestVersion: '9.9.9' }, {});
+  await js(
+    `${R} R.querySelector('[data-tab="settings"]').click(); R.querySelector('[data-act="check-now"]').click(); return true;`,
+  );
+  ok(
+    await until(
+      `${R} const u = R.querySelector('.update'); return !u.hidden && /Update available: v9\\.9\\.9/.test(u.innerText);`,
+      4000,
+    ),
+    'update check: newer version on GitHub shows the update bar',
+  );
+  ok(
+    (await js(`${R} return R.querySelector('.update a.ubtn').href;`)) ===
+      'https://raw.githubusercontent.com/xAmped/Vest-Copier/main/src/vest-copier.user.js',
+    'update check: Install opens the published .user.js (Tampermonkey update page)',
+  );
+  await js(`${R} R.querySelector('[data-act="update-later"]').click(); return true;`);
+  ok(await js(`${R} return R.querySelector('.update').hidden;`), 'update check: Later hides it until the next version');
+  await panelPage({ latestVersion: '0.0.1' }, {});
+  await js(
+    `${R} R.querySelector('[data-tab="settings"]').click(); R.querySelector('[data-act="check-now"]').click(); return true;`,
+  );
+  ok(
+    (await until(`${R} return /Up to date/.test(R.querySelector('.log').innerText);`, 4000)) &&
+      (await js(`${R} return R.querySelector('.update').hidden;`)),
+    'update check: an older published version shows nothing',
   );
 
   // a resting limit entry: no fill to find yet, so followers must stay linked; the master's cancel reaches them

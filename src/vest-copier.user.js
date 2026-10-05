@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vest Copier
 // @namespace    vestcopier
-// @version      0.21.0
+// @version      0.22.1
 // @description  Copies a master Vest account's trades to your other Vest accounts, live, and adds a points-based order panel.
 // @author       xAmped
 // @license      Vest Copier License — free to use, no selling; see LICENSE
@@ -22,7 +22,7 @@
   if (window.__vestCopier) return;
   window.__vestCopier = true;
 
-  const VERSION = '0.21.0';
+  const VERSION = '0.22.1';
   const API = 'https://api-gateway.hz.vestmarkets.com';
   const _fetch = window.fetch.bind(window);
   // Console echo of the activity log, for troubleshooting: localStorage.setItem('vc-debug', '1') and reload.
@@ -83,6 +83,8 @@
     autoFlatten: false, // auto-close orphan followers if the master open is rejected
     orphan: null, // { list: [{ accountId, positionId, symbol, leverage }] } follower positions without the master
     arming: false, // an arm is in progress
+    update: null, // { latest, checkedAt, dismissed, error } from the GitHub version check
+    checkUpdates: true, // look for new versions on GitHub
     placing: false, // a trade-panel order is in flight
     flattenConfirm: false, // flatten-all panic button is awaiting confirmation
     flattening: false, // a flatten-all sweep is in progress
@@ -2136,9 +2138,10 @@
     S.fast = !!o.fast;
     S.autoFlatten = !!o.autoFlatten;
     S.capFit = !!o.capFit;
+    S.checkUpdates = o.checkUpdates !== false; // on by default
   }
   function saveOpts() {
-    store.set(OPTS_KEY, { fast: S.fast, autoFlatten: S.autoFlatten, capFit: S.capFit });
+    store.set(OPTS_KEY, { fast: S.fast, autoFlatten: S.autoFlatten, capFit: S.capFit, checkUpdates: S.checkUpdates });
   }
   function loadTrade() {
     const t = store.get(TRADE_KEY, null);
@@ -2353,6 +2356,80 @@
     if (last && last !== fp) return { level: 'amber', text: 'Vest updated — click to run site check', changed: true };
     return { level: 'green', text: 'build ' + fp, changed: false };
   };
+
+  // ───────────────────────── updates ─────────────────────────
+  // Compares this script's version with the published one on GitHub (read-only; the page allows the request and GitHub
+  // serves it cross-origin). When newer, the panel offers Install: opening the .user.js link makes Tampermonkey show
+  // its own update page, where one click installs it. Scripts can't replace themselves; Tampermonkey does that.
+  const REPO_URL = 'https://github.com/xAmped/Vest-Copier';
+  const SCRIPT_URL = 'https://raw.githubusercontent.com/xAmped/Vest-Copier/main/src/vest-copier.user.js';
+  const UPDATE_KEY = 'vc-update';
+  const UPDATE_FIRST_CHECK_MS = 15000,
+    UPDATE_EVERY_MS = 6 * 3600 * 1000;
+  // Numeric compare of dotted versions: 1 if a > b, -1 if a < b, 0 if equal.
+  const cmpVersion = (a, b) => {
+    const pa = String(a).split('.').map(Number),
+      pb = String(b).split('.').map(Number);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+      const d = (pa[i] || 0) - (pb[i] || 0);
+      if (d) return d > 0 ? 1 : -1;
+    }
+    return 0;
+  };
+  // S.update = { latest, checkedAt, dismissed, error? }; persisted so a reload doesn't re-check straight away.
+  function loadUpdate() {
+    const u = store.get(UPDATE_KEY, {}) || {};
+    S.update = { latest: u.latest || null, checkedAt: u.checkedAt || 0, dismissed: u.dismissed || null };
+  }
+  const updateAvailable = () => !!(S.update && S.update.latest && cmpVersion(S.update.latest, VERSION) > 0);
+  async function checkForUpdate(manual = false) {
+    if (!S.checkUpdates && !manual) return;
+    try {
+      const r = await _fetch(SCRIPT_URL, { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const m = (await r.text()).match(/^\/\/ @version\s+(\S+)/m);
+      if (!m) throw new Error('no version in the published script');
+      S.update = { ...S.update, latest: m[1], checkedAt: Date.now(), error: null };
+      if (manual)
+        logEvent(
+          'info',
+          updateAvailable() ? `Update available: v${m[1]} (you have v${VERSION}).` : `Up to date (v${VERSION}).`,
+        );
+    } catch (e) {
+      S.update = { ...S.update, checkedAt: Date.now(), error: e.message };
+      if (manual) logEvent('warn', `Couldn't check for updates (${e.message}).`);
+    }
+    store.set(UPDATE_KEY, { latest: S.update.latest, checkedAt: S.update.checkedAt, dismissed: S.update.dismissed });
+    render();
+  }
+  function startUpdateChecks() {
+    const due = Math.max(UPDATE_FIRST_CHECK_MS, S.update.checkedAt + UPDATE_EVERY_MS - Date.now());
+    setTimeout(() => {
+      checkForUpdate();
+      setInterval(checkForUpdate, UPDATE_EVERY_MS);
+    }, due);
+  }
+  function dismissUpdate() {
+    S.update.dismissed = S.update.latest;
+    store.set(UPDATE_KEY, { latest: S.update.latest, checkedAt: S.update.checkedAt, dismissed: S.update.dismissed });
+    render();
+  }
+  function renderUpdate() {
+    const bar = _root && _root.querySelector('.update');
+    if (!bar) return;
+    const show = updateAvailable() && S.update.dismissed !== S.update.latest;
+    bar.hidden = !show;
+    if (!show) return;
+    const v = esc(S.update.latest);
+    const html = `<span class="utext"><b>Update available: v${v}</b>${S.armed ? ' · install when flat' : ''}</span>
+      <a class="ubtn" href="${SCRIPT_URL}" target="_blank" rel="noopener" title="Opens Tampermonkey's update page; then reload Vest">Install</a>
+      <a class="ubtn ghost" href="${REPO_URL}/blob/main/CHANGELOG.md" target="_blank" rel="noopener">What's new</a>
+      <button class="ubtn ghost" data-act="update-later" aria-label="Hide until the next version">Later</button>`;
+    if (bar.dataset.html === html) return;
+    bar.dataset.html = html;
+    bar.innerHTML = html;
+    bar.querySelector('[data-act="update-later"]').onclick = dismissUpdate;
+  }
 
   // ───────────────────────── site check (run after Vest ships an update) ─────────────────────────
   // Read-only: probes every endpoint the copier reads and checks the responses still have the fields it uses, then scans
@@ -3067,6 +3144,51 @@
     .le.info {
       color: #aab0b9;
     }
+    .update {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      padding: 8px 15px;
+      border-bottom: 1px solid var(--line);
+      background: var(--accent-dim);
+      color: var(--accent);
+      font-size: 11px;
+      flex: none;
+    }
+    .utext {
+      flex-basis: 100%;
+    }
+    .update[hidden] {
+      display: none;
+    }
+    .ubtn {
+      cursor: pointer;
+      font-size: 10.5px;
+      font-weight: 650;
+      border-radius: 7px;
+      padding: 4px 9px;
+      border: 1px solid var(--accent-line);
+      background: #163a2c;
+      color: var(--accent);
+      text-decoration: none;
+    }
+    .ubtn.ghost {
+      border-color: var(--line2);
+      background: var(--elev2);
+      color: var(--dim);
+    }
+    .ubtn:hover {
+      filter: brightness(1.15);
+    }
+    .set-row {
+      display: flex;
+      gap: 8px;
+      padding: 4px 0 6px;
+    }
+    a.ghostbtn {
+      text-decoration: none;
+    }
     .toast {
       margin: 0 15px 10px;
       padding: 8px 11px;
@@ -3583,6 +3705,7 @@
         <div class="health" role="button" tabindex="0" title="Click to run the site check">
           <span class="dot gray"></span><span class="htext">Starting…</span><span class="spacer"></span><span class="rate" id="rate"></span>
         </div>
+        <div class="update" hidden></div>
         <div class="body"><div class="empty">Waiting for your Vest session…</div></div>
         <div class="ctl">
           <button class="armbtn" data-act="arm" disabled>ARM</button>
@@ -3699,6 +3822,7 @@
     _root.querySelector('.htext').textContent = h.text;
     _root.querySelector('.health').classList.toggle('amber-bar', h.changed);
     renderRate();
+    renderUpdate();
   }
   function renderRate() {
     if (!_root) return;
@@ -4893,6 +5017,16 @@
           'Size each follower to its own equity instead of copying 1:1. Every account takes the same % risk with the same stop distance, ' +
             'and <b>different-size followers</b> are allowed (e.g. a 25k master with 5k accounts). Off: strict 1:1, same-size accounts only.',
         )}
+        <div class="set-h">Updates</div>
+        ${option(
+          'updates',
+          S.checkUpdates,
+          'Check for updates',
+          `Look for a newer version on GitHub every few hours and offer a one-click install. You have v${VERSION}` +
+            (S.update && S.update.latest ? `; the latest published is v${esc(S.update.latest)}.` : '.'),
+        )}
+        <div class="set-row"><button class="ghostbtn" data-act="check-now">Check now</button>
+          <a class="ghostbtn" href="${REPO_URL}" target="_blank" rel="noopener">GitHub</a></div>
       </div>`;
     body.querySelectorAll('[data-opt]').forEach(
       (b) =>
@@ -4901,8 +5035,14 @@
           if (o === 'fast') toggleFast();
           else if (o === 'autoflat') toggleAutoFlatten();
           else if (o === 'capfit') toggleCapFit();
+          else if (o === 'updates') {
+            S.checkUpdates = !S.checkUpdates;
+            saveOpts();
+            render();
+          }
         }),
     );
+    body.querySelector('[data-act="check-now"]').onclick = () => checkForUpdate(true);
   }
 
   function renderRules(body) {
@@ -5057,6 +5197,18 @@
     }
   }
 
+  // A copy of the script that passed through a tool using a legacy code page (e.g. Windows clip.exe) has every
+  // non-ASCII character mangled: this one-character dash arrives as three ("ΓÇô"). Say so, and point at a clean install.
+  const ENCODING_PROBE = '–';
+  function checkEncoding() {
+    if (ENCODING_PROBE.length === 1) return;
+    logEvent(
+      'warn',
+      'This copy of Vest Copier was garbled when it was copied (symbols look wrong). Reinstall it from ' + SCRIPT_URL,
+    );
+    diag('encoding', { probeLength: ENCODING_PROBE.length });
+  }
+
   // ───────────────────────── boot ─────────────────────────
   const boot = () => {
     loadLog();
@@ -5064,12 +5216,15 @@
     loadAck();
     loadOpts();
     loadTrade();
+    loadUpdate();
     initBuild();
     _root = buildPanel();
     loadPlans();
     renderHealth();
     renderLog();
     refresh();
+    startUpdateChecks();
+    checkEncoding();
     LOG(`v${VERSION} loaded.`);
   };
   if (document.readyState === 'loading') window.addEventListener('DOMContentLoaded', boot);

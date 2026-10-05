@@ -2,6 +2,15 @@
 
 Plain-language notes. Newest first. Paste the latest `src/vest-copier.user.js` into Tampermonkey and refresh Vest to update.
 
+## v0.22.1
+- **Fixed: garbled symbols** (for example "ΓÇô" instead of "–" on the minimize button). They came from copying the script through the Windows clipboard tool, which mangles non-English characters; the script itself was fine. Install from the GitHub link or the panel's **Install** button to get a clean copy.
+- The panel now warns in the activity log if the copy you're running was garbled this way.
+
+## v0.22.0
+- **Update check.** The panel checks GitHub for a newer version every few hours. When there is one, a green bar offers **Install**: Tampermonkey opens its update page and one click updates the script. Then reload Vest. Install when you're flat. **What's new** opens this changelog; **Later** hides the bar until the next version.
+- Settings has a new **Updates** section: turn the check off, or **Check now**.
+- Installs from the GitHub link also get Tampermonkey's own automatic updates.
+
 ## v0.21.0
 A full review of the code before sharing it. Mostly safety fixes; nothing new to learn.
 
