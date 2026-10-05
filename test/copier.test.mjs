@@ -1134,17 +1134,14 @@ try {
   await panelPage({}, {});
   ok(!/garbled when it was copied/.test(await logText()), 'encoding check: a clean copy says nothing');
 
-  // update check: a newer published version shows the banner with an Install link; Later hides it
+  // update check on load: a newer published version shows the bar with an Install link; Later hides it
   await panelPage({ latestVersion: '9.9.9' }, {});
-  await js(
-    `${R} R.querySelector('[data-tab="settings"]').click(); R.querySelector('[data-act="check-now"]').click(); return true;`,
-  );
   ok(
     await until(
       `${R} const u = R.querySelector('.update'); return !u.hidden && /Update available: v9\\.9\\.9/.test(u.innerText);`,
       4000,
     ),
-    'update check: newer version on GitHub shows the update bar',
+    'update check on load: a newer version on GitHub shows the update bar',
   );
   ok(
     (await js(`${R} return R.querySelector('.update a.ubtn').href;`)) ===
@@ -1153,14 +1150,25 @@ try {
   );
   await js(`${R} R.querySelector('[data-act="update-later"]').click(); return true;`);
   ok(await js(`${R} return R.querySelector('.update').hidden;`), 'update check: Later hides it until the next version');
-  await panelPage({ latestVersion: '0.0.1' }, {});
   await js(
     `${R} R.querySelector('[data-tab="settings"]').click(); R.querySelector('[data-act="check-now"]').click(); return true;`,
   );
   ok(
-    (await until(`${R} return /Up to date/.test(R.querySelector('.log').innerText);`, 4000)) &&
-      (await js(`${R} return R.querySelector('.update').hidden;`)),
-    'update check: an older published version shows nothing',
+    await until(
+      `${R} return !R.querySelector('.update').hidden && /Update available/.test(R.querySelector('.update').innerText);`,
+      4000,
+    ),
+    'update check: Check now shows it again after Later',
+  );
+  // on load, an older (or equal) published version shows "Up to date" briefly, then the bar goes away
+  await panelPage({ latestVersion: '0.0.1' }, {});
+  ok(
+    await until(`${R} const u = R.querySelector('.update'); return !u.hidden && /Up to date/.test(u.innerText);`, 4000),
+    'update check on load: "Up to date" shown',
+  );
+  ok(
+    await until(`${R} return R.querySelector('.update').hidden;`, 7000),
+    'update check on load: the "Up to date" bar disappears by itself',
   );
 
   // a resting limit entry: no fill to find yet, so followers must stay linked; the master's cancel reaches them

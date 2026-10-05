@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vest Copier
 // @namespace    vestcopier
-// @version      0.22.1
+// @version      0.22.2
 // @description  Copies a master Vest account's trades to your other Vest accounts, live, and adds a points-based order panel.
 // @author       xAmped
 // @license      Vest Copier License — free to use, no selling; see LICENSE
@@ -22,7 +22,7 @@
   if (window.__vestCopier) return;
   window.__vestCopier = true;
 
-  const VERSION = '0.22.1';
+  const VERSION = '0.22.2';
   const API = 'https://api-gateway.hz.vestmarkets.com';
   const _fetch = window.fetch.bind(window);
   // Console echo of the activity log, for troubleshooting: localStorage.setItem('vc-debug', '1') and reload.
@@ -83,7 +83,7 @@
     autoFlatten: false, // auto-close orphan followers if the master open is rejected
     orphan: null, // { list: [{ accountId, positionId, symbol, leverage }] } follower positions without the master
     arming: false, // an arm is in progress
-    update: null, // { latest, checkedAt, dismissed, error } from the GitHub version check
+    update: null, // { state, latest, dismissed } from the GitHub version check
     checkUpdates: true, // look for new versions on GitHub
     placing: false, // a trade-panel order is in flight
     flattenConfirm: false, // flatten-all panic button is awaiting confirmation
@@ -2358,14 +2358,14 @@
   };
 
   // ───────────────────────── updates ─────────────────────────
-  // Compares this script's version with the published one on GitHub (read-only; the page allows the request and GitHub
-  // serves it cross-origin). When newer, the panel offers Install: opening the .user.js link makes Tampermonkey show
-  // its own update page, where one click installs it. Scripts can't replace themselves; Tampermonkey does that.
+  // On every load (and on Check now), compare this script's version with the one published on GitHub. The page allows
+  // the request and GitHub serves it cross-origin; nothing else is sent. A bar under the status line shows the result:
+  // "Checking…", then "Update available" with Install (opening the .user.js link makes Tampermonkey show its own update
+  // page, where one click installs it — a script can't replace itself), or "Up to date", which fades after a moment.
   const REPO_URL = 'https://github.com/xAmped/Vest-Copier';
   const SCRIPT_URL = 'https://raw.githubusercontent.com/xAmped/Vest-Copier/main/src/vest-copier.user.js';
-  const UPDATE_KEY = 'vc-update';
-  const UPDATE_FIRST_CHECK_MS = 15000,
-    UPDATE_EVERY_MS = 6 * 3600 * 1000;
+  const UPDATE_KEY = 'vc-update'; // remembers only which version "Later" was clicked for
+  const UPDATE_NOTE_MS = 4000; // how long "Up to date" / "Couldn't check" stays up
   // Numeric compare of dotted versions: 1 if a > b, -1 if a < b, 0 if equal.
   const cmpVersion = (a, b) => {
     const pa = String(a).split('.').map(Number),
@@ -2376,59 +2376,65 @@
     }
     return 0;
   };
-  // S.update = { latest, checkedAt, dismissed, error? }; persisted so a reload doesn't re-check straight away.
+  // S.update = { state: 'checking' | 'available' | 'current' | 'error' | null, latest, dismissed }
   function loadUpdate() {
     const u = store.get(UPDATE_KEY, {}) || {};
-    S.update = { latest: u.latest || null, checkedAt: u.checkedAt || 0, dismissed: u.dismissed || null };
+    S.update = { state: null, latest: null, dismissed: u.dismissed || null };
   }
   const updateAvailable = () => !!(S.update && S.update.latest && cmpVersion(S.update.latest, VERSION) > 0);
+  let _updateNoteTimer = null;
   async function checkForUpdate(manual = false) {
     if (!S.checkUpdates && !manual) return;
+    clearTimeout(_updateNoteTimer);
+    S.update.state = 'checking';
+    renderUpdate();
     try {
       const r = await _fetch(SCRIPT_URL, { cache: 'no-store' });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const m = (await r.text()).match(/^\/\/ @version\s+(\S+)/m);
       if (!m) throw new Error('no version in the published script');
-      S.update = { ...S.update, latest: m[1], checkedAt: Date.now(), error: null };
-      if (manual)
-        logEvent(
-          'info',
-          updateAvailable() ? `Update available: v${m[1]} (you have v${VERSION}).` : `Up to date (v${VERSION}).`,
-        );
+      S.update.latest = m[1];
+      S.update.state = updateAvailable() ? 'available' : 'current';
+      if (manual && S.update.state === 'available') S.update.dismissed = null; // Check now always shows it
     } catch (e) {
-      S.update = { ...S.update, checkedAt: Date.now(), error: e.message };
-      if (manual) logEvent('warn', `Couldn't check for updates (${e.message}).`);
+      S.update.state = 'error';
+      diag('update_check', { outcome: 'error', error: e.message });
     }
-    store.set(UPDATE_KEY, { latest: S.update.latest, checkedAt: S.update.checkedAt, dismissed: S.update.dismissed });
+    if (S.update.state !== 'available') {
+      _updateNoteTimer = setTimeout(() => {
+        S.update.state = null;
+        renderUpdate();
+      }, UPDATE_NOTE_MS);
+    }
     render();
-  }
-  function startUpdateChecks() {
-    const due = Math.max(UPDATE_FIRST_CHECK_MS, S.update.checkedAt + UPDATE_EVERY_MS - Date.now());
-    setTimeout(() => {
-      checkForUpdate();
-      setInterval(checkForUpdate, UPDATE_EVERY_MS);
-    }, due);
   }
   function dismissUpdate() {
     S.update.dismissed = S.update.latest;
-    store.set(UPDATE_KEY, { latest: S.update.latest, checkedAt: S.update.checkedAt, dismissed: S.update.dismissed });
-    render();
+    store.set(UPDATE_KEY, { dismissed: S.update.dismissed });
+    renderUpdate();
   }
   function renderUpdate() {
     const bar = _root && _root.querySelector('.update');
-    if (!bar) return;
-    const show = updateAvailable() && S.update.dismissed !== S.update.latest;
-    bar.hidden = !show;
-    if (!show) return;
-    const v = esc(S.update.latest);
-    const html = `<span class="utext"><b>Update available: v${v}</b>${S.armed ? ' · install when flat' : ''}</span>
+    if (!bar || !S.update) return;
+    const { state, latest, dismissed } = S.update;
+    let html = '';
+    if (state === 'checking') html = '<span class="utext">Checking for updates…</span>';
+    else if (state === 'current') html = `<span class="utext">Up to date · v${VERSION}</span>`;
+    else if (state === 'error')
+      html = '<span class="utext">Couldn\'t check for updates — try Settings → Check now later.</span>';
+    else if (state === 'available' && dismissed !== latest) {
+      html = `<span class="utext"><b>Update available: v${esc(latest)}</b> (you have v${VERSION})${S.armed ? ' · install when flat' : ''}</span>
       <a class="ubtn" href="${SCRIPT_URL}" target="_blank" rel="noopener" title="Opens Tampermonkey's update page; then reload Vest">Install</a>
       <a class="ubtn ghost" href="${REPO_URL}/blob/main/CHANGELOG.md" target="_blank" rel="noopener">What's new</a>
       <button class="ubtn ghost" data-act="update-later" aria-label="Hide until the next version">Later</button>`;
+    }
+    bar.hidden = !html;
+    bar.classList.toggle('muted', state !== 'available');
     if (bar.dataset.html === html) return;
     bar.dataset.html = html;
     bar.innerHTML = html;
-    bar.querySelector('[data-act="update-later"]').onclick = dismissUpdate;
+    const later = bar.querySelector('[data-act="update-later"]');
+    if (later) later.onclick = dismissUpdate;
   }
 
   // ───────────────────────── site check (run after Vest ships an update) ─────────────────────────
@@ -3158,6 +3164,10 @@
     }
     .utext {
       flex-basis: 100%;
+    }
+    .update.muted {
+      background: var(--elev);
+      color: var(--dim);
     }
     .update[hidden] {
       display: none;
@@ -5022,7 +5032,7 @@
           'updates',
           S.checkUpdates,
           'Check for updates',
-          `Look for a newer version on GitHub every few hours and offer a one-click install. You have v${VERSION}` +
+          `Each time Vest loads, check GitHub for a newer version and offer a one-click install. You have v${VERSION}` +
             (S.update && S.update.latest ? `; the latest published is v${esc(S.update.latest)}.` : '.'),
         )}
         <div class="set-row"><button class="ghostbtn" data-act="check-now">Check now</button>
@@ -5223,7 +5233,7 @@
     renderHealth();
     renderLog();
     refresh();
-    startUpdateChecks();
+    checkForUpdate();
     checkEncoding();
     LOG(`v${VERSION} loaded.`);
   };

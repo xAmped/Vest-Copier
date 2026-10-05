@@ -2,6 +2,9 @@
 
 Plain-language notes. Newest first. Paste the latest `src/vest-copier.user.js` into Tampermonkey and refresh Vest to update.
 
+## v0.22.2
+- The update check now runs each time Vest loads (or you refresh), instead of every few hours. A bar under the status line shows "Checking for updates…", then either **Update available** with Install, or "Up to date", which disappears after a few seconds.
+
 ## v0.22.1
 - **Fixed: garbled symbols** (for example "ΓÇô" instead of "–" on the minimize button). They came from copying the script through the Windows clipboard tool, which mangles non-English characters; the script itself was fine. Install from the GitHub link or the panel's **Install** button to get a clean copy.
 - The panel now warns in the activity log if the copy you're running was garbled this way.
