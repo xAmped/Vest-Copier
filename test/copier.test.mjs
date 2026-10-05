@@ -57,27 +57,44 @@ window.WebSocket = class {
   }
   close() { clearInterval(this.t); this.readyState = 3; }
 };
-// stand-in for Vest's purchase-window discount box: applied code = read-only "CODE 5%" with a ✕ button; when empty,
-// type a code and press Enter to apply it (AMPED is refused when CFG.ampedInvalid, like on the code owner's account)
+// stand-in for Vest's purchase-window discount box, as Vest renders it: an editable combobox holding the applied code.
+// Typing another code + Enter looks it up; on success the box is redrawn (a new input) with the new code, on refusal
+// the box is flagged aria-invalid and the old code stays applied (AMPED is refused when CFG.ampedInvalid). Also a decoy:
+// the "Do You Have a Discount Code?" form box, which must never be touched (Enter there would submit its form).
 window.openPurchase = (code) => {
   const wrap = document.createElement('div');
   wrap.setAttribute('data-slot', 'input-group');
-  const input = document.createElement('input');
-  input.placeholder = 'Discount Code';
-  input.setAttribute('role', 'combobox');
-  const x = document.createElement('button');
-  let applied = code || null;
-  const show = () => { input.readOnly = !!applied; if (applied) input.value = applied + ' 5%'; };
-  x.onclick = () => { input.value = applied || ''; applied = null; show(); };
-  input.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter' || applied) return;
-    const c = input.value.trim().toUpperCase();
-    setTimeout(() => { if (!(c === 'AMPED' && CFG.ampedInvalid)) { applied = c; show(); } }, 100);
-  });
-  wrap.append(input, x);
+  let applied = code || '';
+  const draw = () => {
+    wrap.textContent = '';
+    const input = document.createElement('input');
+    input.setAttribute('role', 'combobox');
+    input.setAttribute('data-slot', 'input-group-control');
+    input.className = 'flex-1 rounded-none border-0 pl-3! not-placeholder-shown:uppercase';
+    input.value = applied;
+    input.addEventListener('keydown', (e) => {
+      const c = input.value.trim().toUpperCase();
+      if (e.key !== 'Enter' || c === applied) return;
+      e.preventDefault();
+      setTimeout(() => {
+        if (c === 'AMPED' && CFG.ampedInvalid) input.setAttribute('aria-invalid', 'true');
+        else { applied = c; draw(); }
+      }, 100);
+    });
+    wrap.append(input);
+    window.purchaseBox = input;
+  };
+  draw();
   document.body.append(wrap);
-  show();
-  window.purchaseBox = input;
+  const form = document.createElement('form');
+  form.onsubmit = (e) => { e.preventDefault(); window.formSubmitted = true; };
+  const decoy = document.createElement('input');
+  decoy.placeholder = 'Discount Code';
+  decoy.className = 'not-placeholder-shown:uppercase';
+  decoy.value = code || '';
+  form.append(decoy);
+  document.body.append(form);
+  window.formBox = decoy;
   return true;
 };
 const real = window.fetch.bind(window);
@@ -1277,26 +1294,33 @@ try {
   await panelPage({ support: { answered: 'yes' } }, {});
   await js(`return openPurchase('OTHERCODE');`);
   ok(
-    (await until(`return purchaseBox.value === 'AMPED 5%';`, 5000)) &&
-      /discount code set to AMPED \(was OTHERCODE\)/.test(await logText()),
+    (await until(`return purchaseBox.value === 'AMPED';`, 5000)) &&
+      (await until(
+        `${R} return /discount code set to AMPED \\(was OTHERCODE\\)/.test(R.querySelector('.log').innerText);`,
+        3000,
+      )),
     'purchase window: an existing code is replaced with AMPED, and the log says so',
+  );
+  ok(
+    await js(`return formBox.value === 'OTHERCODE' && !window.formSubmitted;`),
+    'purchase window: the "Do You Have a Discount Code?" form box is never touched (no form submit)',
   );
   await panelPage({ support: { answered: 'yes' }, ampedInvalid: true }, {});
   await js(`return openPurchase('OTHERCODE');`);
   ok(
-    (await until(`${R} return /so OTHERCODE was put back/.test(R.querySelector('.log').innerText);`, 9000)) &&
-      (await js(`return purchaseBox.value;`)) === 'OTHERCODE 5%',
+    (await until(`${R} return /so OTHERCODE stays/.test(R.querySelector('.log').innerText);`, 12000)) &&
+      (await js(`return purchaseBox.value;`)) === 'OTHERCODE',
     'purchase window: if Vest refuses AMPED, the previous code is put back',
   );
   await panelPage({ support: { answered: 'no' } }, {});
   await js(`return openPurchase('OTHERCODE');`);
   await sleep(1500);
-  ok((await js(`return purchaseBox.value;`)) === 'OTHERCODE 5%', 'purchase window: untouched for users who said No');
+  ok((await js(`return purchaseBox.value;`)) === 'OTHERCODE', 'purchase window: untouched for users who said No');
   await panelPage({ support: { answered: 'yes', apply: false } }, {});
   await js(`return openPurchase('OTHERCODE');`);
   await sleep(1500);
   ok(
-    (await js(`return purchaseBox.value;`)) === 'OTHERCODE 5%',
+    (await js(`return purchaseBox.value;`)) === 'OTHERCODE',
     'purchase window: untouched when switched off in Settings',
   );
 
