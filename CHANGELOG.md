@@ -2,6 +2,9 @@
 
 Plain-language notes. Newest first. Paste the latest `src/vest-copier.user.js` into Tampermonkey and refresh Vest to update.
 
+## v0.23.2
+- Accounts that v0.23.0 skipped because they already had a code now get the one-time AMPED question too.
+
 ## v0.23.1
 - The one-time AMPED question is now shown to everyone. If you already use another code, it names it ("You currently use code X. Switch to AMPED?") and **Keep X** leaves it as it is.
 - If Vest won't link the code automatically, **Yes** copies AMPED and tells you to enter it once in the discount box of Vest's purchase window.

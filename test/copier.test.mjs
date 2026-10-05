@@ -1222,6 +1222,19 @@ try {
     ),
     'support: an account with another code is asked once, naming its current code',
   );
+  // an account recorded as "already has a code" by v0.23.0 is re-checked and asked
+  await panelPage({ rewards: { code: 'FRIEND' } }, {});
+  await js(
+    `localStorage.setItem('vc-support', JSON.stringify({ answered: 'had-code' })); location.reload(); return true;`,
+  );
+  await sleep(1500);
+  ok(
+    await until(
+      `${R} const b = R.querySelector('.support'); return b && !b.hidden && /Keep FRIEND/.test(b.innerText);`,
+      8000,
+    ),
+    'support: an old "already has a code" record is re-checked, so that account is asked once',
+  );
   // an account already using AMPED is never asked
   await panelPage({ rewards: { code: 'AMPED' } }, {});
   await sleep(1500);

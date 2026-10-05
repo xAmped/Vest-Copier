@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vest Copier
 // @namespace    vestcopier
-// @version      0.23.1
+// @version      0.23.2
 // @description  Copies a master Vest account's trades to your other Vest accounts, live, and adds a points-based order panel.
 // @author       xAmped
 // @license      Vest Copier License — free to use, no selling; see LICENSE
@@ -22,7 +22,7 @@
   if (window.__vestCopier) return;
   window.__vestCopier = true;
 
-  const VERSION = '0.23.1';
+  const VERSION = '0.23.2';
   const API = 'https://api-gateway.hz.vestmarkets.com';
   const _fetch = window.fetch.bind(window);
   // Console echo of the activity log, for troubleshooting: localStorage.setItem('vc-debug', '1') and reload.
@@ -2452,7 +2452,11 @@
   // never asked again. Nothing changes without the click; an account already using AMPED is never asked.
   const SUPPORT_CODE = 'AMPED';
   const SUPPORT_KEY = 'vc-support'; // { answered: 'yes' | 'manual' | 'no' | 'had-code', at }
-  const supportAnswer = () => (store.get(SUPPORT_KEY, null) || {}).answered || null;
+  // 'had-code' (already using a code) isn't a real answer: re-check it, so only accounts on AMPED stay unasked.
+  const supportAnswer = () => {
+    const a = (store.get(SUPPORT_KEY, null) || {}).answered || null;
+    return a === 'had-code' ? null : a;
+  };
   const saveSupport = (answered) => store.set(SUPPORT_KEY, { answered, at: new Date().toISOString() });
   // The account's attached referral code, '' when none, or null when it can't be read (then nothing is offered).
   async function attachedRefCode() {
