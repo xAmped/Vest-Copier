@@ -186,7 +186,11 @@ Options are saved and persist across refreshes. Active ones show as `FAST` / `CA
 ## 9. Reports: P&L, activity log, diagnostics
 
 - **P&L** (tab) — per-account profit and a total. Profit = current equity − starting capital.
-  Updates with the balance poll.
+  Updates with the balance poll. The green figure on the right is **what you keep**: each funded account's profit ×
+  its own profit split, added up, as if you claimed it all now (Vest applies the split flat at each claim). Each
+  account shows its share. Evaluations aren't counted (their profit doesn't pay out until you're funded), and an
+  account in a loss counts as $0, since claims are per account. With trades open it reads "if closed now"; Vest may
+  ask you to close positions before a claim.
 - **Activity log** — the clean, trader-facing feed. **CSV** downloads it.
 - **Diag** — downloads a detailed **diagnostics JSON**: for every event it records intended vs actual
   size, the cap-to-fit math (equities, scaled size), fill prices, slippage, **margin used vs the

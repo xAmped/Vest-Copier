@@ -2,6 +2,10 @@
 
 Newest first. To update, click **Install** on the green bar that appears in the panel whenever there's a newer version.
 
+## v0.28.0
+- **What you keep, on the P&L tab.** Next to the total P&L, a green figure shows what you'd take home if every funded account's profit were claimed now: each account's profit × its own profit split, added up. Each account also shows its share ("keeps $992.40 · 80%"). Evaluations aren't counted (their profit doesn't pay out), and an account in a loss counts as $0 (claims are per account). With trades open it says "if closed now".
+- Minor improvements.
+
 ## v0.27.1
 - **Flatten All keeps you armed.** It still closes every position and cancels every order on every account in one click, but the copier now stays armed, so your next trade copies as usual. Handy as a fast exit across many accounts. Press DISARM if you want to stop copying. Orders placed on the master during the few seconds it's flattening aren't copied.
 

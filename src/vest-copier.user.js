@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vest Copier
 // @namespace    vestcopier
-// @version      0.27.1
+// @version      0.28.0
 // @description  Copies a master Vest account's trades to your other Vest accounts, live, and adds a points-based order panel.
 // @author       xAmped
 // @license      Vest Copier License — free to use, no selling; see LICENSE
@@ -22,7 +22,7 @@
   if (window.__vestCopier) return;
   window.__vestCopier = true;
 
-  const VERSION = '0.27.1';
+  const VERSION = '0.28.0';
   const API = 'https://api-gateway.hz.vestmarkets.com';
   const _fetch = window.fetch.bind(window);
   // Console echo of the activity log, for troubleshooting: localStorage.setItem('vc-debug', '1') and reload.
@@ -511,8 +511,14 @@
     r.dailyFloor = num(a.max_daily_loss_pct) > 0 && daily > 0 ? daily : null;
     const target = num(a.target_equity);
     r.target = target > r.size ? target : null;
+    r.split = num(a.max_profit_split_pct) || 0; // your share of claimed profit, e.g. 0.8
   }
   const floorOf = (r) => Math.max(r.floor || 0, r.dailyFloor || 0);
+  // What an account pays you if its profit is claimed now: profit × its split (Vest applies the split flat at each claim,
+  // with no other deductions). Only funded accounts (live and Instant) pay out: an evaluation's profit doesn't, and claims
+  // are per account, so one in a loss pays nothing rather than taking from the others.
+  const isFunded = (r) => r.accountType === 3;
+  const keepOf = (r) => (isFunded(r) && r.split > 0 && r.equity > r.size ? (r.equity - r.size) * r.split : 0);
 
   // keep balances / room fresh
   let _balTimer = null;
@@ -2620,7 +2626,12 @@
   async function maybeOfferSupport() {
     if (!S.ack || supportAnswer() || !userTokenOk()) return;
     const code = await attachedRefCode(); // null when it can't be read: ask without naming a current code
-    if (code && code.toUpperCase() === SUPPORT_CODE) return saveSupport('had-code'); // already supporting
+    if (code && code.toUpperCase() === SUPPORT_CODE) {
+      saveSupport('had-code'); // already supporting
+      const link = _root && _root.querySelector('[data-act="code"]');
+      if (link) link.hidden = true;
+      return;
+    }
     S.supportCurrent = code || null;
     S.supportOffer = true;
     renderSupport();
@@ -3660,10 +3671,19 @@
     }
     .reportbar {
       display: flex;
-      justify-content: flex-end;
-      padding: 2px 30px 9px 15px; /* clear of the resize grip in the corner */
-      background: #0f1216;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 30px 9px 15px; /* clear of the resize grip in the corner */
+      background: linear-gradient(90deg, #13281f, #0f1915 70%);
+      border-top: 1px solid var(--accent-line);
       flex: none;
+    }
+    .reportbar .linkbtn {
+      color: #9db5aa;
+    }
+    .reportbar .linkbtn:hover {
+      color: var(--accent);
     }
     .linkbtn {
       cursor: pointer;
@@ -3677,6 +3697,37 @@
     }
     .linkbtn:hover {
       color: var(--text);
+    }
+    .codebtn {
+      cursor: pointer;
+      background: none;
+      border: none;
+      padding: 0;
+      font-size: 11px;
+      font-weight: 550;
+      color: var(--text);
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .codebtn b {
+      background: var(--accent);
+      color: #08150f;
+      font-family: var(--mono);
+      font-weight: 750;
+      letter-spacing: 0.6px;
+      padding: 2px 7px;
+      border-radius: 6px;
+    }
+    .codebtn .off {
+      color: var(--accent);
+      font-weight: 700;
+    }
+    .codebtn:hover b {
+      filter: brightness(1.12);
+    }
+    .codebtn[hidden] {
+      display: none;
     }
     .tab.tab-support {
       color: var(--accent);
@@ -4125,6 +4176,47 @@
       color: var(--dim);
       margin: 4px 0 14px;
     }
+    .sum-top {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .sum-keep {
+      text-align: right;
+    }
+    .sum-keep-v {
+      font-size: 18px;
+      font-weight: 700;
+      font-family: var(--mono);
+      color: var(--accent);
+      line-height: 1.1;
+    }
+    .sum-keep-l {
+      font-size: 10px;
+      color: var(--dim);
+      margin-top: 2px;
+    }
+    .sum-left {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+    .sum-name {
+      white-space: nowrap;
+    }
+    .sum-k {
+      font-size: 9.5px;
+      color: var(--dim);
+      font-family: var(--mono);
+      margin-top: 1px;
+    }
+    .sum-note {
+      font-size: 10.5px;
+      color: var(--faint);
+      line-height: 1.5;
+      margin-top: 10px;
+    }
     .sum-list {
       display: flex;
       flex-direction: column;
@@ -4247,7 +4339,8 @@
           </span></div>
           <div class="log" aria-live="polite"></div>
         </div>
-        <div class="reportbar"><button class="linkbtn" data-act="report">Problem? Report it</button></div>
+        <div class="reportbar"><button class="codebtn" data-act="code" title="Click to copy the code" hidden>Use code <b>${SUPPORT_CODE}</b> for <span class="off">5% off</span></button><span></span>
+          <button class="linkbtn" data-act="report">Problem? Report it</button></div>
         <div class="grip" title="Drag to resize"></div>
       </div>`;
     const panel = root.querySelector('.panel');
@@ -4342,6 +4435,13 @@
     on('[data-act="dllog"]', () => downloadLog());
     on('[data-act="clearlog"]', () => clearLog());
     on('[data-act="report"]', () => setView('support'));
+    on('[data-act="code"]', () =>
+      copySupportCode().then((ok) =>
+        toast(ok ? `Code ${SUPPORT_CODE} copied: 5% off at Vest's checkout.` : `Code: ${SUPPORT_CODE}`),
+      ),
+    );
+    // shown unless this account already uses the code
+    root.querySelector('[data-act="code"]').hidden = (store.get(SUPPORT_KEY, null) || {}).answered === 'had-code';
     return root;
   }
 
@@ -6033,22 +6133,42 @@
       (n >= 0 ? '+' : '−') +
       '$' +
       Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const pnlOf = (r) => (isNaN(r.equity) ? 0 : r.equity) - (isNaN(r.size) ? 0 : r.size);
+    // What you'd take home if every funded account's profit were claimed now, after each account's own split
+    const funded = rows.filter(isFunded);
+    const keep = sum(funded.map(keepOf));
+    const openTrades = rows.some((r) => r.upnl);
+    const evalsUp = rows.some((r) => !isFunded(r) && pnlOf(r) > 0),
+      fundedDown = funded.some((r) => pnlOf(r) < 0);
+    const notCounted = [
+      evalsUp && "evaluations (their profit doesn't pay out)",
+      fundedDown && 'accounts in a loss (claims are per account, so they pay $0 and take nothing from the others)',
+    ].filter(Boolean);
+    const keepHtml = funded.length
+      ? `<div class="sum-keep" title="Each funded account's profit × its profit split, added up. Accounts in a loss count as $0.">
+          <div class="sum-keep-v">${money(keep)}</div>
+          <div class="sum-keep-l">you keep after splits${openTrades ? ', if closed now' : ''}</div></div>`
+      : '';
     body.innerHTML = `
       <div class="summary">
-        <div class="sum-total ${totalPnl >= 0 ? 'pos' : 'neg'}">${sp(totalPnl)}</div>
+        <div class="sum-top"><div class="sum-total ${totalPnl >= 0 ? 'pos' : 'neg'}">${sp(totalPnl)}</div>${keepHtml}</div>
         <div class="sum-sub">total P&amp;L · ${rows.length} account${rows.length > 1 ? 's' : ''} · equity ${money(totalEq)} / start ${money(totalInit)}</div>
         <div class="sum-list">
           ${rows
             .map((r) => {
               const n = (r.label.match(/(\d+)\s*$/) || [, '--'])[1];
-              const pnl = (isNaN(r.equity) ? 0 : r.equity) - (isNaN(r.size) ? 0 : r.size);
+              const pnl = pnlOf(r),
+                k = keepOf(r);
+              const keepLine =
+                k > 0 ? `<span class="sum-k">keeps ${money(k)} · ${Math.round(r.split * 100)}%</span>` : '';
               return `<div class="sum-row"><span class="badge sm">${n}</span>
-              <span class="sum-name">${esc(r.label)} <span class="chip">${r.chip}</span></span>
+              <span class="sum-left"><span class="sum-name">${esc(r.label)} <span class="chip">${r.chip}</span></span>${keepLine}</span>
               <span class="sum-eq">${money(r.equity)}</span>
               <span class="sum-pnl ${pnl >= 0 ? 'pos' : 'neg'}">${sp(pnl)}</span></div>`;
             })
             .join('')}
         </div>
+        ${notCounted.length ? `<div class="sum-note">Not counted in what you keep: ${notCounted.join('; ')}.</div>` : ''}
       </div>`;
   }
 
