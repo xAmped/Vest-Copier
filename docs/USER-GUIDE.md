@@ -233,4 +233,7 @@ Support** turns the switching on or off and has a **Copy code AMPED** button.
 - **An order didn't fill** — the log says which account (master included). Vest accepted it but didn't execute
   it, usually because there wasn't enough margin for that size. A follower that misses an entry is dropped from
   tracking; one that misses an add keeps its original position.
-- **Something looks wrong** — hit **Diag**, save the JSON, and send it along with what you expected.
+- **Something looks wrong** — click **Problem? Report it** at the bottom of the panel. Describe what happened and
+  click **Save report & open issue**: it saves one report file (activity log, diagnostics, settings, balances;
+  account ids replaced by names) and opens a GitHub issue with your description filled in. Drag the file in and
+  submit (a free GitHub account is needed).

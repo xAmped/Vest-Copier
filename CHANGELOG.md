@@ -2,6 +2,9 @@
 
 Newest first. To update, click **Install** on the green bar that appears in the panel whenever there's a newer version.
 
+## v0.25.0
+- **Report a problem from the panel.** Click **Problem? Report it** at the bottom of the panel, describe what happened, and click **Save report & open issue**. The copier saves one report file (activity log, diagnostics, settings, version and account balances, with account ids replaced by names) and opens a GitHub issue with your description filled in. Drag the file in and submit.
+
 ## v0.24.3
 - Internal update. Nothing changes in how the copier trades.
 

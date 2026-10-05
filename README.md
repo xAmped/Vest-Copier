@@ -78,7 +78,7 @@ with **Diag** and **CSV** exports.
 | ARM refuses | The log names the account and the reason, usually a resting order or an opposite position. Clear it on Vest and arm again. |
 | "did NOT fill" in the log | Vest accepted the order but didn't execute it, usually not enough margin for that size. Trade smaller or use Cap-to-fit. |
 | Amber status bar | Vest updated its site. Click the bar, let the check finish, then Accept. |
-| Anything else | Press Diag, then [open an issue](https://github.com/xAmped/Vest-Copier/issues) with the file and a few words on what you expected. The file has sizes, prices and account ids but no login data. |
+| Anything else | Click **Problem? Report it** at the bottom of the panel. It saves a report file and opens a pre-filled [GitHub issue](https://github.com/xAmped/Vest-Copier/issues); drag the file in. The file has sizes, prices and balances but no login data. |
 
 ## Updates
 

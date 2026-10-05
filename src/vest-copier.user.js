@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vest Copier
 // @namespace    vestcopier
-// @version      0.24.3
+// @version      0.25.0
 // @description  Copies a master Vest account's trades to your other Vest accounts, live, and adds a points-based order panel.
 // @author       xAmped
 // @license      Vest Copier License — free to use, no selling; see LICENSE
@@ -22,7 +22,7 @@
   if (window.__vestCopier) return;
   window.__vestCopier = true;
 
-  const VERSION = '0.24.3';
+  const VERSION = '0.25.0';
   const API = 'https://api-gateway.hz.vestmarkets.com';
   const _fetch = window.fetch.bind(window);
   // Console echo of the activity log, for troubleshooting: localStorage.setItem('vc-debug', '1') and reload.
@@ -88,6 +88,7 @@
     supportOffer: false, // the one-time "support with code AMPED" question is showing
     supportCurrent: null, // the code the account already uses, named in that question
     ackThenArm: false, // ARM was clicked before the terms were accepted
+    reportOpen: false, // the Report a problem view is showing
     placing: false, // a trade-panel order is in flight
     flattenConfirm: false, // flatten-all panic button is awaiting confirmation
     flattening: false, // a flatten-all sweep is in progress
@@ -2896,6 +2897,7 @@
   function openSiteCheck() {
     S.siteOpen = true;
     S.rulesOpen = false;
+    S.reportOpen = false;
     S.summaryOpen = false;
     S.settingsOpen = false;
     S.tradeOpen = false;
@@ -3553,6 +3555,42 @@
     .rules-terms a {
       color: var(--accent);
     }
+    .reportbar {
+      display: flex;
+      justify-content: flex-end;
+      padding: 2px 30px 9px 15px; /* clear of the resize grip in the corner */
+      background: #0f1216;
+      flex: none;
+    }
+    .linkbtn {
+      cursor: pointer;
+      background: none;
+      border: none;
+      padding: 2px 0;
+      color: var(--dim);
+      font-size: 10.5px;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    .linkbtn:hover {
+      color: var(--text);
+    }
+    .report-note {
+      width: 100%;
+      margin: 2px 0 10px;
+      background: #0f1216;
+      border: 1px solid var(--line2);
+      border-radius: 9px;
+      color: var(--text);
+      font: inherit;
+      font-size: 12px;
+      padding: 9px 10px;
+      resize: vertical;
+      outline: none;
+    }
+    .report-note:focus {
+      border-color: var(--accent-line);
+    }
     .rules-btns {
       display: flex;
       gap: 8px;
@@ -3998,6 +4036,7 @@
       background: repeating-linear-gradient(135deg, transparent, transparent 2px, #3a414b 2px, #3a414b 3px);
       opacity: 0.7;
     }
+    .collapsed .reportbar,
     .collapsed .body,
     .collapsed .tabs,
     .collapsed .health,
@@ -4048,6 +4087,7 @@
           </span></div>
           <div class="log" aria-live="polite"></div>
         </div>
+        <div class="reportbar"><button class="linkbtn" data-act="report">Problem? Report it</button></div>
         <div class="grip" title="Drag to resize"></div>
       </div>`;
     const panel = root.querySelector('.panel');
@@ -4141,6 +4181,7 @@
     on('[data-act="dldiag"]', () => downloadDiag());
     on('[data-act="dllog"]', () => downloadLog());
     on('[data-act="clearlog"]', () => clearLog());
+    on('[data-act="report"]', () => setView('report'));
     return root;
   }
 
@@ -4172,20 +4213,23 @@
   const currentView = () =>
     S.siteOpen
       ? 'site'
-      : S.tradeOpen
-        ? 'trade'
-        : S.summaryOpen
-          ? 'summary'
-          : S.settingsOpen
-            ? 'settings'
-            : S.rulesOpen
-              ? 'rules'
-              : 'accounts';
+      : S.reportOpen
+        ? 'report'
+        : S.tradeOpen
+          ? 'trade'
+          : S.summaryOpen
+            ? 'summary'
+            : S.settingsOpen
+              ? 'settings'
+              : S.rulesOpen
+                ? 'rules'
+                : 'accounts';
   function setView(v) {
     S.tradeOpen = v === 'trade';
     S.summaryOpen = v === 'summary';
     S.settingsOpen = v === 'settings';
     S.rulesOpen = v === 'rules';
+    S.reportOpen = v === 'report';
     S.siteOpen = false;
     if (!S.tradeOpen) unwatchUnused(); // the price feed is only needed by the Trade tab and breakeven
     render();
@@ -4195,9 +4239,11 @@
     if (!_root) return;
     renderHealth();
     const body = _root.querySelector('.body');
-    if (!S.tradeOpen || S.siteOpen) body.dataset.view = '';
+    if (!(S.tradeOpen || S.reportOpen) || S.siteOpen) body.dataset.view = '';
     if (S.siteOpen) {
       renderSiteCheck(body);
+    } else if (S.reportOpen) {
+      renderReport(body);
     } else if (S.tradeOpen) {
       renderTrade(body);
     } else if (S.settingsOpen) {
@@ -4251,7 +4297,7 @@
 
     const armBtn = _root.querySelector('[data-act="arm"]');
     // DISARM is never blocked; only ARM is gated on a valid selection and the accounts view.
-    const otherView = S.rulesOpen || S.summaryOpen || S.settingsOpen || S.siteOpen;
+    const otherView = S.rulesOpen || S.summaryOpen || S.settingsOpen || S.siteOpen || S.reportOpen;
     armBtn.disabled = S.armed ? false : S.arming || otherView || !(S.master && S.followers.size);
     armBtn.textContent = S.armed ? 'DISARM' : S.arming ? 'ARMING…' : 'ARM';
     armBtn.classList.toggle('armed', S.armed);
@@ -5473,6 +5519,89 @@
   }
 
   // Account P&L summary — profit = equity − starting capital, per account and summed. Auto-updates with the balance poll.
+  // ── Report a problem. One file with everything needed to debug (activity log, diagnostics, version, Vest build,
+  // settings, accounts with balances), saved locally, plus a GitHub issue pre-filled with the version and the user's
+  // description, ready for the file to be dragged in. Account ids are replaced by their labels ("Account 07") so the
+  // file is safer to post publicly; nothing is sent anywhere by the copier.
+  const ISSUE_FORM = 'bug_report.yml';
+  function buildReport(note) {
+    const alias = {};
+    for (const id in S.byId) alias[id] = S.byId[id].label;
+    const scrub = (v) =>
+      JSON.parse(JSON.stringify(v), (k, val) => (typeof val === 'string' && alias[val] ? alias[val] : val));
+    const accounts = Object.values(S.byId).map((r) => ({
+      label: r.label,
+      type: r.type,
+      size: r.size,
+      equity: r.equity,
+      floor: r.floor,
+      canTrade: r.canTrade,
+      role: r.id === S.master ? 'master' : S.followers.has(r.id) ? 'follower' : null,
+    }));
+    return scrub({
+      kind: 'vest-copier-report',
+      version: VERSION,
+      build: fingerprint() || null,
+      exportedAt: new Date().toISOString(),
+      browser: navigator.userAgent,
+      description: note,
+      state: {
+        armed: S.armed,
+        master: S.master,
+        followers: [...S.followers],
+        openTrades: Object.keys(S.posMap).length,
+      },
+      settings: {
+        fast: S.fast,
+        autoFlatten: S.autoFlatten,
+        capFit: S.capFit,
+        checkUpdates: S.checkUpdates,
+        trade: S.trade,
+      },
+      accounts,
+      log: [...S.log].reverse().map((e) => ({ t: e.t.toISOString(), level: e.level, msg: e.msg })),
+      diagnostics: S.diag,
+    });
+  }
+  function sendReport(note) {
+    const name = `vest-copier-report-${stamp()}.json`;
+    persistDiag();
+    saveFile(name, 'application/json', JSON.stringify(buildReport(note), null, 2));
+    const first = (note.split('\n').find((l) => l.trim()) || '').trim().slice(0, 80);
+    const params = new URLSearchParams({
+      template: ISSUE_FORM,
+      title: `Problem: ${first || 'describe it here'}`,
+      version: VERSION,
+    });
+    if (note) params.set('what-happened', note.slice(0, 4000));
+    window.open(`${REPO_URL}/issues/new?${params}`, '_blank', 'noopener');
+    logEvent('info', `Report saved as ${name}. Drag it into the GitHub issue that just opened.`);
+    diag('report', { file: name, hasNote: !!note });
+  }
+  function renderReport(body) {
+    if (body.dataset.view === 'report' && body.querySelector('.report')) return; // built once: keep what's being typed
+    body.dataset.view = 'report';
+    body.innerHTML = `
+      <div class="rules report">
+        <div class="rules-h">Report a problem</div>
+        <p class="sc-sub">Describe what happened and what you expected. The copier then saves a report file and opens a
+          GitHub issue with your description filled in: drag the file into it and submit. You need a free GitHub account
+          to post it.</p>
+        <textarea class="report-note" id="rp-note" rows="6" aria-label="What happened"
+          placeholder="What happened, and what did you expect? Which accounts, roughly when?"></textarea>
+        <p class="sc-sub">The file holds the activity log, the diagnostics record, your settings, your copier version and
+          your accounts' balances. Account ids are replaced by their names. It never contains passwords or login tokens.</p>
+        <div class="rules-btns">
+          <button class="armbtn sm" id="rp-send">Save report &amp; open issue</button>
+          <button class="ghostbtn" id="rp-close">Close</button>
+        </div>
+      </div>`;
+    const note = body.querySelector('#rp-note');
+    ['keydown', 'keyup', 'keypress'].forEach((ev) => note.addEventListener(ev, (e) => e.stopPropagation())); // not Vest's shortcuts
+    body.querySelector('#rp-send').onclick = () => sendReport(note.value.trim());
+    body.querySelector('#rp-close').onclick = () => setView('accounts');
+  }
+
   function renderSummary(body) {
     const rows = Object.values(S.byId).sort((a, b) => a.size - b.size || a.order - b.order);
     if (!rows.length) {
