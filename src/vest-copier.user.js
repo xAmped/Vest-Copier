@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vest Copier
 // @namespace    vestcopier
-// @version      0.23.2
+// @version      0.24.0
 // @description  Copies a master Vest account's trades to your other Vest accounts, live, and adds a points-based order panel.
 // @author       xAmped
 // @license      Vest Copier License — free to use, no selling; see LICENSE
@@ -22,7 +22,7 @@
   if (window.__vestCopier) return;
   window.__vestCopier = true;
 
-  const VERSION = '0.23.2';
+  const VERSION = '0.24.0';
   const API = 'https://api-gateway.hz.vestmarkets.com';
   const _fetch = window.fetch.bind(window);
   // Console echo of the activity log, for troubleshooting: localStorage.setItem('vc-debug', '1') and reload.
@@ -2451,7 +2451,7 @@
   // code once in the purchase window's discount box (and it's put on the clipboard). No records the answer and it is
   // never asked again. Nothing changes without the click; an account already using AMPED is never asked.
   const SUPPORT_CODE = 'AMPED';
-  const SUPPORT_KEY = 'vc-support'; // { answered: 'yes' | 'manual' | 'no' | 'had-code', at }
+  const SUPPORT_KEY = 'vc-support'; // { answered: 'yes' | 'manual' | 'no' | 'had-code', at, apply? }
   // 'had-code' (already using a code) isn't a real answer: re-check it, so only accounts on AMPED stay unasked.
   const supportAnswer = () => {
     const a = (store.get(SUPPORT_KEY, null) || {}).answered || null;
@@ -2487,25 +2487,107 @@
     );
   async function acceptSupport() {
     S.supportOffer = false;
+    saveSupport('yes');
     renderSupport();
-    const copying = copySupportCode(); // started inside the click, before any network wait
+    logEvent(
+      'ok',
+      `Thank you! ${SUPPORT_CODE} will be used in Vest's purchase window from now on (Settings → Support to turn off).`,
+    );
+    // Also try Vest's referral link, which only some accounts accept; the purchase window covers everyone else.
     try {
       await api('/v2/referrals/join', userToken, { method: 'POST', body: JSON.stringify({ refCode: SUPPORT_CODE }) });
-      saveSupport('yes');
-      logEvent('ok', `Thank you! Code ${SUPPORT_CODE} is now linked to your Vest account.`);
       diag('support', { outcome: 'joined' });
     } catch (e) {
-      // Vest's referral link didn't take the code: the checkout discount box always does.
-      saveSupport('manual');
-      const copied = await copying;
-      logEvent(
-        'info',
-        `Thank you! To use ${SUPPORT_CODE}, enter it once in the discount box of Vest's purchase window` +
-          (copied ? ' (it is on your clipboard).' : '.'),
-      );
-      diag('support', { outcome: 'manual', error: e.message, errorCode: errCode(e) });
+      diag('support', { outcome: 'join-refused', error: e.message, errorCode: errCode(e) });
     }
   }
+
+  // ── Using the code in Vest's purchase window, for users who said Yes. Each time the window's discount box appears,
+  // its code is switched to AMPED the way a person would do it: clear the applied code (✕), type AMPED, press Enter.
+  // Vest validates and applies it. If Vest refuses it (for example on the code owner's own account), the previous
+  // code is put back. It acts once per opening, so a code the user picks by hand afterwards is left alone, and every
+  // switch is announced in the activity log.
+  const DISCOUNT_PLACEHOLDERS = ['Discount Code', '优惠码'];
+  const isDiscountBox = (el) =>
+    el instanceof HTMLInputElement &&
+    (DISCOUNT_PLACEHOLDERS.includes(el.placeholder) ||
+      (el.getAttribute('role') === 'combobox' &&
+        /\brounded-full\b/.test(el.className) &&
+        /\bw-32\b/.test(el.className)));
+  const supportApplies = () => {
+    const v = store.get(SUPPORT_KEY, null) || {};
+    return (v.answered === 'yes' || v.answered === 'manual') && v.apply !== false;
+  };
+  function setSupportApply(on) {
+    const v = store.get(SUPPORT_KEY, null) || {};
+    store.set(SUPPORT_KEY, { ...v, apply: on });
+  }
+  const _seenBoxes = new WeakSet();
+  let _boxScan = null;
+  function watchPurchaseWindow() {
+    new MutationObserver(() => {
+      if (_boxScan || !supportApplies()) return;
+      _boxScan = setTimeout(() => {
+        // the page changes constantly (prices); look at most a few times a second
+        _boxScan = null;
+        for (const el of document.querySelectorAll('input[placeholder], input[role="combobox"]')) {
+          if (!isDiscountBox(el) || _seenBoxes.has(el)) continue;
+          _seenBoxes.add(el);
+          useSupportCode(el).catch((e) => diag('support', { outcome: 'apply-error', error: e.message }));
+        }
+      }, 250);
+    }).observe(document.documentElement, { childList: true, subtree: true });
+  }
+  const waitFor = async (cond, ms) => {
+    for (let t = 0; t < ms; t += 100) {
+      if (cond()) return true;
+      await sleep(100);
+    }
+    return cond();
+  };
+  // React-controlled input: set the value through the native setter so the page's own handlers see the change.
+  function typeInto(input, text) {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, text);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  const pressEnter = (input) =>
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true, cancelable: true }),
+    );
+  async function useSupportCode(input) {
+    await sleep(300); // let the window finish opening
+    if (!input.isConnected) return;
+    const codeOf = () => (input.value.trim().split(/\s+/)[0] || '').toUpperCase();
+    const applied = () => input.readOnly && !!codeOf();
+    const before = applied() ? codeOf() : '';
+    if (before === SUPPORT_CODE) return;
+    const clearApplied = async () => {
+      const x = (input.closest('[data-slot="input-group"]') || input.parentElement).querySelector('button');
+      if (x) x.click();
+      return waitFor(() => !input.readOnly, 1500);
+    };
+    const enter = async (code) => {
+      typeInto(input, code);
+      pressEnter(input);
+      return waitFor(() => applied() && codeOf() === code, 5000);
+    };
+    if (before && !(await clearApplied())) return;
+    if (await enter(SUPPORT_CODE)) {
+      logEvent('ok', `Purchase window: discount code set to ${SUPPORT_CODE}${before ? ` (was ${before})` : ''}.`);
+      diag('support', { outcome: 'applied', replaced: before || null });
+      return;
+    }
+    if (before) {
+      if (input.readOnly) await clearApplied();
+      await enter(before);
+    }
+    logEvent(
+      'info',
+      `Purchase window: Vest didn't accept ${SUPPORT_CODE} here${before ? `, so ${before} was put back` : ''}.`,
+    );
+    diag('support', { outcome: 'apply-refused', restored: before || null });
+  }
+
   function declineSupport() {
     S.supportOffer = false;
     saveSupport('no');
@@ -2522,8 +2604,8 @@
       ? `You currently use code <b>${cur}</b>. Switch to <b>${SUPPORT_CODE}</b>?`
       : `Use code <b>${SUPPORT_CODE}</b>?`;
     bar.innerHTML = `<span class="utext"><b>Vest Copier is free.</b> ${ask} It takes <b>5% off</b> your Vest purchases
-        (the highest discount available) and helps keep the copier maintained until Vest releases its own. Asked only
-        this once.</span>
+        (the highest discount available) and helps keep the copier maintained until Vest releases its own. Yes sets
+        AMPED in Vest's purchase window from now on (Settings → Support turns it off). Asked only this once.</span>
       <button class="ubtn" data-act="support-yes">${cur ? 'Yes, switch to' : 'Yes, use'} ${SUPPORT_CODE}</button>
       <button class="ubtn ghost" data-act="support-no">${cur ? `Keep ${cur}` : 'No thanks'}</button>`;
     bar.querySelector('[data-act="support-yes"]').onclick = acceptSupport;
@@ -5165,8 +5247,12 @@
         <div class="set-row"><button class="ghostbtn" data-act="check-now">Check now</button>
           <a class="ghostbtn" href="${REPO_URL}" target="_blank" rel="noopener">GitHub</a></div>
         <div class="set-h">Support</div>
-        <div class="opt-desc">Vest Copier is free. Code <b>${SUPPORT_CODE}</b> takes 5% off Vest purchases and helps keep it
-          maintained. Enter it in the discount box of Vest's purchase window.</div>
+        ${option(
+          'supportapply',
+          supportApplies(),
+          `Use code ${SUPPORT_CODE} at checkout`,
+          `Switch the discount code in Vest's purchase window to <b>${SUPPORT_CODE}</b> (5% off) each time it opens. Thank you for supporting the free copier.`,
+        )}
         <div class="set-row"><button class="ghostbtn" data-act="copy-code">Copy code ${SUPPORT_CODE}</button></div>
       </div>`;
     body.querySelectorAll('[data-opt]').forEach(
@@ -5176,7 +5262,12 @@
           if (o === 'fast') toggleFast();
           else if (o === 'autoflat') toggleAutoFlatten();
           else if (o === 'capfit') toggleCapFit();
-          else if (o === 'updates') {
+          else if (o === 'supportapply') {
+            const on = !supportApplies();
+            if (on && !['yes', 'manual'].includes((store.get(SUPPORT_KEY, null) || {}).answered)) saveSupport('yes');
+            setSupportApply(on);
+            render();
+          } else if (o === 'updates') {
             S.checkUpdates = !S.checkUpdates;
             saveOpts();
             render();
@@ -5406,6 +5497,7 @@
     refresh();
     checkForUpdate();
     checkEncoding();
+    watchPurchaseWindow();
     LOG(`v${VERSION} loaded.`);
   };
   if (document.readyState === 'loading') window.addEventListener('DOMContentLoaded', boot);

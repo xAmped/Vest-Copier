@@ -83,8 +83,8 @@ python3 tools/package.py                                 # shareable zip in dist
 
 Vest Copier is free. On first use the panel asks, once, whether you'd like to use code **AMPED**: it takes **5% off**
 your Vest purchases and helps keep the copier maintained until Vest releases its own. If you already use another code,
-the question names it so you can keep it. Nothing changes unless you click **Yes**. You can also enter AMPED yourself
-in the discount box of Vest's purchase window (Settings → Support has a Copy button).
+the question names it so you can keep it. **Yes** sets AMPED in Vest's purchase window each time it opens (replacing
+any other code there); **Settings → Support** turns that off. Nothing changes unless you click **Yes**.
 
 ## Disclaimer
 

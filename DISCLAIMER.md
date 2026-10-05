@@ -34,5 +34,7 @@ financial or trading advice.
 ## Referral code
 
 On first use, the panel asks once whether you'd like to use code **AMPED**, which takes 5% off Vest purchases and
-supports the project. If you already use another code, the question names it so you can choose to keep it. Nothing
-changes unless you click **Yes**, and you are never asked again after you answer.
+supports the project. If you already use another code, the question names it so you can choose to keep it. If you
+click **Yes**, the copier sets AMPED in Vest's purchase window each time it opens, replacing any other code there, and
+says so in its activity log; **Settings → Support** turns this off. Nothing changes unless you click **Yes**, and you
+are never asked again after you answer.

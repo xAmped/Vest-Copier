@@ -215,9 +215,9 @@ and exactly what **Cap-to-fit** solves by sizing each account to what it can act
 
 On first use (after accepting the terms) the panel asks once whether you'd like to use code **AMPED**: 5% off your
 Vest purchases, and it helps keep the copier maintained. If you already use another code, the question names it.
-**Yes** links AMPED to your Vest account, or, if Vest won't link it automatically, copies it so you can enter it once
-in the discount box of Vest's purchase window. **No** changes nothing. **Settings → Support** has a **Copy code AMPED**
-button any time.
+**Yes** sets AMPED in Vest's purchase window each time it opens, replacing any other code there, and notes it in
+the activity log. If Vest refuses AMPED, your previous code is put back. **No** changes nothing. **Settings →
+Support** turns the switching on or off and has a **Copy code AMPED** button.
 
 ## 12. Troubleshooting
 

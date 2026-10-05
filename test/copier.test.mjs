@@ -31,6 +31,7 @@ localStorage.clear();
 localStorage.setItem('vc-known-build-v3', ${JSON.stringify(cfg.knownBuild || 'OLDBUILD00')});   // last accepted build
 if (!${JSON.stringify(!!cfg.noAck)}) localStorage.setItem('vc-ack', JSON.stringify({ v: 2 }));   // terms already accepted
 if (${JSON.stringify(!!cfg.opts)}) localStorage.setItem('vc-opts', ${JSON.stringify(JSON.stringify(cfg.opts || {}))});
+if (${JSON.stringify(!!cfg.support)}) localStorage.setItem('vc-support', ${JSON.stringify(JSON.stringify(cfg.support || {}))});
 if (${JSON.stringify(!!cfg.plans)}) localStorage.setItem('vc-plans', ${JSON.stringify(JSON.stringify(cfg.plans || {}))});
 if (${JSON.stringify(!!cfg.trade)}) localStorage.setItem('vc-trade', ${JSON.stringify(JSON.stringify(cfg.trade || {}))});
 window.__NEXT_DATA__ = { buildId: 'NEWBUILD123456' };      // Vest shipped a new build
@@ -55,6 +56,29 @@ window.WebSocket = class {
     this.t = setInterval(() => this.onmessage && this.onmessage({ data: JSON.stringify({ channel: 'NDX-USD-PERP@ticker', data: { symbol: 'NDX-USD-PERP', markPrice: String(window.MARK || CFG.markPrice || 31221.3), indexPrice: '31225', status: 'TRADING' }, tsMs: Date.now() }) }), 150);
   }
   close() { clearInterval(this.t); this.readyState = 3; }
+};
+// stand-in for Vest's purchase-window discount box: applied code = read-only "CODE 5%" with a ✕ button; when empty,
+// type a code and press Enter to apply it (AMPED is refused when CFG.ampedInvalid, like on the code owner's account)
+window.openPurchase = (code) => {
+  const wrap = document.createElement('div');
+  wrap.setAttribute('data-slot', 'input-group');
+  const input = document.createElement('input');
+  input.placeholder = 'Discount Code';
+  input.setAttribute('role', 'combobox');
+  const x = document.createElement('button');
+  let applied = code || null;
+  const show = () => { input.readOnly = !!applied; if (applied) input.value = applied + ' 5%'; };
+  x.onclick = () => { input.value = applied || ''; applied = null; show(); };
+  input.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || applied) return;
+    const c = input.value.trim().toUpperCase();
+    setTimeout(() => { if (!(c === 'AMPED' && CFG.ampedInvalid)) { applied = c; show(); } }, 100);
+  });
+  wrap.append(input, x);
+  document.body.append(wrap);
+  show();
+  window.purchaseBox = input;
+  return true;
 };
 const real = window.fetch.bind(window);
 let n = 0;
@@ -1187,8 +1211,11 @@ try {
   await until(`return SENT.some(x => x.path === '/v2/referrals/join');`, 3000);
   const join = (await js(`return SENT.filter(x => x.path === '/v2/referrals/join');`))[0];
   ok(
-    !!join && join.method === 'POST' && join.body.refCode === 'AMPED' && /Thank you! Code AMPED/.test(await logText()),
-    "support: Yes links code AMPED through Vest's referral join",
+    !!join &&
+      join.method === 'POST' &&
+      join.body.refCode === 'AMPED' &&
+      /Thank you! AMPED will be used/.test(await logText()),
+    "support: Yes records the choice and also tries Vest's referral join",
   );
   ok(
     await js(
@@ -1209,10 +1236,11 @@ try {
   await until(`${R} return !R.querySelector('.support').hidden;`, 4000);
   await js(`${R} R.querySelector('[data-act="support-yes"]').click(); return true;`);
   ok(
-    (await until(`${R} return /enter it once in the discount box/.test(R.querySelector('.log').innerText);`, 4000)) &&
-      (await js(`return JSON.parse(localStorage.getItem('vc-support')).answered;`)) === 'manual',
-    "support: if Vest won't link the code, the user is told to enter it in the purchase window",
+    (await until(`return SENT.some(x => x.path === '/v2/referrals/join');`, 4000)) &&
+      (await js(`return JSON.parse(localStorage.getItem('vc-support')).answered;`)) === 'yes',
+    "support: if Vest's referral join refuses, Yes still holds (the purchase window applies the code)",
   );
+
   // an account already using another code is still asked once, and the question names that code
   await panelPage({ rewards: { code: 'FRIEND' } }, {});
   ok(
@@ -1242,6 +1270,33 @@ try {
     (await js(`${R} return R.querySelector('.support').hidden;`)) &&
       (await js(`return JSON.parse(localStorage.getItem('vc-support')).answered;`)) === 'had-code',
     'support: an account already using AMPED is never asked',
+  );
+
+  // purchase window: for users who said Yes, the discount code is switched to AMPED (and the old one restored if refused)
+  await panelPage({ support: { answered: 'yes' } }, {});
+  await js(`return openPurchase('OTHERCODE');`);
+  ok(
+    (await until(`return purchaseBox.value === 'AMPED 5%';`, 5000)) &&
+      /discount code set to AMPED \(was OTHERCODE\)/.test(await logText()),
+    'purchase window: an existing code is replaced with AMPED, and the log says so',
+  );
+  await panelPage({ support: { answered: 'yes' }, ampedInvalid: true }, {});
+  await js(`return openPurchase('OTHERCODE');`);
+  ok(
+    (await until(`${R} return /so OTHERCODE was put back/.test(R.querySelector('.log').innerText);`, 9000)) &&
+      (await js(`return purchaseBox.value;`)) === 'OTHERCODE 5%',
+    'purchase window: if Vest refuses AMPED, the previous code is put back',
+  );
+  await panelPage({ support: { answered: 'no' } }, {});
+  await js(`return openPurchase('OTHERCODE');`);
+  await sleep(1500);
+  ok((await js(`return purchaseBox.value;`)) === 'OTHERCODE 5%', 'purchase window: untouched for users who said No');
+  await panelPage({ support: { answered: 'yes', apply: false } }, {});
+  await js(`return openPurchase('OTHERCODE');`);
+  await sleep(1500);
+  ok(
+    (await js(`return purchaseBox.value;`)) === 'OTHERCODE 5%',
+    'purchase window: untouched when switched off in Settings',
   );
 
   // update check on load: a newer published version shows the bar with an Install link; Later hides it
