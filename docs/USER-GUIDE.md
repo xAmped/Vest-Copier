@@ -1,30 +1,29 @@
 # Vest Copier — User Guide
 
 A Tampermonkey userscript that mirrors your trades from one Vest Markets account (the **master**)
-to your other accounts (the **followers**), live, from inside the Vest web page. No server, no
-sign-up, no bot logging in for you — it runs in your own logged-in browser session and acts only
-when you trade.
+to your other accounts (the **followers**), live, from inside the Vest web page. Everything happens in
+your own logged-in browser session: nothing logs in on your behalf, and it only acts when you trade.
 
 > **Risk notice.** This places **real orders on live accounts** the instant you arm it. One bad
 > master trade hits **every** linked account at once. Vest has no official copier; a Vest team
-> member has said third-party copy tools aren't prohibited ("use at your own risk"). You are fully
-> responsible for every order it sends. Start tiny.
+> member has said third-party copy tools aren't prohibited ("use at your own risk"). Every order it
+> sends is your responsibility. Start tiny.
 
 ---
 
 ## 1. Install
 
 1. Install the **Tampermonkey** browser extension (Chrome/Edge/Brave/Firefox). In Chrome, Edge or Brave,
-   open `chrome://extensions`, click **Details** on Tampermonkey and turn on **Allow User Scripts**
+   go to `chrome://extensions`, open Tampermonkey's **Details** page and switch **Allow User Scripts** on
    (without it the script is installed but never runs).
 2. Open the install link,
    <https://raw.githubusercontent.com/xAmped/Vest-Copier/main/src/vest-copier.user.js>, and click
-   **Install**. Tampermonkey then updates it automatically when a new version is released.
+   **Install**. After that, Tampermonkey keeps it updated by itself.
 3. No link? Open Tampermonkey → **Create a new script**, delete the template, paste the entire contents of
    `vest-copier.user.js`, and **Save** (Ctrl/Cmd-S).
 4. Open or refresh **next.vestmarkets.com**. A **Vest Copier** panel appears top-right.
 
-**Updating:** the panel checks GitHub each time Vest loads. When a new version is out, a green bar shows
+**Updating:** the panel checks GitHub each time Vest loads. When there's a newer version, a green bar shows
 **Install**: click it, click **Update** on Tampermonkey's page, then come back to the Vest tab: it reloads by
 itself (if you're armed it shows **Reload now** instead, since reloading disarms).
 **Settings → Updates** has **Check now** and a switch to turn the check off. Installed from the link,
@@ -212,7 +211,7 @@ and exactly what **Cap-to-fit** solves by sizing each account to what it can act
 
 ---
 
-## Support the project
+## The AMPED code
 
 On first use (after accepting the terms) the panel asks once whether you'd like to use code **AMPED**: 5% off your
 Vest purchases, and it helps keep the copier maintained. If you already use another code, the question names it.

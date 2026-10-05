@@ -18,10 +18,10 @@ survivable.
 
 ## You are responsible
 
-You alone are responsible for every order Vest Copier sends and for every trade on your accounts, including any
+Every order Vest Copier sends, and every trade on your accounts, is your responsibility alone. That includes any
 loss, drawdown breach, failed evaluation, closed account or lost payout.
 
-Vest Copier is provided free and **as is, without warranty of any kind**. Its author accepts **no responsibility
+Vest Copier is free and comes **with no warranty of any kind**. Its author accepts **no responsibility
 or liability** for any loss or damage arising from its use, including orders that are placed, missed, duplicated
 or sized differently than you expected. See sections 7 and 8 of the [LICENSE](LICENSE).
 

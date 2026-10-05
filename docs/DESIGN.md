@@ -12,8 +12,8 @@
 
 You trade one account (the **master**) on Vest's normal web UI. The copier mirrors each
 action — open, reduce, modify stop/TP, close — onto the **follower** accounts you've selected,
-in real time, from inside the same browser tab. There is no server, no sign-up, no backend of
-ours; it runs entirely in your logged-in Vest session and borrows that session's auth.
+in real time, from inside the same browser tab. There's no backend: it runs entirely in your logged-in
+Vest session and borrows that session's auth.
 
 Scope (as shipped):
 

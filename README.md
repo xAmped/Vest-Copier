@@ -1,10 +1,7 @@
 # Vest Copier
 
-Trade one Vest account, and the copier places the same trade on your other accounts within a fraction of a second.
-Stops, targets, adds and exits follow along too.
-
-**[Install](https://raw.githubusercontent.com/xAmped/Vest-Copier/main/src/vest-copier.user.js)** ·
-[Quick-start PDF](docs/Vest-Copier-Quick-Start.pdf) · [User guide](docs/USER-GUIDE.md) · [Disclaimer](DISCLAIMER.md)
+Trade copier for prop accounts on [Vest Markets](https://next.vestmarkets.com). One account leads, the others mirror
+it. Runs as a Tampermonkey userscript inside the Vest page.
 
 <p>
   <img src="docs/tutorial/img/accounts.png" alt="Accounts tab with one master and two followers" width="340">
@@ -12,101 +9,108 @@ Stops, targets, adds and exits follow along too.
   <img src="docs/tutorial/img/trade.png" alt="Trade tab with a stop and three targets in points" width="340">
 </p>
 
-I built this for my own prop accounts. Running the same NQ setup on several funded accounts meant clicking through
-Vest's ticket over and over, and by the third account the price had already moved. Now I trade one account and the
-rest copy it. Vest says they're working on their own copier; until that's out, this is free for anyone who wants it.
+## A copy, start to finish
+
+Say Account 11 is your master and Accounts 12 and 14 follow it.
+
+1. You buy 1 NQ on Account 11 with a 20 point stop and two targets.
+2. About a third of a second later, 12 and 14 each buy 1 NQ with the same stop and targets.
+3. You drag the stop to breakeven on 11. Their stops move to the same price.
+4. You add half a contract. They add half a contract.
+5. You close. They close, and the log tells you each account filled and how far apart the fills were.
+
+If 12 and 14 are smaller than 11, turn on Cap-to-fit and they trade a proportional size instead, with the same stop
+distance, so every account risks the same percent.
 
 > [!WARNING]
-> **Real orders, real accounts.** Once you arm it, every order on your master is sent to every follower you selected.
-> A mistake on one account becomes a mistake on all of them. Test with the smallest size first.
+> These are live orders on real accounts. When the copier is armed, whatever you do on the master happens on every
+> follower, mistakes included. Try it with the minimum size before anything else.
 
-## Highlights
+## Before you start
 
-- **Full trade copying**: entries, adding to a position, partial closes, full closes, and every stop or target you
-  move, add or remove.
-- **Different account sizes**: copy 1:1, or switch on Cap-to-fit so each follower trades in proportion to its balance
-  (a 5k account following a 50k master risks the same percent, with the same stop distance).
-- **Points-based order panel**: stop and targets in points, sized by contracts or by dollars at risk, with scale-outs
-  and automatic breakeven.
-- **Guard rails**: a fill check on every entry, Flatten All, adopting a trade that's already open, and a lockout
-  when Vest changes its website until a quick read-only check passes.
-- **One-click updates**: a bar in the panel tells you when there's a new version.
+- A desktop browser: Chrome, Edge, Brave or Firefox.
+- The [Tampermonkey](https://www.tampermonkey.net/) extension.
+- On Chrome, Edge or Brave, one setting: `chrome://extensions` → Tampermonkey → **Details** → **Allow User Scripts**
+  on. It's off by default, and the script won't run without it.
 
-## Setup
+## Getting it running
 
-You need a desktop browser with Tampermonkey: Chrome, Edge, Brave or Firefox.
+1. Open **[vest-copier.user.js](https://raw.githubusercontent.com/xAmped/Vest-Copier/main/src/vest-copier.user.js)**.
+   Tampermonkey shows an install page. Click **Install**.
+2. Log in at [next.vestmarkets.com](https://next.vestmarkets.com). A dark panel titled Vest Copier opens in the top
+   right.
+3. Read the risk notice and accept it.
+4. On **Accounts**, press **M** on your lead account and **Flw** on the ones that should copy it.
+5. Press **ARM**. From now on, trade the lead account as usual. Press **DISARM** to stop; positions stay as they are.
 
-1. Add [Tampermonkey](https://www.tampermonkey.net/) to your browser.
-2. Chrome, Edge and Brave only: open `chrome://extensions`, find Tampermonkey, click **Details** and switch on
-   **Allow User Scripts**. If you skip this, Tampermonkey accepts the script and then never runs it.
-3. Click the [install link](https://raw.githubusercontent.com/xAmped/Vest-Copier/main/src/vest-copier.user.js) and
-   press **Install** on the page Tampermonkey opens.
-4. Log in to [next.vestmarkets.com](https://next.vestmarkets.com). The Vest Copier panel appears in the top right
-   corner. Read the risk notice it shows and accept it.
+The [quick-start PDF](docs/Vest-Copier-Quick-Start.pdf) fits all of this on one page, and the
+[user guide](docs/USER-GUIDE.md) goes through every button.
 
-## Using it
+## The panel
 
-1. On the **Accounts** tab, press **M** next to the account you'll trade. That's your master.
-2. Press **Flw** on each account that should copy it.
-3. Press **ARM**.
-4. Trade the master like you always do, from Vest's ticket or the copier's **Trade** tab. The activity log at the
-   bottom shows each copy and a fill summary.
-5. Press **DISARM** when you're done for the day. It stops copying and leaves your positions alone.
+| Tab | What's there |
+|---|---|
+| Accounts | Your accounts grouped by size, with balance, floor and room left. Pick the master and followers here. |
+| Trade | An order ticket in points: stop, any number of targets, size by contracts or by dollars at risk, scale-outs, and automatic breakeven. Adding to an open trade rebuilds the stop and targets around the new average price. |
+| P&L | Profit or loss per account and in total. |
+| Settings | Fast mode, Auto-flatten, Cap-to-fit, update checks, and the AMPED code switch. |
+| Rules | What the copier will and won't do, and the risk notice. |
 
-One thing to know: the copier only repeats orders you place. If Vest closes your master by itself, for example on a
-drawdown breach, your followers stay in the trade. Close them by hand or use **Flatten All**.
+Below the tabs: **ARM / DISARM**, a red **Flatten All** that closes everything on every account, and an activity log
+with **Diag** and **CSV** exports.
 
-The [user guide](docs/USER-GUIDE.md) covers every setting, and the [tutorial](docs/tutorial/index.html) walks
-through it with screenshots (download it and open it in your browser).
+## Things it won't do
+
+- It won't copy a trade you placed while it was disarmed, and it won't open a follower into a trade that's already
+  running. (If master and followers already hold the same position, arming takes it over.)
+- It won't copy an order Vest rejected on the master.
+- It won't copy closes Vest makes by itself, such as a drawdown breach on the master. Those followers stay open until
+  you close them or press Flatten All.
+- It won't arm right after Vest changes its website until you've run the quick read-only check in the status bar.
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| No panel on the Vest page | Allow User Scripts is off (see Before you start), or the script is disabled in Tampermonkey. Refresh after fixing. |
+| Flw is greyed out | That account is a different size from the master. Turn on Cap-to-fit in Settings. |
+| ARM refuses | The log names the account and the reason, usually a resting order or an opposite position. Clear it on Vest and arm again. |
+| "did NOT fill" in the log | Vest accepted the order but didn't execute it, usually not enough margin for that size. Trade smaller or use Cap-to-fit. |
+| Amber status bar | Vest updated its site. Click the bar, let the check finish, then Accept. |
+| Anything else | Press Diag, then [open an issue](https://github.com/xAmped/Vest-Copier/issues) with the file and a few words on what you expected. The file has sizes, prices and account ids but no login data. |
+
+## Updates
+
+New versions show up as a green bar in the panel. Click **Install**, confirm in Tampermonkey, switch back to Vest and
+the page reloads with the new version. The [changelog](CHANGELOG.md) lists what each one changed.
+
+## About the AMPED code
+
+The copier doesn't cost anything. I keep it running in my spare time, so if you were going to buy a Vest evaluation anyway,
+code **AMPED** takes 5% off and sends a small commission my way.
+
+You'll be asked about it once. If you agree, the copier enters AMPED in the discount field of Vest's checkout window
+whenever it opens, replacing any code that was there, and logs the change. If your account already uses a code, the
+question names it so you can decline. Settings → Support turns the switch off.
 
 ## Privacy
 
-Everything happens inside your own browser tab, using the Vest login you already have. The copier has no server and
-collects nothing. It talks to two places: Vest, to place your orders, and this GitHub repo, to check for updates.
+The script runs in your browser tab and uses the Vest session you're already logged into. Your orders go to Vest and
+nowhere else. The only outside request is to this repository, to see if a newer version exists.
 
-## Questions
-
-**Who's behind this?**
-Me, xAmped. It's a personal project, not a Vest product.
-
-**What does it cost?**
-Nothing.
-
-**Will Vest mind?**
-A Vest team member has said third-party copy tools aren't banned, at your own risk. Your prop program may have its
-own rules, so check them.
-
-**The panel never appears.**
-Nine times out of ten it's step 2 of Setup (Allow User Scripts). Otherwise check the script is switched on in
-Tampermonkey and refresh Vest.
-
-**Something didn't copy right.**
-Press **Diag** in the panel's activity log. It saves a file describing what happened, without passwords or login
-tokens. [Open an issue](https://github.com/xAmped/Vest-Copier/issues), describe what you expected and attach it
-(remove anything you'd rather keep private).
-
-## Code AMPED
-
-If the copier saves you time, using code **AMPED** when you buy a Vest evaluation is a nice way to say thanks. You
-get 5% off and it helps me keep the copier working.
-
-The panel asks you about it one time. Say yes and it fills in AMPED in Vest's purchase window whenever you open it,
-in place of any other code, and writes that in the activity log. If you're already using someone's code, the question
-shows it so you can stick with it. You can switch this off any time in Settings, under Support.
-
-## For developers
+## Working on the code
 
 ```sh
 node test/math.test.mjs                                  # order math
-CHROME_PATH=/path/to/chrome node test/copier.test.mjs    # browser test against a fake Vest API
+CHROME_PATH=/path/to/chrome node test/copier.test.mjs    # full browser test against a mocked Vest API
 npx prettier --check src test
 python3 tools/package.py                                 # zip with the script, tutorial and PDF
 ```
 
-How it's put together is in [docs/DESIGN.md](docs/DESIGN.md), and every release is listed in the
-[changelog](CHANGELOG.md).
+Architecture and safety rules are written up in [docs/DESIGN.md](docs/DESIGN.md).
 
-## License
+## Terms
 
-© 2026 xAmped. Free to use for your own trading and to share as is. Don't sell it, rebrand it or publish modified
-versions. Details in [LICENSE](LICENSE). Vest Copier isn't affiliated with Vest Markets.
+Use it on your own accounts and pass it along unchanged, both free. Selling it, renaming it or releasing an edited
+copy is off limits. The full wording lives in [LICENSE](LICENSE), and [DISCLAIMER.md](DISCLAIMER.md) covers the risk
+you take on by using it. Independent project by xAmped; Vest Markets has no part in it.
