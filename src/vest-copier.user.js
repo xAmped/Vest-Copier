@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vest Copier
 // @namespace    vestcopier
-// @version      0.25.0
+// @version      0.25.1
 // @description  Copies a master Vest account's trades to your other Vest accounts, live, and adds a points-based order panel.
 // @author       xAmped
 // @license      Vest Copier License — free to use, no selling; see LICENSE
@@ -22,7 +22,7 @@
   if (window.__vestCopier) return;
   window.__vestCopier = true;
 
-  const VERSION = '0.25.0';
+  const VERSION = '0.25.1';
   const API = 'https://api-gateway.hz.vestmarkets.com';
   const _fetch = window.fetch.bind(window);
   // Console echo of the activity log, for troubleshooting: localStorage.setItem('vc-debug', '1') and reload.
@@ -5525,10 +5525,31 @@
   // file is safer to post publicly; nothing is sent anywhere by the copier.
   const ISSUE_FORM = 'bug_report.yml';
   function buildReport(note) {
+    // Every account id becomes a name: active accounts by their label, closed ones by the label recorded next to the
+    // id in the diagnostics, anything else by a placeholder. Position and order ids are Vest's random ids for single
+    // orders (useless without a login) and stay, since they tie related events together.
+    const ACCOUNT_KEYS = new Set(['account', 'accountId', 'master', 'followers', 'id']);
+    const isUuid = (v) =>
+      typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
     const alias = {};
     for (const id in S.byId) alias[id] = S.byId[id].label;
+    const learn = (o) => {
+      if (Array.isArray(o)) return o.forEach(learn);
+      if (!o || typeof o !== 'object') return;
+      const id = isUuid(o.account) ? o.account : isUuid(o.id) && o.label ? o.id : null;
+      if (id && o.label && !alias[id]) alias[id] = o.label;
+      Object.values(o).forEach(learn);
+    };
+    learn(S.diag);
+    let unknown = 0;
+    const nameFor = (id) => alias[id] || (alias[id] = `account-${++unknown}`);
     const scrub = (v) =>
-      JSON.parse(JSON.stringify(v), (k, val) => (typeof val === 'string' && alias[val] ? alias[val] : val));
+      JSON.parse(JSON.stringify(v), function (k, val) {
+        if (typeof val !== 'string') return val;
+        if (alias[val]) return alias[val];
+        if (isUuid(val) && ACCOUNT_KEYS.has(k) && (k !== 'id' || 'label' in this)) return nameFor(val);
+        return val;
+      });
     const accounts = Object.values(S.byId).map((r) => ({
       label: r.label,
       type: r.type,

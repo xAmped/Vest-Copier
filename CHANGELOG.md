@@ -2,6 +2,9 @@
 
 Newest first. To update, click **Install** on the green bar that appears in the panel whenever there's a newer version.
 
+## v0.25.1
+- **Fixed:** report files now replace every account id with its name, including accounts that have since closed. Before, ids of closed accounts were left in.
+
 ## v0.25.0
 - **Report a problem from the panel.** Click **Problem? Report it** at the bottom of the panel, describe what happened, and click **Save report & open issue**. The copier saves one report file (activity log, diagnostics, settings, version and account balances, with account ids replaced by names) and opens a GitHub issue with your description filled in. Drag the file in and submit.
 
