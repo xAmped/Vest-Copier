@@ -44,7 +44,7 @@ distance, so every account risks the same percent.
 2. Log in at [next.vestmarkets.com](https://next.vestmarkets.com). A dark panel titled Vest Copier opens in the top
    right.
 3. Read the risk notice and accept it.
-4. On **Accounts**, press **M** on your lead account and **Flw** on the ones that should copy it.
+4. On **Accounts**, press **M** on your lead account and **Flw** on each account you want copying it.
 5. Press **ARM**. From now on, trade the lead account as usual. Press **DISARM** to stop; positions stay as they are.
 
 The [tutorial](https://xamped.github.io/Vest-Copier/tutorial/) walks through setup with screenshots, the
