@@ -58,7 +58,7 @@ through every button.
 | Rules | What the copier will and won't do, and the risk notice. |
 | Support | Report a problem, share an idea, the Discord, links to the guides, and the AMPED code. |
 
-Below the tabs: **ARM / DISARM**, a red **Flatten All** that closes everything on every account, and an activity log
+Below the tabs: **ARM / DISARM**, a red **Flatten All** that instantly closes everything on every account (no confirmation, it's the emergency button), and an activity log
 with **Diag** and **CSV** exports.
 
 ## Things it won't do

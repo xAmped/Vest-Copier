@@ -154,7 +154,7 @@ Options are saved and persist across refreshes. Active ones show as `FAST` / `CA
 ## 8. Safety tools
 
 - **Flatten All** — emergency button. Closes **every** open position and cancels **every** order on
-  **all** your loaded accounts, and disarms. Asks you to confirm first. (It acts on *all* loaded
+  **all** your loaded accounts, and disarms. It acts **instantly, with no confirmation**, so only press it when you mean it. (It acts on *all* loaded
   accounts, not just the selected group — so an unrelated manual trade would be closed too.)
 - **Disarm** — stops copying immediately. It does **not** close positions; use Flatten All for that.
 - **Fill confirmation** — after each entry, the copier checks that every follower actually filled.

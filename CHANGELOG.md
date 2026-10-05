@@ -2,6 +2,10 @@
 
 Newest first. To update, click **Install** on the green bar that appears in the panel whenever there's a newer version.
 
+## v0.26.3
+- **Flatten All acts instantly.** It's an emergency button, so it no longer asks for confirmation: one click closes every position and cancels every order on every account, and disarms.
+- More detail in the Diag file for troubleshooting (session, markets, accounts, settings changes, and any error in the copier itself), and the CSV log now says which version wrote it.
+
 ## v0.26.2
 - **Every market sized correctly.** The copier now knows every Vest market's size rules, so followers scaled with Cap-to-fit always get a size that market accepts (some markets trade in whole units).
 - **Fixed:** account ids that appeared inside error messages are now removed from report files too.

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vest Copier
 // @namespace    vestcopier
-// @version      0.26.2
+// @version      0.26.3
 // @description  Copies a master Vest account's trades to your other Vest accounts, live, and adds a points-based order panel.
 // @author       xAmped
 // @license      Vest Copier License — free to use, no selling; see LICENSE
@@ -22,7 +22,7 @@
   if (window.__vestCopier) return;
   window.__vestCopier = true;
 
-  const VERSION = '0.26.2';
+  const VERSION = '0.26.3';
   const API = 'https://api-gateway.hz.vestmarkets.com';
   const _fetch = window.fetch.bind(window);
   // Console echo of the activity log, for troubleshooting: localStorage.setItem('vc-debug', '1') and reload.
@@ -58,7 +58,7 @@
   const FLATTEN_WAIT_MS = 5000,
     FLATTEN_RECHECK_MS = 1500;
   const TOKEN_REFRESH_MARGIN_MS = 60000; // mint a new account token this long before the old one expires
-  const LOG_MAX = 300,
+  const LOG_MAX = 500,
     DIAG_MAX = 2000,
     DIAG_MAX_BYTES = 1500000;
   const MIN_LEG_USD = 1; // Vest's minimum notional for a sized stop/target leg
@@ -1789,7 +1789,10 @@
     try {
       const r = await (await _fetch(`${API}/v3/exchangeInfo`)).json();
       (r.symbols || []).forEach(applySymbolRules);
-    } catch {}
+      diag('market_rules', { outcome: 'loaded', markets: Object.keys(SYMBOLS).length });
+    } catch (e) {
+      diag('market_rules', { outcome: 'error', error: e.message }); // sizes fall back to NQ's step until a reload
+    }
   }
   async function loadSymbolRules(sym) {
     try {
@@ -2164,6 +2167,7 @@
     S.checkUpdates = o.checkUpdates !== false; // on by default
   }
   function saveOpts() {
+    diag('settings', { fast: S.fast, autoFlatten: S.autoFlatten, capFit: S.capFit, checkUpdates: S.checkUpdates });
     store.set(OPTS_KEY, { fast: S.fast, autoFlatten: S.autoFlatten, capFit: S.capFit, checkUpdates: S.checkUpdates });
   }
   function loadTrade() {
@@ -2242,7 +2246,7 @@
   function downloadLog() {
     const rows = [...S.log].reverse();
     const csv =
-      'time,level,message\n' +
+      `time,level,message\n${new Date().toISOString()},info,"Exported from Vest Copier v${VERSION} (Vest build ${fingerprint() || 'unknown'})"\n` +
       rows.map((e) => `${e.t.toISOString()},${e.level},"${String(e.msg).replace(/"/g, '""')}"`).join('\n');
     saveFile(`vest-copier-log-${stamp()}.csv`, 'text/csv', csv);
   }
@@ -2439,6 +2443,7 @@
         S.update.installUrl = SCRIPT_URL;
       }
       S.update.latest = latest;
+      diag('update_check', { outcome: 'ok', latest, from: S.update.installUrl === SCRIPT_URL ? 'raw' : 'release' });
       S.update.state = updateAvailable() ? 'available' : 'current';
       if (manual && S.update.state === 'available') S.update.dismissed = null; // Check now always shows it
     } catch (e) {
@@ -4128,7 +4133,7 @@
         <div class="body"><div class="empty">Waiting for your Vest session…</div></div>
         <div class="ctl">
           <button class="armbtn" data-act="arm" disabled>ARM</button>
-          <button class="dangerbtn" data-act="flatall" title="Emergency: close every position and cancel every order on every account, and disarm">Flatten All</button>
+          <button class="dangerbtn" data-act="flatall" title="Emergency: instantly closes every position and cancels every order on every account, and disarms. No confirmation.">Flatten All</button>
         </div>
         <div class="logwrap">
           <div class="logh"><span>Activity</span><span class="loghbtns">
@@ -4228,7 +4233,7 @@
       }
     };
     on('[data-act="arm"]', () => (S.armed ? disarm() : arm()));
-    on('[data-act="flatall"]', () => requestFlattenAll());
+    on('[data-act="flatall"]', () => flattenAll()); // an emergency button: acts at once, no confirmation
     on('[data-act="dldiag"]', () => downloadDiag());
     on('[data-act="dllog"]', () => downloadLog());
     on('[data-act="clearlog"]', () => clearLog());
@@ -5806,6 +5811,17 @@
       await buildRegistry();
       render();
       logEvent('info', `Loaded ${Object.keys(S.byId).length} active accounts.`);
+      diag('accounts', {
+        count: Object.keys(S.byId).length,
+        list: Object.values(S.byId).map((r) => ({
+          ...who(r.id),
+          type: r.type,
+          size: r.size,
+          equity: r.equity,
+          floor: r.floor,
+          canTrade: r.canTrade,
+        })),
+      });
       startBalancePoll();
       if (!S.ack) {
         S.rulesOpen = true; // first use: the risk acknowledgement comes first
@@ -5839,6 +5855,33 @@
     loadUpdate();
     initBuild();
     loadAllSymbolRules();
+    diag('session', {
+      version: VERSION,
+      build: fingerprint() || null,
+      browser: navigator.userAgent,
+      settings: { fast: S.fast, autoFlatten: S.autoFlatten, capFit: S.capFit, checkUpdates: S.checkUpdates },
+      termsAccepted: S.ack,
+      openPlans: Object.keys(store.get('vc-plans', {}) || {}).length,
+    });
+    // The copier's own crashes (not Vest's): Tampermonkey runs it from a "userscript" source.
+    const ours = (stack) => /userscript|vest-copier/i.test(String(stack || ''));
+    window.addEventListener('error', (e) => {
+      if (ours(e.filename) || ours(e.error && e.error.stack))
+        diag('script_error', {
+          message: e.message,
+          at: `${e.lineno}:${e.colno}`,
+          stack: String((e.error && e.error.stack) || '').slice(0, 800),
+        });
+    });
+    window.addEventListener('unhandledrejection', (e) => {
+      const r = e.reason;
+      if (ours(r && r.stack))
+        diag('script_error', {
+          message: String((r && r.message) || r),
+          stack: String(r.stack).slice(0, 800),
+          unhandled: true,
+        });
+    });
     _root = buildPanel();
     loadPlans();
     renderHealth();
