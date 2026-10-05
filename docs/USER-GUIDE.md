@@ -133,9 +133,16 @@ like any other master order.
   prices for both Buy and Sell, with the **fail** price (where the account's equity reaches its floor: the drawdown
   floor, or the daily-loss floor when that's higher) and, on an evaluation, the **pass** price (where it reaches the
   target). Both count the opening fee and the account's current equity, like Vest's own estimates.
-- **Warnings** (amber, the order can still be sent): the size is more than the account can open (Vest won't fill it;
-  **Use max** switches to Max), or a stop-out would lose more, fees included, than the room left to the floor, so the
-  account fails before the stop fills.
+- **Allowed range** (live, under Size and Stop): size = risk ÷ stop, the size can't go over what the account can open,
+  and a stop-out can't take you past your floor. So in *Risk $* mode the panel shows how much you can risk at your stop
+  and in total ("Can risk up to $159 at 20 pts · $278 max before the floor") and the smallest stop for your risk ("Stop
+  must be at least 25 pts to risk $200"); in *Contracts* mode, how many contracts fit and the widest stop before the
+  account fails.
+- **Blocked orders:** a size the account can't open is never sent (Vest would accept it and not fill it). Buy and Sell
+  turn off with the reason and one-click fixes: **Set stop to …** (keeps your $ risk), **Risk $… instead** (keeps your
+  stop) or **Use max**.
+- **Warning** (amber, the order can still be sent): a stop-out would lose more, fees included, than the room left to the
+  floor, so the account fails before the stop fills.
 - It then sends a market order with the stop and targets attached as native Vest legs (they work on
   Vest's side even if your tab closes). By default the stop and targets are then re-placed exactly N points from
   your **fill** (Measure from → *Your fill*); choose *Price at click* to leave them where they were placed.

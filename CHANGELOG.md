@@ -2,6 +2,10 @@
 
 Newest first. To update, click **Install** on the green bar that appears in the panel whenever there's a newer version.
 
+## v0.29.0
+- **The Trade tab shows your allowed range, live.** Under Size: how much you can risk at your current stop, and the most you can risk before a stop-out would reach your floor. Under Stop: the smallest stop that fits your $ risk (e.g. "Stop must be at least 25 pts to risk $200" on a $5k account at 50x), or in Contracts mode the widest stop before the account fails.
+- **Orders Vest wouldn't fill are blocked.** If the size is more than the account can open, Buy and Sell are off and the panel says why, with one-click fixes: **Set stop to 25 pts** (keeps your $ risk), **Risk $159 instead** (keeps your stop), or **Use max**. Before, the order was sent and Vest quietly didn't fill it.
+
 ## v0.28.0
 - **What you keep, on the P&L tab.** Next to the total P&L, a green figure shows what you'd take home if every funded account's profit were claimed now: each account's profit × its own profit split, added up. Each account also shows its share ("keeps $992.40 · 80%"). Evaluations aren't counted (their profit doesn't pay out), and an account in a loss counts as $0 (claims are per account). With trades open it says "if closed now".
 - Minor improvements.

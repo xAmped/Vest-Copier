@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vest Copier
 // @namespace    vestcopier
-// @version      0.28.0
+// @version      0.29.0
 // @description  Copies a master Vest account's trades to your other Vest accounts, live, and adds a points-based order panel.
 // @author       xAmped
 // @license      Vest Copier License — free to use, no selling; see LICENSE
@@ -22,7 +22,7 @@
   if (window.__vestCopier) return;
   window.__vestCopier = true;
 
-  const VERSION = '0.28.0';
+  const VERSION = '0.29.0';
   const API = 'https://api-gateway.hz.vestmarkets.com';
   const _fetch = window.fetch.bind(window);
   // Console echo of the activity log, for troubleshooting: localStorage.setItem('vc-debug', '1') and reload.
@@ -1703,6 +1703,27 @@
     const pass = target > 0 && target > e ? price + (dir * (target - e)) / qty : null;
     return { fail: fail > 0 ? fail : null, pass: pass > 0 ? pass : null };
   }
+  /**
+   * The allowed range, so the panel can say where the stop may go and how much can be risked. Size = risk ÷ stop, the
+   * size is capped by Vest's max, and a stop-out (plus both fees) must stay under the room left to the floor.
+   *   minStopFor:    the smallest stop (whole ticks) at which `risk` fits in the max size
+   *   maxRiskAt:     the most that can be risked (whole dollars) at this stop with the max size
+   *   maxRiskForRoom: the most that can be risked at this stop before a stop-out, fees included, reaches the floor
+   *   maxStopForRoom: the widest stop (whole ticks) for `qty` before a stop-out, fees included, reaches the floor
+   */
+  const minStopFor = (risk, maxQty, tick) =>
+    risk > 0 && maxQty > 0 ? +(Math.ceil(risk / maxQty / tick - 1e-9) * tick).toFixed(decimalsOf(tick)) : null;
+  const maxRiskAt = (maxQty, stopPts) => (maxQty > 0 && stopPts > 0 ? Math.floor(maxQty * stopPts + 1e-9) : null);
+  const maxRiskForRoom = ({ room, price, stopPts, takerFee }) =>
+    room > 0 && price > 0 && stopPts > 0
+      ? Math.max(0, Math.floor(room / (1 + ((2 * price - stopPts) * (takerFee || 0)) / stopPts) - 0.01))
+      : null;
+  const maxStopForRoom = ({ room, qty, price, takerFee, tick }) => {
+    if (!(room > 0) || !(qty > 0) || !(price > 0)) return null;
+    const f = takerFee || 0,
+      pts = (room - 0.01 - 2 * qty * price * f) / (qty * (1 - f));
+    return pts > 0 ? +(Math.floor(pts / tick + 1e-9) * tick).toFixed(decimalsOf(tick)) : 0;
+  };
   /** What a stop-out costs from the price now: the move to the stop on the whole position, plus both fees. */
   const stopOutLoss = ({ side, qty, price, stopPrice, openFee, takerFee }) =>
     (side === 'long' ? 1 : -1) * qty * (price - stopPrice) + (openFee || 0) + qty * stopPrice * (takerFee || 0);
@@ -1720,6 +1741,10 @@
       maxQtyFor,
       failPassPrices,
       stopOutLoss,
+      minStopFor,
+      maxRiskAt,
+      maxRiskForRoom,
+      maxStopForRoom,
     };
 
   // ───────────────────────── live price (public market data, read-only) ─────────────────────────
@@ -4066,6 +4091,33 @@
     .tr-warn:empty {
       display: none;
     }
+    .tr-lim {
+      font-size: 10.5px;
+      color: var(--dim);
+      line-height: 1.45;
+    }
+    .tr-lim:empty {
+      display: none;
+    }
+    .tr-lim.bad {
+      color: var(--warn);
+    }
+    .tr-block {
+      color: var(--danger);
+      background: var(--danger-dim);
+      border: 1px solid var(--danger-line);
+      border-radius: 8px;
+      padding: 7px 9px;
+    }
+    .tr-fixes {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 6px;
+    }
+    .tr-block .tr-usemax {
+      margin-left: 0;
+    }
     .tr-usemax {
       cursor: pointer;
       font-size: 10px;
@@ -4778,13 +4830,37 @@
     else if (long.error) error = long.error;
     else if (t.beMode === 'points' && !(+t.beTrigger > 0)) error = 'Breakeven trigger must be above zero points.';
 
+    // The allowed range for this account now: where the stop may go and how much can be risked (new positions; an add
+    // is held to Vest's max only, since its room depends on the position already open).
+    const stopPts = +t.stopPts || 0,
+      room = r && live ? live.equity - floor : null;
+    const limits = {
+      minStop: t.sizeMode === 'risk' ? minStopFor(+t.risk, maxQty, meta.tick) : null,
+      maxRiskAtStop: maxRiskAt(maxQty, stopPts),
+      maxRiskRoom: held ? null : maxRiskForRoom({ room, price, stopPts, takerFee: fee }),
+      maxStop:
+        held || t.sizeMode === 'risk' ? null : maxStopForRoom({ room, qty, price, takerFee: fee, tick: meta.tick }),
+    };
+
+    // Over Vest's max, the order is accepted but never filled: Buy and Sell are blocked, with one-click fixes.
+    let blocked = null;
+    const fixes = [];
+    if (!error && maxQty !== null && t.sizeMode !== 'max' && qty > maxQty + meta.step / 2) {
+      blocked = `${fmtQty(qty, sym)} is more than ${accLabel(limitedBy)} can open at ${lev}x (max ${fmtQty(maxQty, sym)}), so Vest wouldn't fill it.`;
+      if (t.sizeMode === 'risk') {
+        if (limits.minStop)
+          fixes.push({ act: 'stop', value: limits.minStop, label: `Set stop to ${limits.minStop} pts` });
+        if (limits.maxRiskAtStop > 0)
+          fixes.push({
+            act: 'risk',
+            value: limits.maxRiskAtStop,
+            label: `Risk ${money(limits.maxRiskAtStop)} instead`,
+          });
+      } else fixes.push({ act: 'max', label: `Use max (${fmtQty(maxQty, sym)})` });
+    }
+
     // Warnings: the order can go, but it's probably not what you want.
     const warnings = [];
-    if (!error && maxQty !== null && t.sizeMode !== 'max' && qty > maxQty + meta.step / 2)
-      warnings.push({
-        kind: 'power',
-        text: `${fmtQty(qty, sym)} is more than ${accLabel(limitedBy)} can open at ${lev}x (max ${fmtQty(maxQty, sym)}): Vest won't fill it.`,
-      });
     const risky = held ? sides[held.side] : sides.long; // a new position's stop-out costs the same either way
     if (!error && risky && risky.room > 0 && risky.loss >= risky.room)
       warnings.push({
@@ -4809,6 +4885,9 @@
       limitedBy,
       held,
       sides,
+      limits,
+      blocked,
+      fixes,
       warnings,
       error,
     };
@@ -4834,6 +4913,7 @@
             ['max', 'Max'],
           ])}<input class="tr-in" id="tr-size" inputmode="decimal" aria-label="Size"></div>
           <div class="tr-calc" id="tr-sizecalc"></div>
+          <div class="tr-lim" id="tr-sizelim"></div>
         </div>
         <div class="tr-sec">
           <div class="tr-lbl">Stop</div>
@@ -4841,6 +4921,7 @@
             <input class="tr-in" id="tr-stop" inputmode="decimal" aria-label="Stop, in points" value="${esc(t.stopPts)}">
             <span class="tr-u">pts</span><span class="tr-calc tr-right" id="tr-stopcalc"></span>
           </div>
+          <div class="tr-lim" id="tr-stoplim"></div>
         </div>
         <div class="tr-sec">
           <div class="tr-lbl">Targets ${seg('scale', [
@@ -4998,6 +5079,7 @@
     }
     const c = tradeCalc();
     if (c.error) return toast(c.error);
+    if (c.blocked) return toast(c.blocked);
     const t = { ...c.t, targets: c.t.targets.map(Number) }; // edits made while this order is in flight don't apply to it
     // how the size was chosen, for diagnostics: the mode, Vest's max and who limits it, and any warning shown
     const sizing = {
@@ -5744,6 +5826,30 @@
             ? `risks ${fmtUsd(c.risk)} at the stop`
             : '';
     $('tr-stopcalc').textContent = c.qty > 0 && +c.t.stopPts > 0 ? `−${fmtUsd(c.risk)}` : '';
+    // The allowed range, live: how much can be risked and where the stop may go on this account right now
+    const L = c.limits,
+      stopNow = +c.t.stopPts || 0,
+      room = L.maxRiskRoom !== null ? ` · ${money(L.maxRiskRoom)} max before the floor` : '';
+    let sizeLim = '',
+      stopLim = '',
+      stopBad = false;
+    if (c.t.sizeMode === 'risk') {
+      if (L.maxRiskAtStop !== null && stopNow > 0)
+        sizeLim = `Can risk up to ${money(L.maxRiskAtStop)} at ${stopNow} pts${room}`;
+      if (L.minStop !== null && +c.t.risk > 0) {
+        stopBad = stopNow > 0 && stopNow < L.minStop;
+        stopLim = `Stop must be at least ${L.minStop} pts to risk ${money(+c.t.risk)}`;
+      }
+    } else if (c.maxQty !== null && c.t.sizeMode === 'qty') {
+      sizeLim = `Up to ${fmtQty(c.maxQty, c.t.symbol)} contracts at ${c.lev}x${room}`;
+    }
+    if (c.t.sizeMode !== 'risk' && L.maxStop !== null && c.qty > 0) {
+      stopBad = stopNow >= L.maxStop;
+      stopLim = `Stop must be under ${L.maxStop} pts at ${fmtQty(c.qty, c.t.symbol)} contracts, or the account fails first`;
+    }
+    $('tr-sizelim').textContent = sizeLim;
+    $('tr-stoplim').textContent = stopLim;
+    $('tr-stoplim').classList.toggle('bad', stopBad);
     c.t.targets.forEach((p, i) => {
       const q = c.qtys[i],
         qe = $('tq' + i),
@@ -5762,30 +5868,42 @@
       c.qty > 0 && c.qtys.length
         ? `Risk <b>${fmtUsd(c.risk)}</b>${c.fees > 0 ? ` + ${fmtUsd(c.fees)} fees` : ''} · Reward <b>${fmtUsd(c.reward)}</b> · <b>${c.risk > 0 ? (c.reward / c.risk).toFixed(2) : '—'}R</b>`
         : '';
-    const warnHtml = c.warnings
+    const fixHtml = c.fixes
       .map(
-        (w) =>
-          `<div>${esc(w.text)}${w.kind === 'power' ? ` <button class="tr-usemax" data-act="usemax">Use max (${esc(fmtQty(c.maxQty, c.t.symbol))})</button>` : ''}</div>`,
+        (f, i) =>
+          `<button class="tr-usemax" data-fix="${i}" data-act="${f.act === 'max' ? 'usemax' : 'fix-' + f.act}">${esc(f.label)}</button>`,
       )
-      .join('');
+      .join(' ');
+    const warnHtml =
+      (c.blocked
+        ? `<div class="tr-block">${esc(c.blocked)}${fixHtml ? `<div class="tr-fixes">${fixHtml}</div>` : ''}</div>`
+        : '') + c.warnings.map((w) => `<div>${esc(w.text)}</div>`).join('');
     const warnBox = $('tr-warn');
     if (warnBox.dataset.html !== warnHtml) {
-      // rewrite only on change, so a click on Use max isn't lost to a price tick
+      // rewrite only on change, so a click on a fix isn't lost to a price tick
       warnBox.dataset.html = warnHtml;
       warnBox.innerHTML = warnHtml;
-      const use = warnBox.querySelector('[data-act="usemax"]');
-      if (use)
-        use.onclick = () => {
-          S.trade.sizeMode = 'max';
+      warnBox.querySelectorAll('[data-fix]').forEach((b) => {
+        const f = c.fixes[+b.dataset.fix];
+        b.onclick = () => {
+          if (f.act === 'max') S.trade.sizeMode = 'max';
+          else if (f.act === 'stop') {
+            S.trade.stopPts = f.value;
+            $('tr-stop').value = f.value;
+          } else if (f.act === 'risk') {
+            S.trade.risk = f.value;
+            $('tr-size').value = f.value;
+          }
           saveTrade();
           updateTrade();
         };
+      });
     }
     $('tr-err').textContent = c.error || (S.adjusting ? 'Adjusting stop & targets…' : '');
     const q = c.qty > 0 ? fmtQty(c.qty, c.t.symbol) : '';
     $('tr-buy').textContent = `Buy ${q}`;
     $('tr-sell').textContent = `Sell ${q}`;
-    $('tr-buy').disabled = $('tr-sell').disabled = !!c.error || !!S.placing || !!S.adjusting;
+    $('tr-buy').disabled = $('tr-sell').disabled = !!c.error || !!c.blocked || !!S.placing || !!S.adjusting;
     const row = (lbl, pr, o) => {
       const tps = pr.targets.map((x, i) => `TP${i + 1} <b>${fmtPx(x, c.meta.tick)}</b>`).join(' · ');
       const px = (n) => fmtPx(roundTick(n, c.meta.tick), c.meta.tick);
