@@ -43,8 +43,9 @@ distance, so every account risks the same percent.
 4. On **Accounts**, press **M** on your lead account and **Flw** on the ones that should copy it.
 5. Press **ARM**. From now on, trade the lead account as usual. Press **DISARM** to stop; positions stay as they are.
 
-The [quick-start PDF](docs/Vest-Copier-Quick-Start.pdf) fits all of this on one page, and the
-[user guide](docs/USER-GUIDE.md) goes through every button.
+The [tutorial](https://xamped.github.io/Vest-Copier/tutorial/) walks through setup with screenshots, the
+[quick-start PDF](docs/Vest-Copier-Quick-Start.pdf) fits it on one page, and the [user guide](docs/USER-GUIDE.md) goes
+through every button.
 
 ## The panel
 
