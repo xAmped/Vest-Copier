@@ -2,6 +2,10 @@
 
 Newest first. To update, click **Install** on the green bar that appears in the panel whenever there's a newer version.
 
+## v0.26.2
+- **Every market sized correctly.** The copier now knows every Vest market's size rules, so followers scaled with Cap-to-fit always get a size that market accepts (some markets trade in whole units).
+- **Fixed:** account ids that appeared inside error messages are now removed from report files too.
+
 ## v0.26.1
 - **Discord:** the Support tab has a **Join the Discord** button for questions, setup help and chatting with other users.
 - New versions now come from GitHub releases, and the panel's **Install** button downloads the release file.

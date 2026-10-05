@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vest Copier
 // @namespace    vestcopier
-// @version      0.26.1
+// @version      0.26.2
 // @description  Copies a master Vest account's trades to your other Vest accounts, live, and adds a points-based order panel.
 // @author       xAmped
 // @license      Vest Copier License — free to use, no selling; see LICENSE
@@ -22,7 +22,7 @@
   if (window.__vestCopier) return;
   window.__vestCopier = true;
 
-  const VERSION = '0.26.1';
+  const VERSION = '0.26.2';
   const API = 'https://api-gateway.hz.vestmarkets.com';
   const _fetch = window.fetch.bind(window);
   // Console echo of the activity log, for troubleshooting: localStorage.setItem('vc-debug', '1') and reload.
@@ -1782,11 +1782,26 @@
   // Tick, size step and margin ratios from exchangeInfo. A market's `capitalInitMarginRatio` that is absent means "not
   // listed, use the funded ratio"; present but null means "no capital-account ratio". Vest's leverage rule depends on
   // that difference, so `undefined` is kept rather than normalised to null (see maxLeverageFor).
+  // Every market's rules, loaded once at startup (one public call). The copier needs each market's size step: scaled
+  // follower sizes (cap-to-fit, proportional reduces/adds, sized legs) are rounded to it, and 16 of Vest's markets trade
+  // in coarser sizes than NQ (whole units, or 2–3 decimals).
+  async function loadAllSymbolRules() {
+    try {
+      const r = await (await _fetch(`${API}/v3/exchangeInfo`)).json();
+      (r.symbols || []).forEach(applySymbolRules);
+    } catch {}
+  }
   async function loadSymbolRules(sym) {
     try {
       const r = await (await _fetch(`${API}/v3/exchangeInfo?symbols=${encodeURIComponent(sym)}`)).json();
       const x = (r.symbols || []).find((s) => s.symbol === sym);
-      if (!x) return;
+      if (x) applySymbolRules(x);
+    } catch {}
+  }
+  function applySymbolRules(x) {
+    try {
+      const sym = x && x.symbol;
+      if (!sym) return;
       const tick = parseFloat(x.minTickSize || x.defaultTickSize),
         step = Math.pow(10, -+x.sizeDecimals);
       if (!(tick > 0 && step > 0)) return;
@@ -5584,7 +5599,8 @@
         if (typeof val !== 'string') return val;
         if (alias[val]) return alias[val];
         if (isUuid(val) && ACCOUNT_KEYS.has(k) && (k !== 'id' || 'label' in this)) return nameFor(val);
-        return val;
+        // account ids inside longer text, e.g. an error message holding an API path with the id in it
+        return val.replace(/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/gi, (m) => alias[m] || m);
       });
     const accounts = Object.values(S.byId).map((r) => ({
       label: r.label,
@@ -5822,6 +5838,7 @@
     loadTrade();
     loadUpdate();
     initBuild();
+    loadAllSymbolRules();
     _root = buildPanel();
     loadPlans();
     renderHealth();
