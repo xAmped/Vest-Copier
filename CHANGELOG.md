@@ -2,6 +2,9 @@
 
 Newest first. To update, click **Install** on the green bar that appears in the panel whenever there's a newer version.
 
+## v0.27.1
+- **Flatten All keeps you armed.** It still closes every position and cancels every order on every account in one click, but the copier now stays armed, so your next trade copies as usual. Handy as a fast exit across many accounts. Press DISARM if you want to stop copying. Orders placed on the master during the few seconds it's flattening aren't copied.
+
 ## v0.27.0
 - **Max size in the Trade tab.** Next to Contracts and Risk $, **Max** sizes the order at the most the account can open right now, the same as Vest's own 100% (free cash × leverage, less a little for the fee and the spread). Armed in strict 1:1, it uses the smallest of your accounts, so every follower can fill the same size.
 - **Fail and pass prices.** Beside each side's stop and targets, the Trade tab shows where the account would fail (equity at its floor) and, on an evaluation, pass (equity at the target), counting the opening fee.

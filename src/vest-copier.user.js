@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vest Copier
 // @namespace    vestcopier
-// @version      0.27.0
+// @version      0.27.1
 // @description  Copies a master Vest account's trades to your other Vest accounts, live, and adds a points-based order panel.
 // @author       xAmped
 // @license      Vest Copier License — free to use, no selling; see LICENSE
@@ -22,7 +22,7 @@
   if (window.__vestCopier) return;
   window.__vestCopier = true;
 
-  const VERSION = '0.27.0';
+  const VERSION = '0.27.1';
   const API = 'https://api-gateway.hz.vestmarkets.com';
   const _fetch = window.fetch.bind(window);
   // Console echo of the activity log, for troubleshooting: localStorage.setItem('vc-debug', '1') and reload.
@@ -90,7 +90,6 @@
     ackThenArm: false, // ARM was clicked before the terms were accepted
     supportOpen: false, // the Support tab is showing
     placing: false, // a trade-panel order is in flight
-    flattenConfirm: false, // flatten-all panic button is awaiting confirmation
     flattening: false, // a flatten-all sweep is in progress
     capFit: false, // cap-to-fit: scale a follower's size down to what its margin can hold
     settingsOpen: false, // settings view is showing
@@ -240,6 +239,13 @@
     if (!acct || acct !== S.master) return; // only the master is mirrored
     const req = parseJson(reqBody, {}) || {};
     method = String(method || 'POST').toUpperCase();
+    if (S.flattening) {
+      // Flatten All is closing everything on every account, this order included: copying it would only open followers
+      // that the sweep then closes
+      logEvent('info', `MASTER ${action} during Flatten All — not copied.`);
+      diag('master', { action, method, outcome: 'skipped', reason: 'flatten all in progress' });
+      return;
+    }
     if (!(status >= 200 && status < 300)) {
       logEvent('info', `MASTER ${action} refused by Vest (HTTP ${status || 'no response'}) — not copied.`);
       diag('master_refused', {
@@ -1394,7 +1400,7 @@
   // ───────────────────────── fast mode (fire follower opens at master-send) ─────────────────────────
   // Returns a `pending` descriptor if it fired follower opens for a master OPEN; otherwise null.
   function maybeFastOpen(url, reqBody, auth) {
-    if (!S.armed || !S.fast || orderAction(url) !== 'open') return null;
+    if (!S.armed || !S.fast || S.flattening || orderAction(url) !== 'open') return null;
     if (acctIdFromAuth(auth) !== S.master) return null;
     const req = parseJson(reqBody, null);
     if (!req) return null;
@@ -1508,19 +1514,11 @@
     render();
   }
 
-  // ───────────────────────── flatten-all (panic) ─────────────────────────
-  // Emergency: close every open position and cancel every resting order on ALL loaded accounts, whatever is selected or
-  // armed. Disarms first so nothing is copied while you get flat, waits for follower orders still in flight, and sweeps
-  // a second time to catch anything that landed during the first.
-  function requestFlattenAll() {
-    if (S.flattening) return;
-    S.flattenConfirm = true;
-    render();
-  }
-  function cancelFlattenAll() {
-    S.flattenConfirm = false;
-    render();
-  }
+  // ───────────────────────── flatten-all ─────────────────────────
+  // Close every open position and cancel every resting order on ALL loaded accounts, whatever is selected, in one click:
+  // an emergency button, and a quick way out of a trade across many accounts. The copier stays armed (or disarmed) as it
+  // was, ready for the next trade. While the sweep runs nothing new is copied, an arm in progress is cancelled, follower
+  // orders still in flight are waited for, and a second sweep catches anything that landed during the first.
   async function flattenAccount(id) {
     const { token } = await mintAccountToken(id);
     const [posR, ordR] = await Promise.all([
@@ -1555,23 +1553,22 @@
     return positions.length + orders.length;
   }
   async function flattenAll() {
-    S.flattenConfirm = false;
+    if (S.flattening) return;
     const ids = Object.keys(S.byId);
     if (!ids.length) {
       logEvent('warn', 'Flatten All: no accounts loaded.');
       return render();
     }
     S.flattening = true;
-    S.armed = false;
-    _armEpoch++;
+    _armEpoch++; // an arm in progress would adopt positions that are being closed
     S.orphan = null;
     Object.values(S.plans).forEach((p) => endPlan(p, null)); // nothing left for breakeven to manage
     render();
     logEvent(
       'warn',
-      `FLATTEN ALL — closing every position and cancelling every order on ${ids.length} account(s). Copier disarmed.`,
+      `FLATTEN ALL — closing every position and cancelling every order on ${ids.length} account(s).${S.armed ? ' The copier stays armed for your next trade.' : ''}`,
     );
-    diag('flatten_all', { accounts: ids.length });
+    diag('flatten_all', { accounts: ids.length, armed: S.armed });
     const inFlight = Object.values(S.posMap)
       .map((e) => e.queue)
       .filter(Boolean);
@@ -2058,7 +2055,8 @@
     return out;
   }
 
-  // Bumped by disarm and Flatten All, so an arm still in flight can't switch the copier back on afterwards.
+  // Bumped by disarm and Flatten All, so an arm still in flight is cancelled: it would switch the copier back on after a
+  // disarm, or adopt positions that Flatten All is closing.
   let _armEpoch = 0;
   async function arm() {
     if (S.arming) return;
@@ -2156,7 +2154,6 @@
     S.armed = false;
     S.posMap = {};
     S.orphan = null;
-    S.flattenConfirm = false;
     logEvent('info', 'Disarmed.');
     diag('disarm', {});
     render();
@@ -4240,7 +4237,7 @@
         <div class="body"><div class="empty">Waiting for your Vest session…</div></div>
         <div class="ctl">
           <button class="armbtn" data-act="arm" disabled>ARM</button>
-          <button class="dangerbtn" data-act="flatall" title="Emergency: instantly closes every position and cancels every order on every account, and disarms. No confirmation.">Flatten All</button>
+          <button class="dangerbtn" data-act="flatall" title="Instantly closes every position and cancels every order on every account. No confirmation. The copier stays armed.">Flatten All</button>
         </div>
         <div class="logwrap">
           <div class="logh"><span>Activity</span><span class="loghbtns">
@@ -4340,7 +4337,7 @@
       }
     };
     on('[data-act="arm"]', () => (S.armed ? disarm() : arm()));
-    on('[data-act="flatall"]', () => flattenAll()); // an emergency button: acts at once, no confirmation
+    on('[data-act="flatall"]', () => flattenAll()); // acts at once, no confirmation
     on('[data-act="dldiag"]', () => downloadDiag());
     on('[data-act="dllog"]', () => downloadLog());
     on('[data-act="clearlog"]', () => clearLog());
@@ -4892,6 +4889,7 @@
 
   async function placeTrade(side) {
     if (S.placing || S.adjusting) return;
+    if (S.flattening) return toast('Wait for Flatten All to finish.');
     if (!S.ack) {
       S.rulesOpen = true;
       S.tradeOpen = false;
@@ -6070,18 +6068,8 @@
           'Keep',
         )
       : '';
-    const flatHtml = S.flattenConfirm
-      ? confirmBar(
-          'Close every position and cancel every order on every account, and disarm?',
-          'vc-flatall-go',
-          'Flatten All',
-          'vc-flatall-no',
-          'Cancel',
-        )
-      : '';
     const toastHtml = _toast ? `<div class="toast">${esc(_toast)}</div>` : '';
     el.innerHTML =
-      flatHtml +
       orphanHtml +
       toastHtml +
       S.log
@@ -6095,12 +6083,6 @@
         kb = el.querySelector('#vc-keep');
       if (fb) fb.onclick = () => flattenOrphans();
       if (kb) kb.onclick = () => keepOrphans();
-    }
-    if (S.flattenConfirm) {
-      const gb = el.querySelector('#vc-flatall-go'),
-        cb = el.querySelector('#vc-flatall-no');
-      if (gb) gb.onclick = () => flattenAll();
-      if (cb) cb.onclick = () => cancelFlattenAll();
     }
   }
 
