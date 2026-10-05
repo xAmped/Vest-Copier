@@ -98,17 +98,6 @@ question names it so you can decline. Settings → Support turns the switch off.
 The script runs in your browser tab and uses the Vest session you're already logged into. Your orders go to Vest and
 nowhere else. The only outside request is to this repository, to see if a newer version exists.
 
-## Working on the code
-
-```sh
-node test/math.test.mjs                                  # order math
-CHROME_PATH=/path/to/chrome node test/copier.test.mjs    # full browser test against a mocked Vest API
-npx prettier --check src test
-python3 tools/package.py                                 # zip with the script, tutorial and PDF
-```
-
-Architecture and safety rules are written up in [docs/DESIGN.md](docs/DESIGN.md).
-
 ## Terms
 
 Use it on your own accounts and pass it along unchanged, both free. Selling it, renaming it or releasing an edited
