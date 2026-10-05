@@ -2,6 +2,9 @@
 
 Plain-language notes. Newest first. Paste the latest `src/vest-copier.user.js` into Tampermonkey and refresh Vest to update.
 
+## v0.22.3
+- Maintenance release to confirm the in-panel updater works end to end. No changes to copying or trading.
+
 ## v0.22.2
 - The update check now runs each time Vest loads (or you refresh), instead of every few hours. A bar under the status line shows "Checking for updates…", then either **Update available** with Install, or "Up to date", which disappears after a few seconds.
 
