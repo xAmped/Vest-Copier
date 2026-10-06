@@ -2,6 +2,10 @@
 
 Newest first. To update, click **Install** on the green bar that appears in the panel whenever there's a newer version.
 
+## v0.31.0
+- **The Trade tab fits your screen.** It grows to the bottom of the window by itself, and Buy and Sell stay pinned in view (with the reason if they're blocked) while you scroll, so they're never hidden. The activity log is shorter on this tab to make room. Other tabs keep your size.
+- **Stop and targets are always measured from your fill.** The "Price at click" option is gone: right after entry, the stop and targets move to exactly your points from the price you actually got. Anyone who had it switched to "Price at click" now uses the fill.
+
 ## v0.30.1
 - **Claim all profit is faster:** accounts are now claimed 2 seconds apart instead of 6, still one at a time and each re-checked right before its claim.
 

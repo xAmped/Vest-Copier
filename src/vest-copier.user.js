@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vest Copier
 // @namespace    vestcopier
-// @version      0.30.1
+// @version      0.31.0
 // @description  Copies a master Vest account's trades to your other Vest accounts, live, and adds a points-based order panel.
 // @author       xAmped
 // @license      Vest Copier License — free to use, no selling; see LICENSE
@@ -22,7 +22,7 @@
   if (window.__vestCopier) return;
   window.__vestCopier = true;
 
-  const VERSION = '0.30.1';
+  const VERSION = '0.31.0';
   const API = 'https://api-gateway.hz.vestmarkets.com';
   const _fetch = window.fetch.bind(window);
   // Console echo of the activity log, for troubleshooting: localStorage.setItem('vc-debug', '1') and reload.
@@ -109,7 +109,6 @@
       beMode: 'tp1',
       beTrigger: 15,
       beOffset: 1,
-      anchor: 'fill',
     },
     price: {}, // symbol -> { px, at } live price
   };
@@ -2283,6 +2282,7 @@
       symbol: SYMBOLS[t.symbol] ? t.symbol : S.trade.symbol,
       targets: Array.isArray(t.targets) && t.targets.length ? t.targets : S.trade.targets,
     });
+    delete S.trade.anchor; // "Price at click" was removed in v0.31.0: stop and targets are always measured from the fill
   }
   function saveTrade() {
     store.set(TRADE_KEY, S.trade);
@@ -3895,6 +3895,21 @@
       flex-direction: column;
       gap: 12px;
     }
+    /* Buy / Sell stay in view while the form scrolls */
+    .tr-action {
+      position: sticky;
+      bottom: -14px;
+      z-index: 2;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin: 0 -15px;
+      padding: 8px 15px 14px;
+      background: linear-gradient(180deg, rgba(13, 15, 18, 0.88), var(--bg) 30%);
+    }
+    .panel.v-trade .log {
+      max-height: 11vh;
+    }
     .tr-top {
       display: flex;
       justify-content: space-between;
@@ -4469,6 +4484,7 @@
       panel.style.top = drag.oy + e.clientY - drag.sy + 'px';
     });
     const endDrag = () => {
+      if (drag && S.tradeOpen) fitPanel(); // moved: the Trade tab refits to the new spot
       drag = null;
     };
     hdr.addEventListener('pointerup', endDrag);
@@ -4507,6 +4523,7 @@
     };
     on('[data-act="collapse"]', (e) => {
       const collapsed = panel.classList.toggle('collapsed');
+      fitPanel();
       const b = e.currentTarget;
       b.textContent = collapsed ? '+' : '–';
       b.title = collapsed ? 'Expand' : 'Collapse';
@@ -4584,6 +4601,20 @@
               : S.rulesOpen
                 ? 'rules'
                 : 'accounts';
+  // On the Trade tab the panel grows to the bottom of the window (from wherever it sits), so the whole order form fits
+  // without resizing by hand; elsewhere it keeps the size the user gave it. Never saved: leaving the tab restores it.
+  function fitPanel() {
+    const panel = _root && _root.querySelector('.panel');
+    if (!panel) return;
+    panel.classList.toggle('v-trade', !!S.tradeOpen);
+    const saved = store.get(SIZE_KEY, null);
+    if (S.tradeOpen && !panel.classList.contains('collapsed')) {
+      const top = Math.max(0, panel.getBoundingClientRect().top);
+      panel.style.maxHeight = Math.max(320, window.innerHeight - top - 16) + 'px';
+    } else panel.style.maxHeight = saved && saved.h ? saved.h + 'px' : '';
+  }
+  window.addEventListener('resize', () => S.tradeOpen && fitPanel());
+
   function setView(v) {
     S.tradeOpen = v === 'trade';
     S.summaryOpen = v === 'summary';
@@ -4676,6 +4707,7 @@
       b.setAttribute('aria-selected', String(b.dataset.tab === view));
     });
     renderLog();
+    fitPanel();
   }
 
   function renderSiteCheck(body) {
@@ -4979,14 +5011,8 @@
           ])}</div>
           <div id="tr-targets"></div>
           <button class="tr-add" id="tr-add">+ Add target</button>
-        </div>
-        <div class="tr-sec">
-          <div class="tr-lbl">Measure stop &amp; targets from</div>
-          ${seg('anchor', [
-            ['fill', 'Your fill'],
-            ['click', 'Price at click'],
-          ])}
-          <div class="tr-calc" id="tr-anchornote"></div>
+          <div class="tr-lim">Stop and targets sit exactly your points from your fill price, re-placed right after entry.
+            Adding to an open trade rebuilds them for the whole position from the new average entry.</div>
         </div>
         <div class="tr-sec">
           <div class="tr-lbl">Breakeven</div>
@@ -5002,8 +5028,10 @@
         </div>
         <div class="tr-sum" id="tr-sum"></div>
         <div class="tr-warn" id="tr-warn"></div>
-        <div class="tr-err" id="tr-err"></div>
-        <div class="tr-go"><button class="tr-buy" id="tr-buy">Buy</button><button class="tr-sell" id="tr-sell">Sell</button></div>
+        <div class="tr-action">
+          <div class="tr-err" id="tr-err"></div>
+          <div class="tr-go"><button class="tr-buy" id="tr-buy">Buy</button><button class="tr-sell" id="tr-sell">Sell</button></div>
+        </div>
         <div class="tr-preview" id="tr-preview"></div>
         <div class="tr-plans" id="tr-plans"></div>
       </div>`;
@@ -5205,7 +5233,7 @@
         takeProfitIds: res.takeProfitIds,
         stopLossIds: res.stopLossIds,
       });
-      const reanchorOn = t.anchor !== 'click';
+      const reanchorOn = true; // always: stop and targets end up exactly their points from the real fill
       let bePlan = null;
       if (t.beMode !== 'off') {
         bePlan = {
@@ -5520,7 +5548,7 @@
     });
   }
 
-  // ── Re-anchor after fill (on by default). The order's stop and targets are computed from the live price at the click.
+  // ── Re-anchor after fill (always). The order's stop and targets are computed from the live price at the click.
   // Once filled, read the fill price and the position's leg ids, and move any leg that is off by a tick or more so it
   // sits exactly N points from the fill. Legs are found by the price they were sent at. The moves go through the hooked
   // fetch, so an armed copier moves the followers' matching legs too. Breakeven waits until this is done.
@@ -5905,11 +5933,6 @@
       if (qe) qe.textContent = q ? fmtQty(q, c.t.symbol) : '—';
       if (ge) ge.textContent = q ? '+' + fmtUsd(q * (+p || 0) * c.meta.pointValue) : '';
     });
-    $('tr-anchornote').textContent =
-      (c.t.anchor === 'click'
-        ? 'Placed from the live price when you click.'
-        : 'Re-placed exactly from your fill price right after entry.') +
-      ' Adding to an open trade rebuilds them for the whole position from the new average entry.';
     $('tr-betrigw').style.display = c.t.beMode === 'points' ? '' : 'none';
     body.querySelector('.tr-be').style.display = c.t.beMode === 'off' ? 'none' : '';
     $('tr-sum').innerHTML =
@@ -5947,7 +5970,10 @@
         };
       });
     }
-    $('tr-err').textContent = c.error || (S.adjusting ? 'Adjusting stop & targets…' : '');
+    $('tr-err').textContent =
+      c.error ||
+      (c.blocked ? 'Over what the account can open: use a fix above, or change the size or stop.' : '') ||
+      (S.adjusting ? 'Adjusting stop & targets…' : '');
     const q = c.qty > 0 ? fmtQty(c.qty, c.t.symbol) : '';
     $('tr-buy').textContent = `Buy ${q}`;
     $('tr-sell').textContent = `Sell ${q}`;

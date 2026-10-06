@@ -144,8 +144,10 @@ like any other master order.
 - **Warning** (amber, the order can still be sent): a stop-out would lose more, fees included, than the room left to the
   floor, so the account fails before the stop fills.
 - It then sends a market order with the stop and targets attached as native Vest legs (they work on
-  Vest's side even if your tab closes). By default the stop and targets are then re-placed exactly N points from
-  your **fill** (Measure from → *Your fill*); choose *Price at click* to leave them where they were placed.
+  Vest's side even if your tab closes). Right after the fill, the stop and targets are re-placed exactly N points from
+  your **fill** price, so the distances are always your real points.
+- **Fits your screen:** on the Trade tab the panel grows to the bottom of the window, and Buy/Sell stay pinned in view
+  while you scroll the form.
 - **Adding to a trade** — if the master already holds the same direction, Buy/Sell **adds** to it (Vest's own
   "add to position" order, which followers copy, scaled). The stop and targets are then rebuilt as **one ladder for
   the whole position**, measured from the **new average entry**: stop N points away, targets re-priced, and the full
