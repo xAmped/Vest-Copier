@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vest Copier
 // @namespace    vestcopier
-// @version      0.31.1
+// @version      0.31.2
 // @description  Copies a master Vest account's trades to your other Vest accounts, live, and adds a points-based order panel.
 // @author       xAmped
 // @license      Vest Copier License — free to use, no selling; see LICENSE
@@ -22,7 +22,7 @@
   if (window.__vestCopier) return;
   window.__vestCopier = true;
 
-  const VERSION = '0.31.1';
+  const VERSION = '0.31.2';
   const API = 'https://api-gateway.hz.vestmarkets.com';
   const _fetch = window.fetch.bind(window);
   // Console echo of the activity log, for troubleshooting: localStorage.setItem('vc-debug', '1') and reload.
@@ -3080,7 +3080,11 @@
       const r = await api('/v3/capital/accounts/active');
       if (!Array.isArray(r.accounts)) return ['fail', 'Response no longer has an accounts list'];
       active = r.accounts;
-      if (!active.length) return ['warn', 'No active accounts returned'];
+      if (!active.length)
+        return [
+          'warn',
+          'No active accounts: the account checks are skipped until you have one (buy or reactivate one)',
+        ];
       return fields(
         active[0],
         ['id', 'initial_capital', 'max_drawdown_limit', 'account_type'],
@@ -3130,12 +3134,20 @@
       if (!r.items.length) return ['pass', 'Endpoint OK (no recent fills to inspect)'];
       return fields(r.items[0], ['id', 'price'], 'Fill fields OK');
     });
-    await probe('Equity', async () => {
+    // Equity history is only a backup (equity is computed live from balances and positions), so a problem here warns
+    // and never blocks arming. With no active accounts Vest answers this one with a 503, so it is skipped then.
+    await probe('Equity history', async () => {
+      if (!active.length) return ['warn', 'Skipped (no active accounts)'];
       const now = Date.now();
-      const r = await api(`/v3/trading-performance/series?from=${now - 2 * 86400000}&to=${now}&points=50`);
-      if (!Array.isArray(r.items)) return ['fail', 'No items list'];
-      if (!r.items.length) return ['warn', 'No equity points returned to inspect'];
-      return fields(r.items[0], ['account_id', 'equity_value'], 'Equity readable');
+      let r;
+      try {
+        r = await api(`/v3/trading-performance/series?from=${now - 30 * 60000}&to=${now}&points=30`);
+      } catch (e) {
+        return ['warn', `Unavailable (${e.message}); only a backup, live equity is unaffected`];
+      }
+      if (!Array.isArray(r.items) || !r.items.length) return ['warn', 'No equity points returned (only a backup)'];
+      const [st, msg] = fields(r.items[0], ['account_id', 'equity_value'], 'Equity history readable');
+      return st === 'fail' ? ['warn', msg + ' (only a backup)'] : [st, msg];
     });
     await probe("Vest's order code", async () => {
       const urls = new Set();

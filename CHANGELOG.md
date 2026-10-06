@@ -2,6 +2,9 @@
 
 Newest first. To update, click **Install** on the green bar that appears in the panel whenever there's a newer version.
 
+## v0.31.2
+- **Site check fix:** with no active accounts (for example after an account closes), Vest's site update could show a red "Something Vest-side changed" and block arming, because one of Vest's servers answers with an error when there are no accounts. The check now says there are no active accounts and skips the account checks, and the equity history check (only a backup since v0.31.1) can warn but no longer blocks arming.
+
 ## v0.31.1
 - **Balances and P&L are live, like Vest's own Account Value.** Equity is worked out the same way Vest does it (free cash, plus margin held by open trades, plus their open profit or loss), and open trades re-price with every price tick, so the Accounts and P&L tabs move with the market. Balances re-read about 2 seconds after any order on the page (Vest's ticket included, armed or not) and right away when the price crosses one of your stops or targets. Before, they came from Vest's performance history, which could be several minutes behind after a close (+$18 shown while Vest showed +$50). Cap-to-fit sizing, room to the floor, the max size and fail prices use the live figure too.
 
