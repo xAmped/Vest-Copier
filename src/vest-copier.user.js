@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vest Copier
 // @namespace    vestcopier
-// @version      0.31.0
+// @version      0.31.1
 // @description  Copies a master Vest account's trades to your other Vest accounts, live, and adds a points-based order panel.
 // @author       xAmped
 // @license      Vest Copier License — free to use, no selling; see LICENSE
@@ -22,7 +22,7 @@
   if (window.__vestCopier) return;
   window.__vestCopier = true;
 
-  const VERSION = '0.31.0';
+  const VERSION = '0.31.1';
   const API = 'https://api-gateway.hz.vestmarkets.com';
   const _fetch = window.fetch.bind(window);
   // Console echo of the activity log, for troubleshooting: localStorage.setItem('vc-debug', '1') and reload.
@@ -232,6 +232,7 @@
   // order requests. Requests Vest refused (non-2xx) are never copied.
   const onRequest = (url, reqBody, resBody, auth, method, status) => {
     const action = orderAction(url);
+    if (action && status >= 200 && status < 300) refreshSoon(); // any order on any account: balances catch up at once
     if (!S.armed || !action) return;
     const res = parseJson(resBody, {}) || {};
     const acct = acctIdFromAuth(auth) || res.accountId || null;
@@ -259,7 +260,6 @@
     }
     checkShape(action, req, method);
     mirror(action, req, res, method);
-    setTimeout(refreshBalances, BALANCE_AFTER_TRADE_MS);
   };
 
   // fetch
@@ -407,8 +407,9 @@
   // → { accountId: { equity, upnl } }
   async function fetchEquities() {
     try {
+      // the last half hour at one point a minute: the freshest the series gets (a 2-day window gave ~6-minute points)
       const now = Date.now();
-      const r = await api(`/v3/trading-performance/series?from=${now - 2 * 86400000}&to=${now}&points=500`);
+      const r = await api(`/v3/trading-performance/series?from=${now - 30 * 60000}&to=${now}&points=30`);
       const latestTs = {},
         out = {};
       for (const it of r.items || []) {
@@ -524,8 +525,66 @@
 
   // keep balances / room fresh
   let _balTimer = null;
+  // Each account's open positions and resting orders (also what the Trade tab reads for the master).
+  async function readOpenState(id) {
+    const { token } = await mintAccountToken(id);
+    const [pos, ord] = await Promise.all([
+      api('/v3/positions/opened', token),
+      api('/v3/positions/opened-orders', token),
+    ]);
+    return {
+      positions: ((pos && pos.positions) || [])
+        .map((p) => ({
+          symbol: p.symbol,
+          side: p.side,
+          qty: num(p.quantity),
+          openPrice: num(p.openPrice),
+          collateral: num(p.collateral) || 0,
+          triggers: posLegs(p).map((l) => ({ kind: l.kind, price: l.price })),
+        }))
+        .filter((p) => p.qty > 0),
+      ordersCollateral: ((ord && ord.orders) || []).reduce(
+        (sum, o) => (o.reduceOnly || o.reduce_only ? sum : sum + (num(o.collateral) || 0)),
+        0,
+      ),
+      at: Date.now(),
+    };
+  }
+  // Mark prices for these symbols: the live feed when it's fresh, else one public ticker read.
+  async function markPrices(syms) {
+    const out = {},
+      need = [];
+    for (const sym of syms) priceOf(sym) ? (out[sym] = priceOf(sym)) : need.push(sym);
+    if (need.length) {
+      try {
+        const r = await (
+          await _fetch(`${API}/v3/ticker/latest?symbols=${need.map(encodeURIComponent).join(',')}`)
+        ).json();
+        for (const t of r.tickers || []) if (parseFloat(t.markPrice) > 0) out[t.symbol] = parseFloat(t.markPrice);
+      } catch {}
+    }
+    return out;
+  }
+
+  // Equity the way Vest's Account Value computes it, live: free cash + the collateral held by open positions and resting
+  // orders + their open PnL at the mark price. A flat account's equity is exactly its free cash, current the moment a
+  // trade closes. The performance series (minute points, a minute or more behind) is only the fallback when an
+  // account's positions can't be read.
+  let _balBusy = false,
+    _balAgain = false,
+    _soonTimer = null;
+  // A read soon after an order (any account, any page): positions and cash change on a fill, not with the price.
+  function refreshSoon() {
+    clearTimeout(_soonTimer);
+    _soonTimer = setTimeout(refreshBalances, BALANCE_AFTER_TRADE_MS);
+  }
   async function refreshBalances() {
     if (!userTokenOk() || !Object.keys(S.byId).length) return;
+    if (_balBusy) {
+      _balAgain = true; // one more read right after this one, so a fill during a read isn't missed
+      return;
+    }
+    _balBusy = true;
     try {
       const [accounts, eq, active] = await Promise.all([
         api('/v3/accounts').catch(() => ({ accounts: [] })),
@@ -534,11 +593,34 @@
       ]);
       const bal = Object.fromEntries((accounts.accounts || []).map((a) => [a.account_id, num(a.amount)]));
       for (const a of (active && active.accounts) || []) if (S.byId[a.id]) setLimits(S.byId[a.id], a);
+      const ids = Object.keys(S.byId);
+      const states = await Promise.all(ids.map((id) => readOpenState(id).catch(() => null)));
+      const marks = await markPrices([
+        ...new Set(states.flatMap((st) => (st ? st.positions.map((p) => p.symbol) : []))),
+      ]);
+      const live = {};
+      ids.forEach((id, i) => {
+        const st = states[i],
+          free = bal[id];
+        if (!st || !(free >= 0)) return;
+        S.acctState[id] = st;
+        if (st.positions.some((p) => !(marks[p.symbol] > 0))) return; // a price is missing: use the series
+        const upnl = st.positions.reduce(
+          (a, p) => a + (p.side === 'long' ? 1 : -1) * p.qty * (marks[p.symbol] - p.openPrice),
+          0,
+        );
+        const cash = free + st.positions.reduce((a, p) => a + p.collateral, 0) + st.ordersCollateral;
+        Object.assign(st, { cash, marks });
+        live[id] = { equity: cash + upnl, upnl };
+      });
+      for (const sym of heldSymbols()) watchPrice(sym); // open P&L then follows every price tick
+      unwatchUnused();
       for (const id in S.byId) {
         const r = S.byId[id];
         if (bal[id] != null && !isNaN(bal[id])) r.free = bal[id];
-        if (eq[id]) r.upnl = eq[id].upnl;
-        const e = eq[id] && !isNaN(eq[id].equity) ? eq[id].equity : bal[id];
+        const src = live[id] || eq[id];
+        if (src) r.upnl = src.upnl;
+        const e = src && !isNaN(src.equity) ? src.equity : bal[id];
         if (e == null || isNaN(e)) continue;
         r.equity = e;
         const maxDD = r.size - r.floor;
@@ -547,7 +629,73 @@
       }
       if (S.tradeOpen) refreshTradeState();
       render();
-    } catch {}
+    } catch {
+    } finally {
+      _balBusy = false;
+      if (_balAgain) {
+        _balAgain = false;
+        setTimeout(refreshBalances, 0);
+      }
+    }
+  }
+
+  // ── Live P&L between reads. Cash and positions only change when something fills, so each price tick just re-prices the
+  // open positions from the last read: equity = cash + open PnL at the latest price, as Vest's own Account Value moves.
+  // When the price crosses one of a position's own stops or targets, Vest is about to fill it: read again right away.
+  const heldSymbols = () => [
+    ...new Set(Object.values(S.acctState || {}).flatMap((st) => (st ? st.positions.map((p) => p.symbol) : []))),
+  ];
+  let _liveRenderAt = 0,
+    _liveRenderTimer = null,
+    _pointerDown = false;
+  function tickEquity(sym) {
+    let changed = false;
+    for (const id in S.acctState) {
+      const st = S.acctState[id],
+        r = S.byId[id];
+      if (!r || !st || !(st.cash >= 0) || !st.positions.some((p) => p.symbol === sym)) continue;
+      let upnl = 0,
+        priced = true;
+      for (const p of st.positions) {
+        const px = priceOf(p.symbol) || (st.marks && st.marks[p.symbol]);
+        if (!(px > 0)) {
+          priced = false; // no price for one of its markets: leave this account at its last read
+          break;
+        }
+        const dir = p.side === 'long' ? 1 : -1;
+        upnl += dir * p.qty * (px - p.openPrice);
+        if (
+          p.symbol === sym &&
+          !st.crossed &&
+          (p.triggers || []).some((t) => (t.kind === 'sl' ? dir * (px - t.price) <= 0 : dir * (px - t.price) >= 0))
+        ) {
+          st.crossed = true; // a stop or target is filling: one read soon, not one per tick
+          refreshSoon();
+        }
+      }
+      if (!priced) continue;
+      r.upnl = upnl;
+      r.equity = st.cash + upnl;
+      r.room = r.equity - floorOf(r);
+      const maxDD = r.size - r.floor;
+      r.usedPct = maxDD > 0 ? Math.min(1, Math.max(0, (r.size - r.equity) / maxDD)) : 0;
+      changed = true;
+    }
+    if (changed) liveRender();
+  }
+  // Redraw the Accounts or P&L list with the live numbers, at most once a second, and never between a press and its
+  // release (the redraw would swallow the click). The Trade tab updates itself on every tick already.
+  function liveRender() {
+    const view = currentView();
+    if (view !== 'accounts' && view !== 'summary') return;
+    const wait = 1000 - (Date.now() - _liveRenderAt);
+    if (_pointerDown || wait > 0) {
+      if (!_liveRenderTimer)
+        _liveRenderTimer = setTimeout(() => ((_liveRenderTimer = null), liveRender()), Math.max(wait, 200));
+      return;
+    }
+    _liveRenderAt = Date.now();
+    render();
   }
   function startBalancePoll() {
     if (_balTimer) clearInterval(_balTimer);
@@ -1786,6 +1934,7 @@
   function unwatchUnused() {
     const need = new Set(Object.values(S.plans || {}).map((p) => p.symbol));
     if (S.tradeOpen) need.add(S.trade.symbol);
+    for (const sym of heldSymbols()) need.add(sym); // live P&L of every open position
     for (const sym of [..._wsSyms]) if (!need.has(sym)) _wsSyms.delete(sym);
     if (_wsSyms.size) return;
     clearTimeout(_wsRetryTimer);
@@ -1944,6 +2093,9 @@
     } catch (e) {
       diag('breakeven', { outcome: 'error', error: e.message });
     }
+    try {
+      tickEquity(sym);
+    } catch {}
     if (S.tradeOpen) updateTrade();
   }
 
@@ -4521,6 +4673,8 @@
     const on = (sel, fn) => {
       root.querySelector(sel).onclick = fn;
     };
+    panel.addEventListener('pointerdown', () => (_pointerDown = true), true);
+    window.addEventListener('pointerup', () => (_pointerDown = false), true);
     on('[data-act="collapse"]', (e) => {
       const collapsed = panel.classList.toggle('collapsed');
       fitPanel();
@@ -4771,29 +4925,9 @@
     if (!master || _tradeStateBusy || !userTokenOk()) return;
     _tradeStateBusy = true;
     try {
-      const { token } = await mintAccountToken(master);
-      const [levs, pos, ord] = await Promise.all([
-        fetchLeverages(),
-        api('/v3/positions/opened', token),
-        api('/v3/positions/opened-orders', token),
-      ]);
+      const [levs, st] = await Promise.all([fetchLeverages(), readOpenState(master)]);
       if (levs) S.levs = levs;
-      S.acctState[master] = {
-        positions: ((pos && pos.positions) || [])
-          .map((p) => ({
-            symbol: p.symbol,
-            side: p.side,
-            qty: num(p.quantity),
-            openPrice: num(p.openPrice),
-            collateral: num(p.collateral) || 0,
-          }))
-          .filter((p) => p.qty > 0),
-        ordersCollateral: ((ord && ord.orders) || []).reduce(
-          (sum, o) => (o.reduceOnly || o.reduce_only ? sum : sum + (num(o.collateral) || 0)),
-          0,
-        ),
-        at: Date.now(),
-      };
+      S.acctState[master] = st;
     } catch {
     } finally {
       _tradeStateBusy = false;
@@ -5835,6 +5969,7 @@
     }, PLAN_WATCH_MS);
   }
   if (window.__VC_TEST__) window.__vcPlans = () => S.plans;
+  if (window.__VC_TEST__) window.__vcState = () => S;
 
   const DEFAULT_TARGET_PTS = 20;
   function renderTargets(body) {
@@ -6687,6 +6822,7 @@
         })),
       });
       startBalancePoll();
+      refreshBalances(); // live equity now, rather than the series' last point
       if (!S.ack) {
         S.rulesOpen = true; // first use: the risk acknowledgement comes first
         S.tradeOpen = S.summaryOpen = S.settingsOpen = false;
