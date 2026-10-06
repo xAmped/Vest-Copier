@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vest Copier
 // @namespace    vestcopier
-// @version      0.30.0
+// @version      0.30.1
 // @description  Copies a master Vest account's trades to your other Vest accounts, live, and adds a points-based order panel.
 // @author       xAmped
 // @license      Vest Copier License — free to use, no selling; see LICENSE
@@ -22,7 +22,7 @@
   if (window.__vestCopier) return;
   window.__vestCopier = true;
 
-  const VERSION = '0.30.0';
+  const VERSION = '0.30.1';
   const API = 'https://api-gateway.hz.vestmarkets.com';
   const _fetch = window.fetch.bind(window);
   // Console echo of the activity log, for troubleshooting: localStorage.setItem('vc-debug', '1') and reload.
@@ -6297,7 +6297,7 @@
   // seconds apart; each claim has one idempotency key, reused on its single retry, so it can never be paid twice; and the
   // run can be stopped between accounts. Moving money from the Primary Account to a wallet stays a manual step on Vest.
   const CLAIM_MIN_USD = 1;
-  const CLAIM_GAP_MS = 6000; // between two accounts' claims
+  const CLAIM_GAP_MS = 2000; // between two accounts' claims: one at a time, unhurried (a claim answers in ~0.3 s)
   const CLAIM_RETRY_MS = 3000;
   const claimGap = () => (typeof window.__VC_CLAIM_GAP_MS === 'number' ? window.__VC_CLAIM_GAP_MS : CLAIM_GAP_MS);
   S.claim = null; // { phase: 'checking' | 'review' | 'running' | 'done', primary, items: [...], stop, error }

@@ -2,6 +2,9 @@
 
 Newest first. To update, click **Install** on the green bar that appears in the panel whenever there's a newer version.
 
+## v0.30.1
+- **Claim all profit is faster:** accounts are now claimed 2 seconds apart instead of 6, still one at a time and each re-checked right before its claim.
+
 ## v0.30.0
 - **Claim all profit, from the P&L tab.** One button claims the profit of every funded account to your Primary Account, the same claim Vest's own Claim Profit window makes, for the full available amount. It shows a preview first (what each account claims and what you receive after its split, or why an account can't claim: an open position or order, no profit, an evaluation) and sends nothing until you confirm. Accounts are then claimed one at a time, a few seconds apart, each re-checked right before its claim, and you can stop between accounts. Claims arrive in your Primary Account within 24 hours and can't be reversed. Moving money from the Primary Account to your wallet stays on Vest.
 - The P&L tab's "you keep" figures are cut to the cent the way Vest pays them.
