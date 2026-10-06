@@ -30,22 +30,29 @@ distance, so every account risks the same percent.
 > These are live orders on real accounts. When the copier is armed, whatever you do on the master happens on every
 > follower, mistakes included. Try it with the minimum size before anything else.
 
-## Before you start
-
-- A desktop browser: Chrome, Edge, Brave or Firefox.
-- The [Tampermonkey](https://www.tampermonkey.net/) extension.
-- On Chrome, Edge or Brave, one setting: `chrome://extensions` → Tampermonkey → **Details** → **Allow User Scripts**
-  on. It's off by default, and the script won't run without it.
-
 ## Getting it running
 
-1. Open **[vest-copier.user.js](https://github.com/xAmped/Vest-Copier/releases/latest/download/vest-copier.user.js)**.
+You need a desktop browser (Chrome, Edge, Brave or Firefox). Five steps, about five minutes:
+
+1. **Add Tampermonkey from your browser's store.** It's free; click **Add** on the store page.
+   - Chrome or Brave: [Chrome Web Store](https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo)
+   - Edge: [Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/tampermonkey/iikmkjmpaadaobahmlepeloendndfphd)
+   - Firefox: [Firefox Add-ons](https://addons.mozilla.org/firefox/addon/tampermonkey/)
+
+   Get it from the store links above, not from download buttons on other sites (some are ads for other software).
+2. **Chrome, Edge or Brave only:** go to `chrome://extensions`, click **Details** under Tampermonkey and switch
+   **Allow User Scripts** on. It's off by default, and the copier won't run without it. Firefox skips this step.
+3. **Install the copier:** open
+   **[vest-copier.user.js](https://github.com/xAmped/Vest-Copier/releases/latest/download/vest-copier.user.js)**.
    Tampermonkey shows an install page. Click **Install**.
-2. Log in at [next.vestmarkets.com](https://next.vestmarkets.com). A dark panel titled Vest Copier opens in the top
-   right.
-3. Read the risk notice and accept it.
-4. On **Accounts**, press **M** on your lead account and **Flw** on each account you want copying it.
-5. Press **ARM**. From now on, trade the lead account as usual. Press **DISARM** to stop; positions stay as they are.
+4. **Open Vest:** log in at [next.vestmarkets.com](https://next.vestmarkets.com). A dark panel titled Vest Copier
+   opens in the top right. Read the risk notice and accept it.
+5. **Pick your accounts and arm:** on **Accounts**, press **M** on your lead account and **Flw** on each account you
+   want copying it, then press **ARM**. From now on, trade the lead account as usual. **DISARM** stops copying;
+   positions stay as they are.
+
+Stuck? Watch the [6-minute setup video](https://youtu.be/EMpVqls6D8o) or ask in the
+[Discord](https://discord.gg/Aa69y9KnM3).
 
 The [tutorial](https://xamped.github.io/Vest-Copier/tutorial/) walks through setup with screenshots, the
 [quick-start PDF](docs/Vest-Copier-Quick-Start.pdf) fits it on one page, and the [user guide](docs/USER-GUIDE.md) goes
@@ -78,7 +85,7 @@ with **Diag** and **CSV** exports.
 
 | Symptom | Fix |
 |---|---|
-| No panel on the Vest page | Allow User Scripts is off (see Before you start), or the script is disabled in Tampermonkey. Refresh after fixing. |
+| No panel on the Vest page | Allow User Scripts is off (step 2 of Getting it running), or the script is disabled in Tampermonkey. Refresh after fixing. |
 | Flw is greyed out | That account is a different size from the master. Turn on Cap-to-fit in Settings. |
 | ARM refuses | The log names the account and the reason, usually a resting order or an opposite position. Clear it on Vest and arm again. |
 | "did NOT fill" in the log | Vest accepted the order but didn't execute it, usually not enough margin for that size. Trade smaller or use Cap-to-fit. |

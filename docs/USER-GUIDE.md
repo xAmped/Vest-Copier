@@ -13,7 +13,9 @@ your own logged-in browser session: nothing logs in on your behalf, and it only 
 
 ## 1. Install
 
-1. Install the **Tampermonkey** browser extension (Chrome/Edge/Brave/Firefox). In Chrome, Edge or Brave,
+1. Install the **Tampermonkey** browser extension from your browser's official store:
+   [Chrome / Brave](https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo), [Edge](https://microsoftedge.microsoft.com/addons/detail/tampermonkey/iikmkjmpaadaobahmlepeloendndfphd) or [Firefox](https://addons.mozilla.org/firefox/addon/tampermonkey/). Use those store pages, not download buttons on other
+   sites (some are ads for unrelated software). In Chrome, Edge or Brave,
    go to `chrome://extensions`, open Tampermonkey's **Details** page and switch **Allow User Scripts** on
    (without it the script is installed but never runs).
 2. Open the install link,
