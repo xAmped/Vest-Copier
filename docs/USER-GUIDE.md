@@ -198,6 +198,13 @@ Options are saved and persist across refreshes. Active ones show as `FAST` / `CA
   account shows its share. Evaluations aren't counted (their profit doesn't pay out until you're funded), and an
   account in a loss counts as $0, since claims are per account. With trades open it reads "if closed now"; Vest may
   ask you to close positions before a claim.
+- **Claim all profit** (bottom of the P&L tab) — claims every funded account's available profit to your Primary
+  Account, the same claim as Vest's own Claim Profit window, for the full amount. First a **preview**: what each account
+  claims and what you receive after its split, or why it can't claim (an open position or order, no profit, an
+  evaluation). Nothing is sent until you click **Claim … → you get …**. Accounts are then claimed one at a time, a few
+  seconds apart, each re-checked just before its claim; **Stop after this account** ends the run early. Each result is
+  in the activity log. Claims arrive within 24 hours and **can't be reversed**. Withdrawing from your Primary Account to
+  a wallet stays a manual step on Vest.
 - **Activity log** — the clean, trader-facing feed. **CSV** downloads it.
 - **Diag** — downloads a detailed **diagnostics JSON**: for every event it records intended vs actual
   size, the cap-to-fit math (equities, scaled size), fill prices, slippage, **margin used vs the

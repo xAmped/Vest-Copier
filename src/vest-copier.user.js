@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vest Copier
 // @namespace    vestcopier
-// @version      0.29.0
+// @version      0.30.0
 // @description  Copies a master Vest account's trades to your other Vest accounts, live, and adds a points-based order panel.
 // @author       xAmped
 // @license      Vest Copier License — free to use, no selling; see LICENSE
@@ -22,7 +22,7 @@
   if (window.__vestCopier) return;
   window.__vestCopier = true;
 
-  const VERSION = '0.29.0';
+  const VERSION = '0.30.0';
   const API = 'https://api-gateway.hz.vestmarkets.com';
   const _fetch = window.fetch.bind(window);
   // Console echo of the activity log, for troubleshooting: localStorage.setItem('vc-debug', '1') and reload.
@@ -518,7 +518,10 @@
   // with no other deductions). Only funded accounts (live and Instant) pay out: an evaluation's profit doesn't, and claims
   // are per account, so one in a loss pays nothing rather than taking from the others.
   const isFunded = (r) => r.accountType === 3;
-  const keepOf = (r) => (isFunded(r) && r.split > 0 && r.equity > r.size ? (r.equity - r.size) * r.split : 0);
+  // Vest pays each claim cut down to the cent ($122.97 at 80% pays $98.37), so the shares are too.
+  const centsDown = (n) => Math.floor(n * 100 + 1e-6) / 100;
+  const keepOf = (r) =>
+    isFunded(r) && r.split > 0 && r.equity > r.size ? centsDown((r.equity - r.size) * r.split) : 0;
 
   // keep balances / room fresh
   let _balTimer = null;
@@ -4263,6 +4266,51 @@
       font-family: var(--mono);
       margin-top: 1px;
     }
+    .claim {
+      margin-top: 14px;
+      padding-top: 12px;
+      border-top: 1px solid var(--line);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-size: 11px;
+    }
+    .claim-go {
+      align-self: flex-start;
+      color: var(--accent);
+      border-color: var(--accent-line);
+    }
+    .claim-h {
+      font-weight: 650;
+      font-size: 12px;
+    }
+    .claim-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 5px 0;
+      border-bottom: 1px solid var(--line);
+      font-family: var(--mono);
+      font-size: 10.5px;
+    }
+    .claim-row .pos,
+    .claim .pos {
+      color: var(--accent);
+    }
+    .claim-row .neg,
+    .claim .neg {
+      color: var(--danger);
+    }
+    .claim-row .dim {
+      color: var(--faint);
+      text-align: right;
+    }
+    .claim-btns {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 4px;
+    }
     .sum-note {
       font-size: 10.5px;
       color: var(--faint);
@@ -6237,6 +6285,259 @@
       copySupportCode().then((ok) => toast(ok ? `Code ${SUPPORT_CODE} copied.` : `Code: ${SUPPORT_CODE}`));
   }
 
+  // ───────────────────────── claim profit ─────────────────────────
+  // "Claim all profit": moves each live funded account's claimable profit to the Primary Account, exactly as Vest's own
+  // Claim Profit window does: POST /v3/capital/withdraw with that account's login, { account_id, amount, target_account_id,
+  // idempotency_key }; Vest pays the account's split and credits it within 24 hours. Claimable = free balance − starting
+  // balance (open positions and orders block a claim; unrealized PnL isn't claimable); Vest's minimum is $1. Like Vest's
+  // window, it claims the exact amount (to the micro-dollar, "105.27086"); the balance drops as soon as a claim is
+  // submitted, so a claim still processing doesn't block or double the next one (seen live, 2026-10-06).
+  // A claim can't be reversed, so: nothing is sent before a preview the trader confirms; every account is re-read just
+  // before its own claim (balance, positions, orders); accounts go one at a time, a few
+  // seconds apart; each claim has one idempotency key, reused on its single retry, so it can never be paid twice; and the
+  // run can be stopped between accounts. Moving money from the Primary Account to a wallet stays a manual step on Vest.
+  const CLAIM_MIN_USD = 1;
+  const CLAIM_GAP_MS = 6000; // between two accounts' claims
+  const CLAIM_RETRY_MS = 3000;
+  const claimGap = () => (typeof window.__VC_CLAIM_GAP_MS === 'number' ? window.__VC_CLAIM_GAP_MS : CLAIM_GAP_MS);
+  S.claim = null; // { phase: 'checking' | 'review' | 'running' | 'done', primary, items: [...], stop, error }
+  const claimBusy = () => S.claim && (S.claim.phase === 'checking' || S.claim.phase === 'running');
+
+  // One account, read fresh: what it could claim right now, or why it can't. `free` is its free balance from /v3/accounts.
+  async function claimCheck(id, free) {
+    const r = S.byId[id];
+    const item = { id, label: accLabel(id), claimable: 0, net: 0, split: (r && r.split) || 0, reason: null };
+    if (!r) return { ...item, reason: 'no longer active' };
+    if (!isFunded(r)) return { ...item, reason: 'evaluation: profit pays out once funded' };
+    try {
+      const { token } = await mintAccountToken(id);
+      const [pos, ord] = await Promise.all([
+        api('/v3/positions/opened', token),
+        api('/v3/positions/opened-orders', token),
+      ]);
+      if (((pos && pos.positions) || []).length) return { ...item, reason: 'has an open position: close it to claim' };
+      if (((ord && ord.orders) || []).length) return { ...item, reason: 'has open orders: cancel them to claim' };
+    } catch (e) {
+      return { ...item, reason: `couldn't be checked (${e.message})` };
+    }
+    if (!(free >= 0)) return { ...item, reason: "couldn't read its balance" };
+    const claimable = Math.floor((free - r.size) * 1e6 + 1e-6) / 1e6; // all of it, to the micro-dollar, as Vest claims
+    if (!(claimable > 0)) return { ...item, reason: 'no profit to claim' };
+    if (claimable < CLAIM_MIN_USD) return { ...item, reason: `${money(claimable)} is under Vest's $1 minimum` };
+    return { ...item, claimable, net: claimable * item.split };
+  }
+  // Free balances of every account, and the Primary Account's id (account_type 1), in one read.
+  async function claimBalances() {
+    const res = await api('/v3/accounts');
+    const free = {};
+    let primary = null;
+    for (const a of res.accounts || []) {
+      free[a.account_id] = num(a.amount);
+      if (a.account_type === 1) primary = a.account_id;
+    }
+    return { free, primary };
+  }
+
+  async function claimPreview() {
+    if (claimBusy()) return;
+    if (S.flattening || S.placing || S.adjusting || S.arming)
+      return toast('Wait for the current order, Flatten All or arming to finish.');
+    S.claim = { phase: 'checking', items: [] };
+    render();
+    try {
+      const { free, primary } = await claimBalances();
+      if (!primary) throw new Error("couldn't find your Primary Account");
+      const ids = Object.values(S.byId)
+        .sort((a, b) => a.order - b.order)
+        .map((r) => r.id);
+      const items = await Promise.all(ids.map((id) => claimCheck(id, free[id])));
+      S.claim = { phase: 'review', primary, items };
+    } catch (e) {
+      S.claim = { phase: 'done', items: [], error: `Couldn't prepare the claim: ${e.message}` };
+    }
+    render();
+  }
+
+  // Send one claim with the account's own login; Vest's error text is kept so the log can say why.
+  async function sendClaim(id, body) {
+    const { token } = await mintAccountToken(id);
+    const r = await _fetch(API + '/v3/capital/withdraw', {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+      body: JSON.stringify(body),
+    });
+    const res = parseJson(await r.text(), {}) || {};
+    if (!r.ok) {
+      const err = new Error(res.message || res.msg || res.error || `HTTP ${r.status}`);
+      err.status = r.status;
+      throw err;
+    }
+    return res;
+  }
+
+  async function claimRun() {
+    const c = S.claim;
+    if (!c || c.phase !== 'review') return;
+    const todo = c.items.filter((i) => i.claimable > 0);
+    if (!todo.length) return;
+    c.phase = 'running';
+    c.stop = false;
+    const total = todo.reduce((a, i) => a + i.claimable, 0);
+    logEvent(
+      'warn',
+      `Claim profit: claiming from ${todo.length} account(s), one every ${Math.round(claimGap() / 1000)} s.`,
+    );
+    diag('claim', { outcome: 'started', accounts: todo.map((i) => ({ ...who(i.id), claimable: i.claimable })), total });
+    render();
+    for (let k = 0; k < todo.length; k++) {
+      const item = todo[k];
+      if (c.stop) {
+        item.status = 'stopped';
+        continue;
+      }
+      if (k) {
+        item.status = 'waiting';
+        render();
+        for (let w = 0; w < claimGap() && !c.stop; w += 250) await sleep(Math.min(250, claimGap() - w));
+        if (c.stop) {
+          item.status = 'stopped';
+          continue;
+        }
+      }
+      item.status = 'claiming';
+      render();
+      // re-read this account right before claiming: a trade, a deposit or another claim may have changed it
+      let fresh;
+      try {
+        const { free } = await claimBalances();
+        fresh = await claimCheck(item.id, free[item.id]);
+      } catch (e) {
+        fresh = { ...item, claimable: 0, reason: `couldn't be re-checked (${e.message})` };
+      }
+      if (!(fresh.claimable > 0)) {
+        Object.assign(item, { status: 'skipped', reason: fresh.reason });
+        logEvent('warn', `Claim profit: ${item.label} skipped: ${fresh.reason}.`);
+        diag('claim', { ...who(item.id), outcome: 'skipped', reason: fresh.reason });
+        continue;
+      }
+      Object.assign(item, { claimable: fresh.claimable, net: fresh.net });
+      const body = {
+        account_id: item.id,
+        amount: fmtNum(fresh.claimable, 6), // as Vest's window sends it: "105.27086"
+        target_account_id: c.primary,
+        idempotency_key: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random(),
+      };
+      try {
+        let res;
+        try {
+          res = await sendClaim(item.id, body);
+        } catch (e) {
+          if (e.status && e.status < 500 && e.status !== 429) throw e; // refused: not retried
+          await sleep(CLAIM_RETRY_MS); // network or server trouble: once more, same key, so it can't pay twice
+          res = await sendClaim(item.id, body);
+        }
+        const got = parseFloat(res.trader_amount);
+        Object.assign(item, { status: 'claimed', net: got > 0 ? got : item.net });
+        logEvent(
+          'ok',
+          `Claim profit: ${item.label} claimed ${money(item.claimable)}: ${money(item.net)} to your Primary Account within 24 hours.`,
+        );
+        diag('claim', { ...who(item.id), outcome: 'claimed', amount: body.amount, net: item.net, reply: res });
+      } catch (e) {
+        Object.assign(item, { status: 'failed', reason: e.message });
+        logEvent('warn', `Claim profit: ${item.label} NOT claimed: ${e.message}.`);
+        diag('claim', {
+          ...who(item.id),
+          outcome: 'failed',
+          amount: body.amount,
+          error: e.message,
+          status: e.status || null,
+        });
+      }
+      render();
+    }
+    const done = todo.filter((i) => i.status === 'claimed');
+    const sum = (f) => centsDown(done.reduce((a, i) => a + i[f], 0));
+    c.phase = 'done';
+    logEvent(
+      done.length === todo.length ? 'ok' : 'warn',
+      `Claim profit: ${done.length}/${todo.length} claimed, ${money(sum('claimable'))} gross → ${money(sum('net'))} to your Primary Account within 24 hours.`,
+    );
+    diag('claim', {
+      outcome: 'finished',
+      claimed: done.length,
+      of: todo.length,
+      gross: sum('claimable'),
+      net: sum('net'),
+    });
+    setTimeout(refreshBalances, BALANCE_AFTER_TRADE_MS);
+    render();
+  }
+
+  // The claim card under the P&L list: a button, then the preview to confirm, then progress and the result.
+  function claimHtml() {
+    const c = S.claim;
+    if (!c)
+      return `<div class="claim"><button class="ghostbtn claim-go" data-claim="preview">Claim all profit…</button>
+        <div class="sum-note">Moves each funded account's profit to your Primary Account, one account at a time. Shows a
+        preview first; nothing is sent until you confirm.</div></div>`;
+    if (c.phase === 'checking') return `<div class="claim"><div class="sum-note">Checking every account…</div></div>`;
+    const line = (i) => {
+      const st = i.status;
+      const right =
+        st === 'claimed'
+          ? `<span class="pos">claimed · ${money(i.net)} to you</span>`
+          : st === 'failed'
+            ? `<span class="neg">not claimed: ${esc(i.reason)}</span>`
+            : st === 'skipped'
+              ? `<span class="dim">skipped: ${esc(i.reason)}</span>`
+              : st === 'stopped'
+                ? `<span class="dim">stopped</span>`
+                : st === 'claiming'
+                  ? `<span>claiming…</span>`
+                  : i.claimable > 0
+                    ? `<span>${money(i.claimable)} → <b class="pos">${money(i.net)}</b> (${Math.round(i.split * 100)}%)</span>`
+                    : `<span class="dim">${esc(i.reason)}</span>`;
+      return `<div class="claim-row"><span>${esc(i.label)}</span>${right}</div>`;
+    };
+    const rows = c.items.map(line).join('');
+    const todo = c.items.filter((i) => i.claimable > 0);
+    const gross = centsDown(todo.reduce((a, i) => a + i.claimable, 0)),
+      net = centsDown(todo.reduce((a, i) => a + i.net, 0));
+    if (c.phase === 'review')
+      return `<div class="claim"><div class="claim-h">Claim profit: review</div>${rows}
+        ${
+          todo.length
+            ? `<div class="sum-note">Claims go to your Primary Account and arrive within 24 hours. They can't be reversed.
+                Accounts are claimed one at a time, ${Math.round(claimGap() / 1000)} s apart, each re-checked first.</div>
+              <div class="claim-btns"><button class="armbtn sm" data-claim="run">Claim ${money(gross)} → you get ${money(net)}</button>
+                <button class="ghostbtn" data-claim="close">Cancel</button></div>`
+            : `<div class="sum-note">Nothing to claim right now.</div><div class="claim-btns"><button class="ghostbtn" data-claim="close">Close</button></div>`
+        }</div>`;
+    if (c.phase === 'running')
+      return `<div class="claim"><div class="claim-h">Claiming…</div>${rows}
+        <div class="claim-btns"><button class="ghostbtn" data-claim="stop" ${c.stop ? 'disabled' : ''}>${c.stop ? 'Stopping…' : 'Stop after this account'}</button></div></div>`;
+    return `<div class="claim"><div class="claim-h">Claim profit: done</div>${c.error ? `<div class="neg">${esc(c.error)}</div>` : rows}
+      <div class="claim-btns"><button class="ghostbtn" data-claim="close">Done</button></div></div>`;
+  }
+  function wireClaim(body) {
+    body.querySelectorAll('[data-claim]').forEach(
+      (b) =>
+        (b.onclick = () => {
+          const a = b.dataset.claim;
+          if (a === 'preview') claimPreview();
+          else if (a === 'run') claimRun();
+          else if (a === 'stop' && S.claim) {
+            S.claim.stop = true;
+            render();
+          } else if (a === 'close' && !claimBusy()) {
+            S.claim = null;
+            render();
+          }
+        }),
+    );
+  }
+
   function renderSummary(body) {
     const rows = Object.values(S.byId).sort((a, b) => a.size - b.size || a.order - b.order);
     if (!rows.length) {
@@ -6287,7 +6588,9 @@
             .join('')}
         </div>
         ${notCounted.length ? `<div class="sum-note">Not counted in what you keep: ${notCounted.join('; ')}.</div>` : ''}
+        ${funded.length ? claimHtml() : ''}
       </div>`;
+    wireClaim(body);
   }
 
   function renderLog() {

@@ -2,6 +2,10 @@
 
 Newest first. To update, click **Install** on the green bar that appears in the panel whenever there's a newer version.
 
+## v0.30.0
+- **Claim all profit, from the P&L tab.** One button claims the profit of every funded account to your Primary Account, the same claim Vest's own Claim Profit window makes, for the full available amount. It shows a preview first (what each account claims and what you receive after its split, or why an account can't claim: an open position or order, no profit, an evaluation) and sends nothing until you confirm. Accounts are then claimed one at a time, a few seconds apart, each re-checked right before its claim, and you can stop between accounts. Claims arrive in your Primary Account within 24 hours and can't be reversed. Moving money from the Primary Account to your wallet stays on Vest.
+- The P&L tab's "you keep" figures are cut to the cent the way Vest pays them.
+
 ## v0.29.0
 - **The Trade tab shows your allowed range, live.** Under Size: how much you can risk at your current stop, and the most you can risk before a stop-out would reach your floor. Under Stop: the smallest stop that fits your $ risk (e.g. "Stop must be at least 25 pts to risk $200" on a $5k account at 50x), or in Contracts mode the widest stop before the account fails.
 - **Orders Vest wouldn't fill are blocked.** If the size is more than the account can open, Buy and Sell are off and the panel says why, with one-click fixes: **Set stop to 25 pts** (keeps your $ risk), **Risk $159 instead** (keeps your stop), or **Use max**. Before, the order was sent and Vest quietly didn't fill it.

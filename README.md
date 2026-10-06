@@ -57,7 +57,7 @@ through every button.
 |---|---|
 | Accounts | Your accounts grouped by size, with balance, floor and room left. Pick the master and followers here. |
 | Trade | An order ticket in points: stop, any number of targets, size by contracts, by dollars at risk or at the max the account allows, scale-outs, and automatic breakeven. It shows where the account would fail or pass and warns before an order that can't fill or a stop that sits past your floor. Adding to an open trade rebuilds the stop and targets around the new average price. |
-| P&L | Profit or loss per account and in total, and what you'd keep after each funded account's profit split if you claimed it all now. |
+| P&L | Profit or loss per account and in total, what you'd keep after each funded account's profit split, and **Claim all profit**: one preview, one confirm, and every funded account's profit is claimed to your Primary Account. |
 | Settings | Fast mode, Auto-flatten, Cap-to-fit, update checks, and the AMPED code switch. |
 | Rules | What the copier will and won't do, and the risk notice. |
 | Support | Report a problem, share an idea, the Discord, links to the guides, and the AMPED code. |
