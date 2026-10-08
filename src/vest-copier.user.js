@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vest Copier
 // @namespace    vestcopier
-// @version      0.32.2
+// @version      0.33.0
 // @description  Copies a master Vest account's trades to your other Vest accounts, live, and adds a points-based order panel.
 // @author       xAmped
 // @license      STRATUH Copier License — free to use, no selling; see LICENSE
@@ -22,7 +22,7 @@
   if (window.__vestCopier) return;
   window.__vestCopier = true;
 
-  const VERSION = '0.32.2';
+  const VERSION = '0.33.0';
   const API = 'https://api-gateway.hz.vestmarkets.com';
   const _fetch = window.fetch.bind(window);
   // Console echo of the activity log, for troubleshooting: localStorage.setItem('vc-debug', '1') and reload.
@@ -362,6 +362,7 @@
 
   // ───────────────────────── api ─────────────────────────
   // Vest REST call. Errors read "<path> -> <status>" (errCode() parses the status back out).
+  const READ_TIMEOUT_MS = 15000;
   const api = async (path, token = userToken, opts = {}) => {
     if (!token) throw new Error('no Vest session yet — click around Vest, then retry');
     const headers = {
@@ -370,7 +371,16 @@
       Authorization: 'Bearer ' + token,
       ...(opts.headers || {}),
     };
-    const r = await _fetch(API + path, { ...opts, headers });
+    // reads time out (a hung request would freeze the balance poll); orders don't, since a cut-off order is ambiguous
+    const read = !opts.method || opts.method === 'GET';
+    const ctl = read && typeof AbortController === 'function' ? new AbortController() : null;
+    const timer = ctl ? setTimeout(() => ctl.abort(), READ_TIMEOUT_MS) : null;
+    let r;
+    try {
+      r = await _fetch(API + path, { ...opts, headers, ...(ctl ? { signal: ctl.signal } : {}) });
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
     try {
       const rem = r.headers.get('x-ratelimit-remaining');
       if (rem != null) {
@@ -381,12 +391,22 @@
       /* best effort: nothing to do if this fails */
     }
     const text = await r.text();
+    // an account token Vest revoked early (log out / in elsewhere): drop it and retry once with a fresh one. A 401
+    // means nothing ran, so the retry (same Idempotency-Key) is safe.
+    if (r.status === 401 && tokenOwner[token] && !opts._retried) {
+      const id = tokenOwner[token];
+      delete tokenOwner[token];
+      if (acctTokens[id] && acctTokens[id].token === token) delete acctTokens[id];
+      const fresh = await mintAccountToken(id);
+      return api(path, fresh.token, { ...opts, _retried: true });
+    }
     if (!r.ok) throw new Error(`${path} -> ${r.status}`);
     return parseJson(text, text);
   };
   // Account tokens last ~15 minutes. Cached, and concurrent requests for the same account share one mint.
   const acctTokens = {},
-    minting = {};
+    minting = {},
+    tokenOwner = {}; // account token -> account id, to renew a revoked one
   const mintAccountToken = (id) => {
     const c = acctTokens[id];
     if (c && c.exp - TOKEN_REFRESH_MARGIN_MS > Date.now()) return Promise.resolve(c);
@@ -400,6 +420,7 @@
           });
           const tok = r.apiKey || r.accessToken,
             cl = decodeJwt(tok);
+          tokenOwner[tok] = id;
           return (acctTokens[id] = { token: tok, exp: r.accessExpiresAtMs || cl.exp * 1000, canTrade: !!cl.canTrade });
         } finally {
           delete minting[id];
@@ -489,7 +510,7 @@
     if (S.master && !S.byId[S.master]) {
       S.master = null;
       if (S.armed) {
-        S.armed = false;
+        disarm();
         logEvent('warn', 'Master account is gone — disarmed.');
       }
     }
@@ -497,7 +518,7 @@
       if (!S.byId[f]) {
         S.followers.delete(f);
         if (S.armed) {
-          S.armed = false;
+          disarm();
           logEvent('warn', `A follower is gone — disarmed.`);
         }
       }
@@ -665,12 +686,19 @@
   let _liveRenderAt = 0,
     _liveRenderTimer = null,
     _pointerDown = false;
+  // A stop or target the price sits past without Vest filling it (a stop triggers on the bid, not the mark) would ask
+  // for a read on every new state: at most one per account per CROSSED_COOLDOWN_MS. State older than LIVE_STALE_MS
+  // (reads failing) isn't re-priced: its positions may be gone.
+  const CROSSED_COOLDOWN_MS = 15000,
+    LIVE_STALE_MS = 60000,
+    _crossedAt = {};
   function tickEquity(sym) {
     let changed = false;
     for (const id in S.acctState) {
       const st = S.acctState[id],
         r = S.byId[id];
       if (!r || !st || !(st.cash >= 0) || !st.positions.some((p) => p.symbol === sym)) continue;
+      if (Date.now() - st.at > LIVE_STALE_MS) continue;
       let upnl = 0,
         priced = true;
       for (const p of st.positions) {
@@ -687,7 +715,10 @@
           (p.triggers || []).some((t) => (t.kind === 'sl' ? dir * (px - t.price) <= 0 : dir * (px - t.price) >= 0))
         ) {
           st.crossed = true; // a stop or target is filling: one read soon, not one per tick
-          refreshSoon();
+          if (!(Date.now() - (_crossedAt[id] || 0) < CROSSED_COOLDOWN_MS)) {
+            _crossedAt[id] = Date.now();
+            refreshSoon();
+          }
         }
       }
       if (!priced) continue;
@@ -740,9 +771,9 @@
   const idem = () => ({
     'Idempotency-Key': crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random(),
   });
-  async function acctSend(method, id, path, body) {
+  async function acctSend(method, id, path, body, key) {
     const { token } = await mintAccountToken(id);
-    return api(path, token, { method, body: JSON.stringify(body), headers: idem() });
+    return api(path, token, { method, body: JSON.stringify(body), headers: key ? { 'Idempotency-Key': key } : idem() });
   }
   const acctPost = (id, path, body) => acctSend('POST', id, path, body);
   const acctPut = (id, path, body) => acctSend('PUT', id, path, body);
@@ -767,6 +798,7 @@
   const entryByOrderId = (oid) => Object.values(S.posMap).find((e) => e.masterOrderId === oid);
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+  const EXEC_PAGE = 200;
   // Fill price/time for one order, matched by order id in /v3/executions.
   // Returns { price, at } when filled, null when Vest's history has no such fill, or undefined when the lookup itself
   // failed: a failed lookup must never be read as "did not fill".
@@ -775,10 +807,12 @@
       const { token } = await mintAccountToken(accountId);
       const nowS = Math.floor(Date.now() / 1000),
         win = EXEC_WINDOW_S;
-      const q = `account_id=${encodeURIComponent(accountId)}&symbol=${encodeURIComponent(symbol)}&from=${nowS - win}&to=${nowS + win}&limit=200`;
+      const q = `account_id=${encodeURIComponent(accountId)}&symbol=${encodeURIComponent(symbol)}&from=${nowS - win}&to=${nowS + win}&limit=${EXEC_PAGE}`;
       const r = await api(`/v3/executions?${q}`, token);
-      const it = (r.items || []).find((x) => x.id === orderId);
-      return it ? { price: parseFloat(it.price), at: it.executedAt } : null;
+      if (!r || !Array.isArray(r.items)) return undefined; // a changed response shape is not "no fill"
+      const it = r.items.find((x) => x.id === orderId);
+      if (it) return { price: parseFloat(it.price), at: it.executedAt };
+      return r.items.length >= EXEC_PAGE ? undefined : null; // a full page may have pushed it out: unknown
     } catch {
       return undefined;
     }
@@ -823,6 +857,7 @@
     const pv = (SYMBOLS[symbol] && SYMBOLS[symbol].pointValue) || 1;
     const noFill = [],
       unknown = [],
+      unknownPlaced = [],
       filledWithoutMaster = [];
     let filled = 0,
       undone = false,
@@ -834,6 +869,7 @@
         const r = await tryFill(p.accountId, p.orderId);
         if (!r.fill && !r.missing) {
           unknown.push(p.label);
+          unknownPlaced.push(p);
           return;
         }
         if (r.missing) {
@@ -891,6 +927,14 @@
       }),
     );
     if ((undone || (master.undo && masterMissed)) && entry) enqueue(entry, () => syncLegs(entry)); // re-read true sizes
+    // the master didn't fill: a follower whose fill couldn't be checked may be holding alone, so read its position
+    if (masterMissed && kind === 'entry')
+      for (const p of unknownPlaced)
+        try {
+          if (await openPosition(p.accountId, symbol)) filledWithoutMaster.push(p);
+        } catch {
+          filledWithoutMaster.push(p); // unreadable: offer it rather than lose track (Flatten / Keep decides)
+        }
     if (filledWithoutMaster.length && kind === 'entry') {
       const list = filledWithoutMaster.map((p) => ({
         accountId: p.accountId,
@@ -945,7 +989,8 @@
     const calc = { mEq, fEq }; // recorded in diagnostics
     if (!S.capFit) return { qty: masterQtyStr, scaled: false, skip: false, calc };
     if (!(mQ > 0) || !(mEq > 0) || !(fEq > 0))
-      return { qty: masterQtyStr, scaled: false, skip: false, calc: { ...calc, reason: 'missing-equity' } };
+      // cap-to-fit can't size it: skip rather than send the master's full size to an account that may be much smaller
+      return { qty: '0', scaled: false, skip: true, calc: { ...calc, reason: 'missing-equity' } };
     const prop = mQ * (fEq / mEq);
     calc.proportionalQty = +prop.toFixed(6);
     // Equal-size accounts a few cents apart (seen live: $499.988 vs $499.987) copy 1:1; the buffer is for real
@@ -1177,7 +1222,12 @@
       ...cq.calc,
     };
     if (cq.skip) {
-      logEvent('warn', `↳ ${accLabel(f)} skipped — equity too small to hold any size (cap-to-fit).`);
+      logEvent(
+        'warn',
+        cq.calc && cq.calc.reason === 'missing-equity'
+          ? `↳ ${accLabel(f)} skipped — its balance couldn't be read, so cap-to-fit can't size it.`
+          : `↳ ${accLabel(f)} skipped — equity too small to hold any size (cap-to-fit).`,
+      );
       diag('open', { ...base, outcome: 'skipped', expected: 'skip-too-small', met: true });
       return null;
     }
@@ -1237,14 +1287,17 @@
 
   // Close / reduce one follower, retrying once on a rate limit or server error: an exit that silently fails leaves that
   // follower in a trade the master has left.
+  // The retry keeps the same Idempotency-Key: if Vest ran the first one (a 504 or a dropped connection after it executed),
+  // it won't run the reduce twice.
   async function sendExit(f, path, body) {
+    const key = idem()['Idempotency-Key'];
     try {
-      return await acctPost(f, path, body);
+      return await acctSend('POST', f, path, body, key);
     } catch (e) {
       const code = errCode(e);
       if (code != null && code < 429) throw e;
       await sleep(EXIT_RETRY_MS);
-      return acctPost(f, path, body);
+      return acctSend('POST', f, path, body, key);
     }
   }
 
@@ -1309,6 +1362,7 @@
         side,
         symbol: sym,
         masterOrderId: res.orderId,
+        resting: !isImmediate(req), // a limit entry: followers' orders may still be resting
         qty,
         legs: legsOf(req, res),
         followers: {},
@@ -1329,6 +1383,8 @@
       );
       if (!entry) return untracked('add');
       const added = (a, b) => fmtQty(parseFloat(a) + parseFloat(b), sym);
+      const resting = !isImmediate(req) && res.orderId;
+      if (resting) (entry.restingAdds = entry.restingAdds || {})[res.orderId] = { qty: req.quantity, followers: {} };
       const run = enqueue(entry, async () => {
         const mBefore = entry.qty;
         entry.qty = added(mBefore, req.quantity);
@@ -1368,6 +1424,8 @@
               const r = await acctPost(f, '/v3/positions/append', body);
               const was = fp.qty;
               fp.qty = added(was, q);
+              if (resting && entry.restingAdds && entry.restingAdds[res.orderId])
+                entry.restingAdds[res.orderId].followers[f] = { orderId: r.orderId, qty: q };
               logEvent('ok', `↳ ADDED ${q} on ${accLabel(f)} (${lat()})`);
               const dd = diag('append', {
                 ...d,
@@ -1426,6 +1484,14 @@
     } else if (action === 'reduce') {
       logEvent('info', `MASTER reduced ${req.quantity} ${req.symbol} on ${accLabel(S.master)}`);
       if (!entry) return untracked('reduce');
+      if (req.orderType && req.orderType !== 'market') {
+        logEvent(
+          'warn',
+          `The master's reduce is a ${req.orderType} order: not copied (followers would exit at market now). Reduce them on Vest when it fills.`,
+        );
+        diag('reduce', { outcome: 'skipped', reason: 'non-market reduce', orderType: req.orderType });
+        return;
+      }
       enqueue(entry, async () => {
         const mBefore = entry.qty;
         entry.qty = fmtQty(Math.max(0, parseFloat(mBefore) - parseFloat(req.quantity)), req.symbol);
@@ -1497,6 +1563,12 @@
             const fp = entry.followers[f],
               d = { ...who(f), symbol: req.symbol };
             if (!fp) return null; // never in this trade: nothing to close
+            if (entry.resting && fp.orderId)
+              try {
+                await acctPost(f, '/v3/positions/cancel-order', { orderId: fp.orderId });
+              } catch {
+                /* best effort: it filled or is gone, and the close below handles a position */
+              }
             try {
               const r = await sendExit(f, '/v3/positions/close', closeBody(req.symbol, fp.positionId, req.leverage, f));
               logEvent('ok', `↳ CLOSED on ${accLabel(f)} (${lat()})`);
@@ -1541,8 +1613,35 @@
       if (!entry) return untracked(`${KIND} change`);
       enqueue(entry, () => mirrorLeg(op, kind, req, entry, followers, lat, t0));
     } else if (action === 'cancel-order') {
-      const e = entryByOrderId(req.orderId);
       logEvent('info', `MASTER cancelled a resting order on ${accLabel(S.master)}`);
+      // a resting limit add (the entry is already open): cancel each follower's add and take its size back off
+      const addEntry = Object.values(S.posMap).find((x) => x.restingAdds && x.restingAdds[req.orderId]);
+      if (addEntry) {
+        const ra = addEntry.restingAdds[req.orderId];
+        delete addEntry.restingAdds[req.orderId];
+        addEntry.qty = fmtQty(Math.max(0, parseFloat(addEntry.qty) - parseFloat(ra.qty)), addEntry.symbol);
+        enqueue(addEntry, () =>
+          Promise.all(
+            Object.entries(ra.followers).map(async ([f, o]) => {
+              try {
+                await acctPost(f, '/v3/positions/cancel-order', { orderId: o.orderId });
+                const fp = addEntry.followers[f];
+                if (fp) fp.qty = fmtQty(Math.max(0, parseFloat(fp.qty) - parseFloat(o.qty)), addEntry.symbol);
+                logEvent('ok', `↳ cancelled the resting add on ${accLabel(f)} (${lat()})`);
+                diag('cancel', { ...who(f), orderId: o.orderId, kind: 'add', outcome: 'cancelled', met: true });
+              } catch (err) {
+                logEvent(
+                  'warn',
+                  `↳ ${accLabel(f)} cancel failed: ${err.message} — its add may still be resting. Check it on Vest.`,
+                );
+                diag('cancel', { ...who(f), kind: 'add', outcome: 'rejected', error: err.message, met: false });
+              }
+            }),
+          ).then(() => setTimeout(() => enqueue(addEntry, () => syncLegs(addEntry)), RESYNC_AFTER_REDUCE_MS)),
+        );
+        return;
+      }
+      const e = entryByOrderId(req.orderId);
       if (!e) return untracked('cancel');
       const key = Object.keys(S.posMap).find((k) => S.posMap[k] === e);
       if (key) delete S.posMap[key];
@@ -1556,9 +1655,25 @@
               logEvent('ok', `↳ cancelled order on ${accLabel(f)} (${lat()})`);
               diag('cancel', { ...who(f), orderId: fp.orderId, outcome: 'cancelled', met: true, ms: msSince(t0) });
             } catch (err) {
+              // it may have filled already: then the follower holds a position the master doesn't
+              let holding = null;
+              try {
+                holding = await openPosition(f, e.symbol);
+              } catch {
+                /* unreadable: say so below */
+              }
+              if (holding && parseFloat(holding.quantity) > 0) {
+                raiseOrphans(
+                  e.symbol,
+                  [{ accountId: f, positionId: posIdOf(holding) }],
+                  "a follower's limit filled before the master's was cancelled",
+                  S.master,
+                );
+                return;
+              }
               logEvent(
                 'warn',
-                `↳ ${accLabel(f)} cancel failed: ${err.message} — its order is still resting. Cancel it on Vest.`,
+                `↳ ${accLabel(f)} cancel failed: ${err.message} — its order may still be resting. Check it on Vest.`,
               );
               diag('cancel', {
                 ...who(f),
@@ -1606,6 +1721,21 @@
     pending.done = true;
     setTimeout(refreshBalances, BALANCE_AFTER_TRADE_MS);
     const res = parseJson(resBody, {}) || {};
+    if (S.flattening) return; // Flatten All is closing everything, these copies included
+    if (!S.armed && status >= 200 && status < 300) {
+      // disarmed while the copies were in flight: they're not tracked, so offer them as orphans
+      Promise.all(pending.jobs).then(() => {
+        const list = Object.entries(pending.byId).map(([accountId, v]) => ({
+          accountId,
+          positionId: v.positionId,
+          orderId: v.orderId,
+          resting: !isImmediate(pending.req),
+          leverage: pending.lev,
+        }));
+        raiseOrphans(pending.sym, list, 'the copier was disarmed while they were being opened', S.master);
+      });
+      return;
+    }
     if (status >= 200 && status < 300 && res.positionId && !S.posMap[res.positionId]) {
       // posMap.followers is the SAME object as pending.byId, so follower opens still in flight are linked too
       const e = (S.posMap[res.positionId] = {
@@ -1613,6 +1743,7 @@
         side: pending.side,
         symbol: pending.sym,
         masterOrderId: res.orderId,
+        resting: !isImmediate(pending.req),
         qty: pending.qty,
         legs: legsOf(pending.req, res),
         followers: pending.byId,
@@ -1634,6 +1765,8 @@
       const list = Object.entries(pending.byId).map(([accountId, v]) => ({
         accountId,
         positionId: v.positionId,
+        orderId: v.orderId,
+        resting: !isImmediate(pending.req),
         leverage: pending.lev,
       }));
       const refused = status >= 400 && !unreadable;
@@ -1663,18 +1796,34 @@
     if (masterIn)
       logEvent('warn', `The master may hold ${symLabel(sym)} itself — check it before flattening the followers.`);
     diag('orphan', { symbol: sym, followersOpened: n, why, autoFlatten: S.autoFlatten, masterMayBeIn: masterIn });
-    const items = list.map((o) => ({ ...o, symbol: sym }));
+    const items = list.map((o) => ({ ...o, symbol: sym, hold: masterIn }));
     S.orphan = { list: [...((S.orphan && S.orphan.list) || []), ...items] };
-    if (S.autoFlatten && !masterIn) flattenOrphans();
-    else render();
+    if (S.autoFlatten && !masterIn) flattenOrphans(true);
+    else {
+      // the Flatten / Keep prompt is hidden in a collapsed panel: open it
+      const btn = _root && _root.querySelector('.collapsed [data-act="collapse"]');
+      if (btn) btn.click();
+      render();
+    }
   }
-  async function flattenOrphans() {
+  // `autoOnly`: auto-flatten closes only the batches raised with the master confirmed out; one held for the user's
+  // Flatten / Keep (the master may be in) stays waiting.
+  async function flattenOrphans(autoOnly = false) {
     const o = S.orphan;
     if (!o) return;
-    S.orphan = null;
-    logEvent('warn', `Flattening ${o.list.length} orphan follower position(s)…`);
-    for (const v of o.list) {
+    const go = autoOnly ? o.list.filter((v) => !v.hold) : o.list,
+      wait = autoOnly ? o.list.filter((v) => v.hold) : [];
+    S.orphan = wait.length ? { list: wait } : null;
+    logEvent('warn', `Flattening ${go.length} orphan follower position(s)…`);
+    for (const v of go) {
       const lev = v.leverage || (S.byId[v.accountId] && S.byId[v.accountId].leverage) || DEFAULT_LEVERAGE;
+      if (v.resting && v.orderId)
+        try {
+          // a limit entry may still be resting: cancel it, or it could fill after the close
+          await acctPost(v.accountId, '/v3/positions/cancel-order', { orderId: v.orderId });
+        } catch {
+          /* best effort: already filled or gone */
+        }
       try {
         await sendExit(v.accountId, '/v3/positions/close', closeBody(v.symbol, v.positionId, lev));
         logEvent('ok', `↳ flattened ${accLabel(v.accountId)}`);
@@ -1746,6 +1895,15 @@
       `FLATTEN ALL — closing every position and cancelling every order on ${ids.length} account(s).${S.armed ? ' The copier stays armed for your next trade.' : ''}`,
     );
     diag('flatten_all', { accounts: ids.length, armed: S.armed });
+    try {
+      await flattenSweep(ids);
+    } finally {
+      S.flattening = false; // never left set: master orders would be skipped as "during Flatten All" while ARMED shows
+      setTimeout(refreshBalances, BALANCE_AFTER_TRADE_MS);
+      render();
+    }
+  }
+  async function flattenSweep(ids) {
     const inFlight = Object.values(S.posMap)
       .map((e) => e.queue)
       .filter(Boolean);
@@ -1763,24 +1921,27 @@
     await sweep();
     await sleep(FLATTEN_RECHECK_MS);
     const left = (await sweep()).reduce((a, b) => a + b, 0);
-    S.flattening = false;
     if (left)
       logEvent('warn', 'Flatten All: some positions or orders needed a second pass — check every account on Vest.');
     else logEvent('ok', 'Flatten All complete — every account is flat.');
-    setTimeout(refreshBalances, BALANCE_AFTER_TRADE_MS);
-    render();
   }
 
   // ───────────────────────── trade panel: order math (pure) ─────────────────────────
   // Everything here is a pure function of its inputs — no network, no state — so it's unit-tested.
   const decimalsOf = (step) => {
     const s = String(step);
+    const e = s.match(/^[\d.]+e-(\d+)$/i); // 1e-7 and the like
+    if (e) return (s.split('e')[0].split('.')[1] || '').length + +e[1];
     return s.includes('.') ? s.split('.')[1].length : 0;
   };
   /** Round a price to the symbol's tick (e.g. 0.25 for NDX). */
   const roundTick = (price, tick) => +(Math.round(price / tick) * tick).toFixed(decimalsOf(tick));
   /** Floor a size to the symbol's size step (e.g. 0.0001). */
-  const floorStep = (qty, step) => +(Math.floor(qty / step + 1e-9) * step).toFixed(decimalsOf(step));
+  // the tolerance grows with the count, so a float a hair under a whole number of steps isn't floored a step too low
+  const floorStep = (qty, step) => {
+    const u = qty / step;
+    return +(Math.floor(u + 1e-9 + Math.abs(u) * 1e-12) * step).toFixed(decimalsOf(step));
+  };
 
   /**
    * Split a total size across N targets.
@@ -1822,10 +1983,12 @@
       if (i && !(targetPts[i] > targetPts[i - 1])) return { error: `Target ${i + 1} must be further than target ${i}` };
     }
     const dir = side === 'long' ? 1 : -1;
-    return {
-      stop: roundTick(entry - dir * stopPts, tick),
-      targets: targetPts.map((p) => roundTick(entry + dir * p, tick)),
-    };
+    const stop = roundTick(entry - dir * stopPts, tick),
+      targets = targetPts.map((p) => roundTick(entry + dir * p, tick));
+    if (!(stop > 0)) return { error: 'The stop would be at or below zero: use fewer points' };
+    const bad = targets.findIndex((x) => !(x > 0));
+    if (bad >= 0) return { error: `Target ${bad + 1} would be at or below zero: use fewer points` };
+    return { stop, targets };
   }
 
   /** Size from a dollar risk: qty = risk ÷ (stop points × $ per point per unit), floored to the size step. */
@@ -1834,8 +1997,9 @@
 
   /** Breakeven stop price: entry plus an offset in your favour (e.g. +1 pt covers fees), tick-rounded. */
   // Entry (an average can sit between ticks) plus the offset, rounded to the tick on the profit side: never a loss.
+  // A negative offset would put the stop on the losing side of the entry: it counts as 0.
   const breakevenPrice = ({ side, entry, offsetPts, tick }) => {
-    const n = (entry + (side === 'long' ? 1 : -1) * (offsetPts || 0)) / tick;
+    const n = (entry + (side === 'long' ? 1 : -1) * Math.max(0, offsetPts || 0)) / tick;
     return +((side === 'long' ? Math.ceil(n - 1e-9) : Math.floor(n + 1e-9)) * tick).toFixed(decimalsOf(tick));
   };
   /**
@@ -2174,6 +2338,18 @@
     }
   }
   setInterval(followVestMarket, 1000);
+  // A market's saved settings, keeping only well-formed values (storage can hold anything).
+  function cleanMarket(m) {
+    if (!m || typeof m !== 'object') return null;
+    const out = {},
+      ok = (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+    for (const k of ['qty', 'risk', 'stopPts', 'beTrigger', 'beOffset']) if (ok(m[k])) out[k] = m[k];
+    if (['qty', 'risk', 'max'].includes(m.sizeMode)) out.sizeMode = m.sizeMode;
+    if (['even', 'start', 'end'].includes(m.scale)) out.scale = m.scale;
+    if (Array.isArray(m.targets) && m.targets.length && m.targets.every((x) => ok(+x) && +x > 0))
+      out.targets = m.targets.map(Number);
+    return out;
+  }
   function switchMarket(sym) {
     const prev = S.trade.symbol,
       all = store.get(MARKETS_KEY, {}) || {};
@@ -2185,15 +2361,14 @@
       stopPts: t.stopPts,
       targets: [...t.targets],
       scale: t.scale,
+      beTrigger: t.beTrigger,
+      beOffset: t.beOffset,
     };
-    const saved = all[sym];
+    const saved = cleanMarket(all[sym]);
     stopPick(true);
     S.addPick = null;
     t.symbol = sym;
-    if (saved && typeof saved === 'object')
-      Object.assign(t, saved, {
-        targets: Array.isArray(saved.targets) && saved.targets.length ? saved.targets : t.targets,
-      });
+    if (saved) Object.assign(t, saved);
     store.set(MARKETS_KEY, all);
     saveTrade();
     logEvent(
@@ -2367,6 +2542,54 @@
   // Bumped by disarm and Flatten All, so an arm still in flight is cancelled: it would switch the copier back on after a
   // disarm, or adopt positions that Flatten All is closing.
   let _armEpoch = 0;
+  // Other Vest tabs running the copier: each says when it arms or disarms, and answers a new tab's hello. A tab that
+  // closes says bye; one that crashes is forgotten after TAB_STALE_MS without news.
+  const TAB_ID = Math.random().toString(36).slice(2),
+    TAB_STALE_MS = 5 * 60 * 1000,
+    _peers = {};
+  let _tabs = null;
+  try {
+    _tabs = new BroadcastChannel('vc-tabs');
+    _tabs.onmessage = (e) => {
+      const m = e.data || {};
+      if (!m.id || m.id === TAB_ID) return;
+      if (m.type === 'hello') tabSay('state');
+      if (m.type === 'bye') return delete _peers[m.id];
+      if (!_peers[m.id]) logEvent('warn', 'The copier is open in another Vest tab too. Arm it in one tab only.');
+      _peers[m.id] = { armed: !!m.armed, at: Date.now() };
+    };
+    window.addEventListener('pagehide', () => tabSay('bye'));
+  } catch {
+    _tabs = null; // no BroadcastChannel: nothing to coordinate
+  }
+  function tabSay(type) {
+    try {
+      if (_tabs) _tabs.postMessage({ type, id: TAB_ID, armed: !!S.armed });
+    } catch {
+      /* best effort: nothing to do if this fails */
+    }
+  }
+  const armedElsewhere = () => Object.values(_peers).some((p) => p.armed && Date.now() - p.at < TAB_STALE_MS);
+  // Remembered for this tab only: a reload while armed comes back disarmed, and says so.
+  const WAS_ARMED_KEY = 'vc-was-armed';
+  function noteArmed(on) {
+    tabSay('state');
+    try {
+      on ? sessionStorage.setItem(WAS_ARMED_KEY, '1') : sessionStorage.removeItem(WAS_ARMED_KEY);
+    } catch {
+      /* best effort: nothing to do if this fails */
+    }
+  }
+  function checkWasArmed() {
+    tabSay('hello');
+    try {
+      if (sessionStorage.getItem(WAS_ARMED_KEY) !== '1') return;
+      sessionStorage.removeItem(WAS_ARMED_KEY);
+      logEvent('warn', 'The page reloaded while the copier was armed: it is disarmed now. Arm again to keep copying.');
+    } catch {
+      /* best effort: nothing to do if this fails */
+    }
+  }
   async function arm() {
     if (S.arming) return;
     if (S.flattening) return toast('Wait for Flatten All to finish.');
@@ -2378,6 +2601,9 @@
     } // the one-time agreement comes first
     if (!S.master) return toast('Pick a master account first.');
     if (!S.followers.size) return toast('Pick at least one follower.');
+    if (S.placing || S.adjusting || claimBusy()) return toast('Wait for the current order or claim to finish.');
+    if (armedElsewhere())
+      return toast('The copier is armed in another Vest tab. Disarm it there first: two would copy every trade twice.');
     if (healthState().changed) {
       // Vest shipped an update that hasn't been checked
       logEvent('warn', 'Not armed — Vest updated its site. Run the site check and accept the build first.');
@@ -2415,6 +2641,8 @@
 
       S.posMap = plan.adopted; // {} when flat; adopted trades otherwise
       S.armed = true;
+      noteArmed(true);
+      dropClaimReview();
       const trades = Object.values(plan.adopted);
       logEvent(
         'warn',
@@ -2460,17 +2688,26 @@
   }
   function disarm() {
     _armEpoch++;
+    const open = (S.orphan && S.orphan.list.length) || 0;
     S.armed = false;
     S.posMap = {};
     S.orphan = null;
+    noteArmed(false);
     logEvent('info', 'Disarmed.');
+    if (open)
+      logEvent(
+        'warn',
+        `${open} follower position${open > 1 ? 's' : ''} without the master ${open > 1 ? 'are' : 'is'} still open — close ${open > 1 ? 'them' : 'it'} on Vest or with Flatten All.`,
+      );
     diag('disarm', {});
     render();
   }
 
   // ───────────────────────── selection ─────────────────────────
+  const LOCKED_MSG = 'Disarm first to change the master, followers or Cap-to-fit.';
   function setMaster(id) {
     if (S.arming) return toast('Wait for arming to finish.');
+    if (S.armed) return toast(LOCKED_MSG);
     S.master = S.master === id ? null : id;
     S.followers.delete(id);
     // the same-size rule applies only in strict 1:1; with cap-to-fit, followers may be any size (scaled by equity)
@@ -2485,6 +2722,7 @@
   }
   function toggleFollower(id) {
     if (S.arming) return toast('Wait for arming to finish.');
+    if (S.armed) return toast(LOCKED_MSG);
     if (!S.master || !S.byId[S.master] || !S.byId[id]) return toast('Pick a master first.');
     if (!S.capFit && S.byId[id].groupKey !== S.byId[S.master].groupKey) {
       return toast('A different-size follower needs Cap-to-fit (Settings). Strict 1:1 needs the same size and type.');
@@ -2529,7 +2767,11 @@
   }
   function loadLog() {
     const l = store.get(LOG_KEY, []);
-    S.log = Array.isArray(l) ? l.map((e) => ({ t: new Date(e.t), level: e.level, msg: e.msg })) : [];
+    S.log = Array.isArray(l)
+      ? l
+          .filter((e) => e && typeof e.msg === 'string' && !isNaN(new Date(e.t)))
+          .map((e) => ({ t: new Date(e.t), level: String(e.level || 'info'), msg: e.msg }))
+      : [];
   }
   // The risk acknowledgement is versioned: raising TERMS_VERSION asks everyone to accept the new terms once.
   const TERMS_VERSION = 2;
@@ -2554,11 +2796,11 @@
   function loadTrade() {
     const t = store.get(TRADE_KEY, null);
     if (!t || typeof t !== 'object') return;
-    Object.assign(S.trade, t, {
+    // only well-formed values come back (storage can hold anything); "anchor" (removed in v0.31.0) is dropped this way too
+    Object.assign(S.trade, cleanMarket(t), {
       symbol: SYMBOLS[t.symbol] ? t.symbol : S.trade.symbol, // another market comes back via followVestMarket
-      targets: Array.isArray(t.targets) && t.targets.length ? t.targets : S.trade.targets,
+      ...(['off', 'tp1', 'points'].includes(t.beMode) ? { beMode: t.beMode } : {}),
     });
-    delete S.trade.anchor; // "Price at click" was removed in v0.31.0: stop and targets are always measured from the fill
   }
   function saveTrade() {
     store.set(TRADE_KEY, S.trade);
@@ -2576,6 +2818,7 @@
     render();
   }
   function toggleCapFit() {
+    if (S.armed || S.arming) return toast(LOCKED_MSG);
     S.capFit = !S.capFit;
     saveOpts();
     if (!S.capFit && S.master) {
@@ -2893,7 +3136,15 @@
     const install = bar.querySelector('a.ubtn');
     if (install && state === 'available') install.onclick = startInstall;
     const reload = bar.querySelector('[data-act="update-reload"]');
-    if (reload) reload.onclick = () => location.reload();
+    if (reload) reload.onclick = reloadWhenIdle;
+  }
+  // Reload for an update only once nothing is in flight (an order, a stop move, a claim, Flatten All, arming).
+  const busyNow = () =>
+    !!(S.placing || S.adjusting || S.flattening || S.arming || claimBusy()) ||
+    Object.values(S.plans).some((p) => p.busy);
+  function reloadWhenIdle() {
+    if (busyNow()) return setTimeout(reloadWhenIdle, 500);
+    location.reload();
   }
   // Tampermonkey doesn't tell the page when it updates a script, so: after Install, reload Vest when the user comes back
   // to this tab (Tampermonkey's page opens in another tab). Armed, it asks instead, since reloading disarms.
@@ -2912,7 +3163,7 @@
     if (!_leftForInstall) return;
     if (S.armed)
       renderUpdate(); // shows Reload now
-    else location.reload();
+    else reloadWhenIdle();
   });
 
   // ───────────────────────── support (optional referral code) ─────────────────────────
@@ -3791,6 +4042,9 @@
     .selbtn:disabled {
       opacity: 0.3;
       cursor: not-allowed;
+    }
+    .selbtn.on:disabled {
+      opacity: 1; /* locked while armed: the picks stay clearly shown */
     }
 
     /* Arm / Flatten All */
@@ -4786,6 +5040,16 @@
       color: var(--warn);
     }
     .tr-err:empty {
+      display: none;
+    }
+    .tr-who {
+      font-size: 10px;
+      color: var(--faint);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .tr-who:empty {
       display: none;
     }
     .tr-warn {
@@ -5856,7 +6120,9 @@
     if (!_root) return;
     renderHealth();
     const body = _root.querySelector('.body');
-    if (!(S.tradeOpen || S.supportOpen) || S.siteOpen) body.dataset.view = '';
+    // the Trade, Support and first-run Rules views keep their DOM between renders (typing, a ticked box)
+    const keeps = S.tradeOpen || S.supportOpen || (S.rulesOpen && !S.settingsOpen && !S.ack);
+    if (!keeps || S.siteOpen) body.dataset.view = '';
     if (S.siteOpen) {
       renderSiteCheck(body);
     } else if (S.supportOpen) {
@@ -5883,7 +6149,7 @@
           r.canTrade === false ? 'Trading disabled' : r.canTrade === true ? 'Can trade' : 'Trading status unknown';
         const isM = S.master === r.id,
           isF = S.followers.has(r.id);
-        const fDisabled = !S.master || isM || (!S.capFit && !masterGroup) || r.canTrade === false;
+        const fDisabled = !S.master || isM || (!S.capFit && !masterGroup) || r.canTrade === false || S.armed;
         const bar = r.usedPct > 0.8 ? 'bar-hot' : r.usedPct > 0.5 ? 'bar-warn' : 'bar-ok';
         const id = esc(r.id),
           label = esc(r.label);
@@ -5894,9 +6160,9 @@
               <div class="right" title="Room left before the floor: ${money(r.room)}"><div class="room">${moneyShort(r.room)}</div><div class="used">${pct(r.usedPct)} used</div>
                 <div class="bar"><i class="${bar}" style="width:${Math.round(r.usedPct * 100)}%"></i></div></div>
               <div class="sel">
-                <button class="selbtn m ${isM ? 'on' : ''}" data-m="${id}" title="Make ${label} the master" aria-label="Make ${label} the master"
-                  aria-pressed="${isM}" ${r.canTrade === false ? 'disabled' : ''}>M</button>
-                <button class="selbtn f ${isF ? 'on' : ''}" data-f="${id}" title="Copy the master to ${label}" aria-label="Copy the master to ${label}"
+                <button class="selbtn m ${isM ? 'on' : ''}" data-m="${id}" title="${S.armed ? 'Disarm to change the master' : `Make ${label} the master`}" aria-label="Make ${label} the master"
+                  aria-pressed="${isM}" ${r.canTrade === false || S.armed ? 'disabled' : ''}>M</button>
+                <button class="selbtn f ${isF ? 'on' : ''}" data-f="${id}" title="${S.armed ? 'Disarm to change followers' : `Copy the master to ${label}`}" aria-label="Copy the master to ${label}"
                   aria-pressed="${isF}" ${fDisabled ? 'disabled' : ''}>FLW</button>
               </div></div>`;
       };
@@ -6016,8 +6282,14 @@
     if (!master || _tradeStateBusy || !userTokenOk()) return;
     _tradeStateBusy = true;
     try {
-      const [levs, st] = await Promise.all([fetchLeverages(), readOpenState(master)]);
+      const [levs, st, accts] = await Promise.all([
+        fetchLeverages(),
+        readOpenState(master),
+        api('/v3/accounts').catch(() => null), // free cash read with the positions, so the two match after a fill
+      ]);
       if (levs) S.levs = levs;
+      const a = ((accts && accts.accounts) || []).find((x) => x.account_id === master);
+      if (a && num(a.amount) >= 0 && S.byId[master]) S.byId[master].free = num(a.amount);
       // keep what the live P&L ticks from (cash and the last marks), as refreshBalances sets it: without cash the P&L
       // tab stopped moving the master's open profit until the next balance read
       const prev = S.acctState[master],
@@ -6094,23 +6366,31 @@
 
     // In a trade: add chips sized from the open position (+25%, +50%, +100%) and MAX, the largest add that fits both
     // Vest's buying power and a stop-out above the floor (the stop rebuilt from the new average, fees counted).
+    // An add rebuilds the stop from the new average. A position deep in a loss can put that stop past the price (Vest would
+    // refuse it, or stop the trade out at once): such an add is refused.
+    const addStop = (a) => {
+      const dir = held.side === 'long' ? 1 : -1;
+      return (held.qty * held.openPrice + a * price) / (held.qty + a) - dir * +t.stopPts;
+    };
+    const stopThrough = (a) =>
+      held.side === 'long'
+        ? addStop(a) >= price - BE_CLEAR_TICKS * meta.tick
+        : addStop(a) <= price + BE_CLEAR_TICKS * meta.tick;
     let chips = null,
       pick = null;
     if (held && price > 0 && +t.stopPts > 0) {
-      const dir = held.side === 'long' ? 1 : -1;
-      const lossFor = (a) => {
-        const total = held.qty + a,
-          avg = (held.qty * held.openPrice + a * price) / total;
-        return stopOutLoss({
-          side: held.side,
-          qty: total,
-          price,
-          stopPrice: avg - dir * +t.stopPts,
-          openFee: a * price * fee,
-          takerFee: fee,
-        });
-      };
-      const fits = (a) => riskRoom === null || lossFor(a) < riskRoom;
+      const lossFor = (a) =>
+        stopThrough(a)
+          ? Infinity
+          : stopOutLoss({
+              side: held.side,
+              qty: held.qty + a,
+              price,
+              stopPrice: addStop(a),
+              openFee: a * price * fee,
+              takerFee: fee,
+            });
+      const fits = (a) => (riskRoom === null ? !stopThrough(a) : lossFor(a) < riskRoom);
       const chip = (key, label, a) => ({
         key,
         label,
@@ -6121,9 +6401,11 @@
             : 'too small'
           : maxQty !== null && a > maxQty + meta.step / 2
             ? 'over margin'
-            : !fits(a)
-              ? 'past floor'
-              : null,
+            : stopThrough(a)
+              ? 'stop past price'
+              : !fits(a)
+                ? 'past floor'
+                : null,
       });
       let best = 0;
       if (maxQty !== null && maxQty > 0) {
@@ -6206,6 +6488,8 @@
     else if (long.error) error = long.error;
     else if (t.beMode === 'points' && !(+t.beTrigger > 0)) error = 'Breakeven trigger must be above zero points.';
     if (master && pick && pick.why) error = `Add ${pick.label}: ${pick.why}.`;
+    else if (!error && held && held.side && qty > 0 && price > 0 && +t.stopPts > 0 && stopThrough(qty))
+      error = `Adding ${fmtQty(qty, sym)} would rebuild the stop at ${fmtPx(addStop(qty), meta.tick)}, past the price. Use a wider stop or a bigger add.`;
 
     // The allowed range for this account now: where the stop may go and how much can be risked (new positions; an add
     // is held to Vest's max only, since its room depends on the position already open).
@@ -6370,6 +6654,7 @@
         <div class="tr-warn" id="tr-warn"></div>
         <div class="tr-action">
           <div class="tr-err" id="tr-err"></div>
+          <div class="tr-who" id="tr-who"></div>
           <div class="tr-go" id="tr-mgo"><button class="tr-buy" id="tr-buy">Buy</button><button class="tr-sell" id="tr-sell">Sell</button></div>
           <div class="tr-go tr-lgo" id="tr-lgo">
             <button class="tr-lbuy" id="tr-lbuy" title="Buy limit: click Vest's chart for the price, or type it"><svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1v4M8 11v4M1 8h4M11 8h4" stroke="currentColor" stroke-width="1.6" fill="none"/><circle cx="8" cy="8" r="1.4" fill="currentColor"/></svg> Buy LMT</button>
@@ -6510,6 +6795,7 @@
   async function placeTrade(side, limitPx = null) {
     if (S.placing || S.adjusting) return;
     if (S.flattening) return toast('Wait for Flatten All to finish.');
+    if (S.arming || claimBusy()) return toast('Wait for arming or the claim to finish.');
     if (!S.ack) {
       S.rulesOpen = true;
       S.tradeOpen = false;
@@ -6535,6 +6821,11 @@
       meta = c.meta,
       pDec = decimalsOf(meta.tick),
       master = S.master;
+    if (limitPx) {
+      // a typed price between ticks: a buy rounds down, a sell up (never a worse price than asked)
+      const n = limitPx / meta.tick;
+      limitPx = +((side === 'long' ? Math.floor(n + 1e-9) : Math.ceil(n - 1e-9)) * meta.tick).toFixed(pDec);
+    }
     S.placing = true;
     updateTrade();
     let placed = false;
@@ -6560,6 +6851,23 @@
       // Already in this market? Vest ignores a second open on the same symbol (accepted, never filled), so do what its own
       // ticket does: same direction adds to the position; the opposite direction is refused here.
       const held = await openPosition(master, sym);
+      // The size and ladder on screen were worked out for what the panel showed: a position that opened, closed or changed
+      // size since then would turn this click into something else (a new trade into an add, say).
+      const shown = c.held;
+      if (
+        held &&
+        parseFloat(held.quantity) > 0 &&
+        (!shown || shown.side !== held.side || Math.abs(shown.qty - parseFloat(held.quantity)) >= meta.step / 2)
+      ) {
+        refreshTradeState();
+        throw new Error(
+          `the position on ${meta.label} changed since the panel last updated — check it and click again`,
+        );
+      }
+      if (!held && shown) {
+        refreshTradeState();
+        throw new Error(`the position on ${meta.label} is closed now — check the panel and click again`);
+      }
       if (held && !(parseFloat(held.quantity) > 0))
         throw new Error(
           `an order is already waiting on ${meta.label} for ${accLabel(master)} — cancel it in Vest first (Vest allows one per market)`,
@@ -6836,13 +7144,24 @@
       base = { positionId, executionType: 'market' };
     tps.slice(n).forEach((l) => ops.push({ m: 'DELETE', path: TP, body: { positionId, takeProfitId: l.id } }));
     // An add never loosens the stop: one already tighter than the rebuilt one (moved to breakeven, say) stays put.
+    // Nothing is placed past the price now: a rebuilt stop there would be refused or stop the trade out at once (the old
+    // stop stays), and a target there would fill at once (the old target keeps its price, a new one is left out).
+    const nowPx = priceOf(sym) || ref,
+      clear = BE_CLEAR_TICKS * tick;
+    const stopPast = (x) => (side === 'long' ? x >= nowPx - clear : x <= nowPx + clear);
+    const tgtPast = (x) => (side === 'long' ? x <= nowPx + clear : x >= nowPx - clear);
     let stopAt = exact.stop,
-      keptStop = false;
+      keptStop = false,
+      skipped = 0;
     if (stops[0]) {
       const st = stops[0];
       if (side === 'long' ? st.price > exact.stop + tick / 2 : st.price < exact.stop - tick / 2) {
         stopAt = st.price;
         keptStop = true;
+      } else if (stopPast(exact.stop)) {
+        stopAt = st.price;
+        keptStop = true;
+        skipped++;
       }
       if (Math.abs(st.price - stopAt) >= tick / 2 || st.qty != null) {
         ops.push({
@@ -6856,9 +7175,17 @@
           },
         });
       }
+    } else if (stopPast(exact.stop)) {
+      stopAt = null;
+      skipped++;
     } else {
       ops.push({ m: 'POST', path: SL, body: { ...base, triggerPrice: fmtP(exact.stop) } });
     }
+    goal.forEach((g, i) => {
+      if (!tgtPast(g.price)) return;
+      skipped++;
+      g.price = i < n ? tps[i].price : null; // kept where it was; a new one is left out
+    });
     const legQty = (l) => (l.qty != null ? parseFloat(l.qty) : total); // a full-position leg covers everything
     const puts = tps
       .slice(0, n)
@@ -6882,13 +7209,16 @@
         },
       }),
     );
-    goal.slice(n).forEach((g) =>
-      ops.push({
-        m: 'POST',
-        path: TP,
-        body: { ...base, triggerPrice: fmtP(g.price), ...(g.qty != null ? { quantity: fmtQ(g.qty) } : {}) },
-      }),
-    );
+    goal
+      .slice(n)
+      .filter((g) => g.price != null)
+      .forEach((g) =>
+        ops.push({
+          m: 'POST',
+          path: TP,
+          body: { ...base, triggerPrice: fmtP(g.price), ...(g.qty != null ? { quantity: fmtQ(g.qty) } : {}) },
+        }),
+      );
 
     let failed = 0;
     for (const o of ops) {
@@ -6899,11 +7229,19 @@
         logEvent('warn', `Add: a ${o.path.endsWith('stop-loss') ? 'stop' : 'target'} change failed (${e.message}).`);
       }
     }
+    if (skipped)
+      logEvent(
+        'warn',
+        `Add: ${skipped} stop/target level${skipped > 1 ? 's' : ''} would have been past the price (${fmtP(nowPx)}) — left as ${skipped > 1 ? 'they were' : 'it was'}. Check the ladder on Vest.`,
+      );
     if (failed) logEvent('warn', 'Add: some stop/target changes failed — check the ladder on Vest.');
     else
       logEvent(
         'ok',
-        `Added — ${fmtQ(total)} @ avg ${fmtP(entry)} · stop ${fmtP(stopAt)}${keptStop ? ' (kept: tighter than a rebuilt one)' : ''} · ${goal.map((g, i) => `TP${i + 1} ${fmtP(g.price)}${g.qty != null ? ' × ' + fmtQ(g.qty) : ''}`).join(' · ')}`,
+        `Added — ${fmtQ(total)} @ avg ${fmtP(entry)} · stop ${stopAt == null ? 'none' : fmtP(stopAt)}${keptStop && !skipped ? ' (kept: tighter than a rebuilt one)' : ''} · ${goal
+          .filter((g) => g.price != null)
+          .map((g, i) => `TP${i + 1} ${fmtP(g.price)}${g.qty != null ? ' × ' + fmtQ(g.qty) : ''}`)
+          .join(' · ')}`,
       );
     diag('add_ladder', {
       positionId,
@@ -6912,6 +7250,7 @@
       entry,
       stop: stopAt,
       keptStop,
+      skipped,
       targets: goal,
       ops: ops.map((o) => o.m + ' ' + o.path.split('/').pop()),
       failed,
@@ -6924,7 +7263,7 @@
     }
     // a kept stop already at or past breakeven of the new average: breakeven is done for this trade
     const beNew = breakevenPrice({ side, entry, offsetPts: +t.beOffset || 0, tick });
-    if (keptStop && (side === 'long' ? stopAt >= beNew - tick / 2 : stopAt <= beNew + tick / 2)) {
+    if (keptStop && stopAt != null && (side === 'long' ? stopAt >= beNew - tick / 2 : stopAt <= beNew + tick / 2)) {
       if (old && S.plans[positionId] === old)
         endPlan(old, `Breakeven: the stop (${fmtP(stopAt)}) is already at or past breakeven for the new average.`);
       return;
@@ -7128,6 +7467,11 @@
   }
   function setPickPrice(p, fromChart) {
     if (!S.pick) return;
+    const tick = SYMBOLS[S.trade.symbol].tick,
+      n = p / tick;
+    // between ticks: a buy rounds down, a sell up, as it will be sent
+    if (p > 0)
+      p = +((S.pick.side === 'long' ? Math.floor(n + 1e-9) : Math.ceil(n - 1e-9)) * tick).toFixed(decimalsOf(tick));
     S.pick.price = p > 0 ? p : null;
     const el = _root && _root.querySelector('#tr-lpx');
     if (fromChart && el) el.value = S.pick.price ? fmtNum(p, decimalsOf(SYMBOLS[S.trade.symbol].tick)) : '';
@@ -7214,7 +7558,7 @@
     return { price: be, sl, why };
   }
   async function breakevenNow() {
-    if (S.placing || S.adjusting || S.flattening) return;
+    if (S.placing || S.adjusting || S.flattening || S.arming) return;
     const master = S.master,
       sym = S.trade.symbol,
       meta = SYMBOLS[sym],
@@ -7266,7 +7610,7 @@
     }
   }
   async function closeNow() {
-    if (S.placing || S.adjusting || S.flattening) return;
+    if (S.placing || S.adjusting || S.flattening || S.arming) return;
     const master = S.master,
       sym = S.trade.symbol,
       meta = SYMBOLS[sym];
@@ -7308,7 +7652,18 @@
   }
   function loadPlans() {
     const saved = store.get(PLANS_KEY, {});
-    S.plans = saved && typeof saved === 'object' ? saved : {};
+    S.plans = {};
+    // only plans that can be acted on: a position id, a known side and a market name
+    if (saved && typeof saved === 'object')
+      for (const [k, p] of Object.entries(saved))
+        if (
+          p &&
+          typeof p === 'object' &&
+          p.positionId === k &&
+          typeof p.symbol === 'string' &&
+          /^(long|short)$/.test(p.side)
+        )
+          S.plans[k] = p;
     const list = Object.values(S.plans);
     list.forEach((p) => {
       p.busy = false; // nothing is in flight after a reload
@@ -7398,15 +7753,47 @@
       moveToBreakeven(p, px);
     }
   }
+  // Price must be clear of breakeven by BE_CLEAR_TICKS (Vest refuses a stop the bid/ask has passed). Before moving, the
+  // position is re-read: the stop is measured from the worse of the plan's entry and Vest's average (never locks in a
+  // loss), and a stop already at or past breakeven (moved by hand, say) is left alone.
+  const BE_WAIT_MS = 2000;
   async function moveToBreakeven(p, px) {
-    const tick = (SYMBOLS[p.symbol] || SYMBOLS[DEFAULT_SYMBOL]).tick;
-    const be = breakevenPrice({ side: p.side, entry: p.entry, offsetPts: p.beOffset, tick });
-    if (p.side === 'long' ? be >= px : be <= px) return; // a stop must stay on the losing side of price: wait
-    if (!nearMarket(be, px, NEAR_MARKET_LOOSE))
-      return endPlan(p, `Breakeven: computed stop ${be} is nowhere near the market — not moved.`);
-    if (!p.stopLegId) return endPlan(p, 'Breakeven: no stop on this trade to move.');
+    const tick = (SYMBOLS[p.symbol] || SYMBOLS[DEFAULT_SYMBOL]).tick,
+      clear = BE_CLEAR_TICKS * tick,
+      long = p.side === 'long';
+    const beAt = (entry) => breakevenPrice({ side: p.side, entry, offsetPts: p.beOffset, tick });
+    const tooClose = (be) => (long ? px <= be + clear : px >= be - clear);
+    if (tooClose(beAt(p.entry))) return; // a stop must stay clear of price on the losing side: wait
+    if (!nearMarket(beAt(p.entry), px, NEAR_MARKET_LOOSE))
+      return endPlan(p, `Breakeven: computed stop ${beAt(p.entry)} is nowhere near the market — not moved.`);
     p.busy = true;
     try {
+      let pos;
+      try {
+        pos = await openPosition(p.master, p.symbol, p.positionId);
+      } catch {
+        p.retryAt = Date.now() + BE_WAIT_MS; // couldn't read it: try again shortly
+        return;
+      }
+      if (!pos) return endPlan(p, 'Breakeven: trade closed — stopped watching.');
+      const avg = parseFloat(pos.openPrice);
+      const entry =
+        avg > 0 && nearMarket(avg, px, NEAR_MARKET_LOOSE)
+          ? long
+            ? Math.max(p.entry, avg)
+            : Math.min(p.entry, avg)
+          : p.entry;
+      const be = beAt(entry);
+      if (tooClose(be)) {
+        p.retryAt = Date.now() + BE_WAIT_MS; // Vest's average is worse than the plan's entry: wait for price
+        return;
+      }
+      const sls = posLegs(pos).filter((l) => l.kind === 'sl');
+      const sl = sls.find((l) => l.id === p.stopLegId) || sls[0];
+      if (!sl) return endPlan(p, 'Breakeven: no stop on this trade to move.');
+      if (long ? sl.price >= be - tick / 2 : sl.price <= be + tick / 2)
+        return endPlan(p, `Breakeven: the stop (${sl.price}) is already at or past breakeven — left as it is.`);
+      p.stopLegId = sl.id;
       const body = {
         positionId: p.positionId,
         executionType: 'market',
@@ -7418,12 +7805,14 @@
       const why = p.beMode === 'tp1' ? 'TP1 reached' : `+${p.beTrigger} pts reached`;
       logEvent(
         'ok',
-        `Breakeven: stop moved to ${body.triggerPrice} (${why}, entry ${fmtNum(p.entry, decimalsOf(tick))}).`,
+        `Breakeven: stop moved to ${body.triggerPrice} (${why}, entry ${fmtNum(entry, decimalsOf(tick))}).`,
       );
       diag('breakeven', {
         outcome: 'moved',
         positionId: p.positionId,
-        entry: p.entry,
+        entry,
+        planEntry: p.entry,
+        vestAvg: avg,
         stop: body.triggerPrice,
         mode: p.beMode,
         price: px,
@@ -7484,6 +7873,7 @@
   }
   if (window.__VC_TEST__) window.__vcPlans = () => S.plans;
   if (window.__VC_TEST__) window.__vcState = () => S;
+  if (window.__VC_TEST__) window.__vcRender = () => render();
 
   const DEFAULT_TARGET_PTS = 20;
   function renderTargets(body) {
@@ -7680,7 +8070,11 @@
       (S.adjusting ? 'Adjusting stop & targets…' : '');
     const q = c.qty > 0 ? fmtQty(c.qty, c.t.symbol) : '';
     const h = c.held,
-      busy = !!S.placing || !!S.adjusting || !!S.flattening;
+      busy = !!S.placing || !!S.adjusting || !!S.flattening || !!S.arming;
+    const nf = S.armed ? S.followers.size : 0;
+    $('tr-who').textContent = S.master
+      ? `On ${accLabel(S.master)}${nf ? ` · copies to ${nf} follower${nf > 1 ? 's' : ''}` : ' · not copied (disarmed)'}`
+      : '';
     $('tr-buy').textContent = h && h.side === 'long' ? `Add ${q}` : `Buy ${q}`;
     $('tr-sell').textContent = h && h.side === 'short' ? `Add ${q}` : `Sell ${q}`;
     $('tr-buy').hidden = !!h && h.side !== 'long';
@@ -8053,6 +8447,8 @@
   // Rules tab, and the one-time risk acknowledgement (shown on first load; required before arming or trading).
   function renderRules(body) {
     const first = !S.ack;
+    if (first && body.dataset.view === 'rules-first') return; // a re-render would untick the box
+    body.dataset.view = first ? 'rules-first' : '';
     const how = `
         <ul class="rules-list">
           <li><b>Live copying.</b> Arming copies your <b>master</b> account's orders to the selected <b>followers</b>
@@ -8153,6 +8549,7 @@
     const nameFor = (id) => alias[id] || (alias[id] = `account-${++unknown}`);
     const scrub = (v) =>
       JSON.parse(JSON.stringify(v), function (k, val) {
+        if (Array.isArray(val) && ACCOUNT_KEYS.has(k)) return val.map((x) => (isUuid(x) ? nameFor(x) : x));
         if (typeof val !== 'string') return val;
         if (alias[val]) return alias[val];
         if (isUuid(val) && ACCOUNT_KEYS.has(k) && (k !== 'id' || 'label' in this)) return nameFor(val);
@@ -8281,6 +8678,14 @@
   const claimGap = () => (typeof window.__VC_CLAIM_GAP_MS === 'number' ? window.__VC_CLAIM_GAP_MS : CLAIM_GAP_MS);
   S.claim = null; // { phase: 'checking' | 'review' | 'running' | 'done', primary, items: [...], stop, error }
   const claimBusy = () => S.claim && (S.claim.phase === 'checking' || S.claim.phase === 'running');
+  // A preview or a result is a snapshot: it goes when the copier arms or the accounts reload, and a preview after
+  // CLAIM_REVIEW_MS (the balances move; a claim re-checks every account anyway). A claim in progress always stays.
+  const CLAIM_REVIEW_MS = 120000;
+  function dropClaimReview() {
+    if (!S.claim || claimBusy()) return false;
+    S.claim = null;
+    return true;
+  }
 
   // One account, read fresh: what it could claim right now, or why it can't. `free` is its free balance from /v3/accounts.
   async function claimCheck(id, free) {
@@ -8321,6 +8726,10 @@
     if (claimBusy()) return;
     if (S.flattening || S.placing || S.adjusting || S.arming)
       return toast('Wait for the current order, Flatten All or arming to finish.');
+    // a trade copied mid-claim would change what each account can claim
+    if (S.armed) return toast('Disarm the copier before claiming profit.');
+    if (healthState().changed)
+      return toast('Vest updated its site: run the site check (bottom right) before claiming.');
     S.claim = { phase: 'checking', items: [] };
     render();
     try {
@@ -8330,7 +8739,9 @@
         .sort((a, b) => a.order - b.order)
         .map((r) => r.id);
       const items = await Promise.all(ids.map((id) => claimCheck(id, free[id])));
-      S.claim = { phase: 'review', primary, items };
+      const review = (S.claim = { phase: 'review', primary, items });
+      const ttl = typeof window.__VC_CLAIM_REVIEW_MS === 'number' ? window.__VC_CLAIM_REVIEW_MS : CLAIM_REVIEW_MS;
+      setTimeout(() => S.claim === review && dropClaimReview() && render(), ttl);
     } catch (e) {
       S.claim = { phase: 'done', items: [], error: `Couldn't prepare the claim: ${e.message}` };
     }
@@ -8359,6 +8770,8 @@
     if (!c || c.phase !== 'review') return;
     const todo = c.items.filter((i) => i.claimable > 0);
     if (!todo.length) return;
+    if (S.armed || S.arming || S.placing || S.adjusting || S.flattening)
+      return toast('Disarm and let orders finish before claiming profit.');
     c.phase = 'running';
     c.stop = false;
     const total = todo.reduce((a, i) => a + i.claimable, 0);
@@ -8456,6 +8869,10 @@
   // The claim card under the P&L list: a button, then the preview to confirm, then progress and the result.
   function claimHtml() {
     const c = S.claim;
+    if (!c && S.armed)
+      return `<div class="claim"><button class="ghostbtn claim-go" data-claim="preview" disabled>Claim all profit…</button>
+        <div class="sum-note">Disarm the copier to claim profit: a trade copied mid-claim would change what each account
+        can claim.</div></div>`;
     if (!c)
       return `<div class="claim"><button class="ghostbtn claim-go" data-claim="preview">Claim all profit…</button>
         <div class="sum-note">Moves each funded account's profit to your Primary Account, one account at a time. Shows a
@@ -8524,14 +8941,16 @@
       return;
     }
     const sum = (arr) => arr.reduce((s, x) => s + (isNaN(x) ? 0 : x), 0);
-    const totalEq = sum(rows.map((r) => r.equity)),
-      totalInit = sum(rows.map((r) => r.size)),
+    // an account whose balance couldn't be read counts in neither total (its start without its equity would read as a loss)
+    const known = rows.filter((r) => !isNaN(r.equity) && !isNaN(r.size));
+    const totalEq = sum(known.map((r) => r.equity)),
+      totalInit = sum(known.map((r) => r.size)),
       totalPnl = totalEq - totalInit;
     const sp = (n) =>
       (n >= 0 ? '+' : '−') +
       '$' +
       Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    const pnlOf = (r) => (isNaN(r.equity) ? 0 : r.equity) - (isNaN(r.size) ? 0 : r.size);
+    const pnlOf = (r) => r.equity - r.size; // NaN while the balance is unknown
     // What you'd take home if every funded account's profit were claimed now, after each account's own split
     const funded = rows.filter(isFunded);
     const keep = sum(funded.map(keepOf));
@@ -8560,9 +8979,9 @@
               const keepLine =
                 k > 0 ? `<span class="sum-k">keeps ${money(k)} · ${Math.round(r.split * 100)}%</span>` : '';
               return `<div class="sum-row"><span class="badge sm">${n}</span>
-              <span class="sum-left"><span class="sum-name">${esc(r.label)} <span class="chip">${r.chip}</span></span>${keepLine}</span>
+              <span class="sum-left"><span class="sum-name">${esc(r.label)} <span class="chip">${esc(r.chip)}</span></span>${keepLine}</span>
               <span class="sum-eq">${money(r.equity)}</span>
-              <span class="sum-pnl ${pnl >= 0 ? 'pos' : 'neg'}">${sp(pnl)}</span></div>`;
+              <span class="sum-pnl ${isNaN(pnl) ? '' : pnl >= 0 ? 'pos' : 'neg'}">${isNaN(pnl) ? '—' : sp(pnl)}</span></div>`;
             })
             .join('')}
         </div>
@@ -8626,6 +9045,7 @@
     show(`<div class="empty">Loading accounts…</div>`);
     try {
       await buildRegistry();
+      dropClaimReview(); // it named the accounts as they were
       render();
       logEvent('info', `Loaded ${Object.keys(S.byId).length} active accounts.`);
       diag('accounts', {
@@ -8711,6 +9131,7 @@
     refresh();
     checkForUpdate();
     checkEncoding();
+    checkWasArmed();
     watchPurchaseWindow();
     LOG(`v${VERSION} loaded.`);
   };

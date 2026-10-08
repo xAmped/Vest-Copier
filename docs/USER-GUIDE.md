@@ -119,7 +119,9 @@ same percentage rather than the same contracts.
 5. **Trade the master normally.** Watch the log: you'll see `MASTER opened …` then
    `↳ OPENED …` per follower, and a one-line fill summary (e.g. `Fills 9/9 confirmed · avg slip
    0.20pt`).
-6. **DISARM** when you're done (always available, even mid-session).
+6. **DISARM** when you're done (always available, even mid-session). While armed, **M**, **FLW** and **Cap-to-fit**
+   are locked: disarm to change them. Arm in one Vest tab only; the copier warns when it's open in a second tab and
+   won't arm while another tab is armed. A page reload disarms it (the log says so): arm again to keep copying.
 
 ---
 
@@ -157,7 +159,9 @@ copy every order like any other master order.
   25 pts to risk $200"); in *Qty* mode, how many contracts fit and the widest stop before the account fails.
 - **Auto BE:** *Off*, *After TP1* or *At +pts*. It moves the stop to your entry once due; **lock** adds that many
   points of profit beyond the entry (0 = exact breakeven). It watches market orders from the panel, so leave the Vest tab open.
-  It survives a page reload and stops watching when the trade closes.
+  It survives a page reload and stops watching when the trade closes. It moves once price is 4 ticks clear of the new
+  stop, measures from your average entry as Vest has it, and leaves alone a stop you've already moved past breakeven.
+  Each market keeps its own trigger and lock points.
 - **Blocked orders:** a size the account can't open is never sent (Vest would accept it and not fill it). The buttons
   turn off with the reason and one-click fixes: **Set stop to …** (keeps your $ risk), **Risk $… instead** (keeps your
   stop) or **Use max**.
@@ -190,12 +194,14 @@ average), and a risk bar for what's left before your floor. The setup folds into
 - **Close** closes the master's position; armed, the copier closes the followers.
 - **Add:** the button for your direction becomes **Add**, with chips **+25%**, **+50%**, **+100%** of your position
   or **MAX**, the largest add that fits Vest's buying power and keeps a stop-out above the floor. A chip that wouldn't
-  fit is greyed with the reason ("over margin", "past floor"). Click a picked chip again to go back to your Size. A
+  fit is greyed with the reason ("over margin", "past floor", or "stop past price" when the position is so far in a loss
+  that the rebuilt stop would sit beyond the price). Click a picked chip again to go back to your Size. A
   preview shows the new total, average and stop-out cost.
 - An add uses Vest's own "add to position" order, which followers copy, scaled. The targets are then rebuilt as **one
   ladder for the whole position**, measured from the **new average entry**, with the full size re-split by your scale
   setting, and breakeven is re-measured from it too. **The stop is never loosened:** a stop already tighter than the
-  rebuilt one (moved to breakeven, say) stays where it is. While you're in, the ladder shows the levels the add would
+  rebuilt one (moved to breakeven, say) stays where it is, and nothing is placed past the price: a target the price has
+  already passed keeps its old level. While you're in, the ladder shows the levels the add would
   leave, with a live **Mark** row.
 - The other direction is replaced by Close: the panel doesn't reverse a position in one click.
 
@@ -244,7 +250,7 @@ Options are saved and persist across refreshes. Active ones show as `FAST` / `CA
   account shows its share. Evaluations aren't counted (their profit doesn't pay out until you're funded), and an
   account in a loss counts as $0, since claims are per account. With trades open it reads "if closed now"; Vest may
   ask you to close positions before a claim.
-- **Claim all profit** (bottom of the P&L tab) — claims every funded account's available profit to your Primary
+- **Claim all profit** (bottom of the P&L tab; disarm first) — claims every funded account's available profit to your Primary
   Account, the same claim as the Claim Profit window Vest itself offers, for the full amount. First a **preview**: what each account
   claims and what you receive after its split, or the reason it can't claim (an open position or order, no profit, an
   evaluation). Nothing is sent until you click **Claim … → you get …**. Accounts are then claimed one at a time, a few

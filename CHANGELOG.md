@@ -2,6 +2,44 @@
 
 Newest first. To update, click **Install** on the green bar that appears in the panel whenever there's a newer version.
 
+## v0.33.0
+A safety release: a full review of the copier, with every fix covered by a new test.
+
+- **Copying:**
+  - **Cancelling a resting limit add** on the master now cancels each follower's add too, and takes that size back off.
+  - **Closing a limit entry that hadn't filled** cancels the followers' orders before closing them.
+  - **A follower left in a trade the master never entered** (an entry that didn't fill on the master but did on a follower) is now found and offered as Flatten / Keep, instead of being dropped.
+  - **Disarming while copies are in flight** offers any copy that opened anyway as Flatten / Keep.
+  - **A retried close or reduce** reuses the same order key, so a slow reply from Vest can't make it run twice.
+  - **A master reduce sent as a limit order** isn't copied (followers would exit at market straight away); the log tells you to reduce them when it fills.
+  - **Cap-to-fit skips a follower whose balance couldn't be read** instead of sending it the master's full size.
+  - **A login Vest expired early** is renewed and the order retried once. Slow reads time out instead of stalling the balances.
+  - **Fills on a busy account are never reported as "did NOT fill"** just because they weren't on the first page of history.
+- **Breakeven and adds:**
+  - **Auto BE waits until price is clear of the new stop by 4 ticks,** like the Breakeven button, so Vest no longer refuses the move.
+  - **Auto BE checks the live position first:** it measures from your average entry as Vest has it (never locking in a loss) and leaves alone a stop you've already moved past breakeven.
+  - **An add never puts your stop or a target past the price.** A chip that would is greyed out ("stop past price"); a target that would fill at once keeps its old level.
+  - **A negative "lock" counts as 0,** and a stop or target that would land at or below zero is refused.
+- **Trade tab:**
+  - **A typed limit price between ticks rounds to a tick:** buys round down, sells up.
+  - **If your position opened, closed or changed size** since the tab last updated, Buy / Sell asks you to check it and click again, instead of turning a new trade into an add.
+  - **Each market remembers its own Auto BE points,** along with its size, stop and targets.
+  - **The account the order goes to** shows by the buttons, and whether it's copied.
+  - **Arming, orders and claims don't overlap:** each waits for the others to finish.
+- **Safety rails:**
+  - **While armed, M, FLW and Cap-to-fit are locked** (changing them used to disarm silently). Disarm to change them.
+  - **Two Vest tabs:** the copier warns when it's open in another tab, and won't arm while another tab is armed (two would copy every trade twice).
+  - **Reloading the page while armed** says the copier is disarmed now.
+  - **A collapsed panel opens itself** when followers are left without the master, so you see Flatten / Keep.
+  - **Disarming with followers still left open** says so in the log.
+  - **Updates reload Vest only once nothing is in flight.**
+- **P&L and data:**
+  - **Claim all profit is off while armed.**
+  - **A claim preview no longer lingers:** it clears when you arm, when the accounts reload, and after two minutes, so it never lists accounts that have since closed or balances that have moved.
+  - **An account whose balance couldn't be read shows "—"** on the P&L tab instead of a loss of its whole starting balance, and stays out of the totals.
+  - **Saved settings, plans and the log are checked when loaded,** so a damaged value falls back to the default instead of breaking the panel.
+  - **Live P&L stops re-pricing data that's over a minute old,** and a stop the price sits past no longer triggers a burst of balance reads.
+
 ## v0.32.2
 - **Fix: the P&L tab kept your master's open profit frozen** after you'd opened the Trade tab, until the next balance read. It moves with every price tick again, like the followers.
 

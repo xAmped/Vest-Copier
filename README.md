@@ -92,7 +92,10 @@ line. The bottom right shows Vest's build, your version and the API budget.
 - It won't copy an order Vest rejected on the master.
 - It won't copy closes Vest makes by itself, such as a drawdown breach on the master. Those followers stay open until
   you close them or press Flatten All.
-- It won't loosen your stop when you add: the targets rebuild from the new average, a tighter stop stays put.
+- It won't loosen your stop when you add (the targets rebuild from the new average, a tighter stop stays put), and it
+  won't place a stop or target past the price.
+- It won't let you change the master, followers or Cap-to-fit while armed, or arm in a second Vest tab while one is
+  already armed. Disarm first.
 - It won't arm right after Vest changes its website until you've run the quick read-only check (click the status in
   the bottom right).
 
