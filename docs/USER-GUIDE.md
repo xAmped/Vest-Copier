@@ -1,6 +1,7 @@
-# Vest Copier — User Guide
+# STRATUH Copier — User Guide
 
-A Tampermonkey userscript that mirrors your trades from one Vest Markets account (the **master**)
+STRATUH Copier (formerly Vest Copier) is a Tampermonkey userscript that mirrors your trades from one Vest Markets
+account (the **master**)
 to your other accounts (the **followers**), live, from inside the Vest web page. Everything happens in
 your own logged-in browser session: nothing logs in on your behalf, and it only acts when you trade.
 
@@ -23,9 +24,9 @@ your own logged-in browser session: nothing logs in on your behalf, and it only 
    **Install**. After that, Tampermonkey keeps it updated by itself.
 3. No link? Open Tampermonkey → **Create a new script**, delete the template, paste the entire contents of
    `vest-copier.user.js`, and **Save** (Ctrl/Cmd-S).
-4. Open or refresh **next.vestmarkets.com**. A **Vest Copier** panel appears top-right.
+4. Open or refresh **next.vestmarkets.com**. The **STRATUH Copier** panel appears top-right.
 
-**Updating:** the panel checks GitHub each time Vest loads. When there's a newer version, a green bar shows
+**Updating:** the panel checks GitHub each time Vest loads. When there's a newer version, a bar under the panel's tabs shows
 **Install**: click it, click **Update** on Tampermonkey's page, then come back to the Vest tab: it reloads by
 itself (if you're armed it shows **Reload now** instead, since reloading disarms).
 **Settings → Updates** has **Check now** and a switch to turn the check off. Installed from the link,
@@ -39,18 +40,20 @@ their own browser.
 
 ## 2. The panel at a glance
 
-- **Header:** `Vest Copier`, an **Armed · live / Ready / Idle** tag, small `FAST`/`CAP` markers when those
-  options are on, **Reload accounts** (↻) and collapse (`–`).
+- **Header:** the STRATUH logo and **COPIER**, an **ARMED · LIVE / READY / IDLE** tag, small `FAST`/`CAP` markers when
+  those options are on, **Reload accounts** (↻) and collapse (`–`).
 - **Tabs:** **Accounts**, **Trade**, **P&L**, **Settings**, **Rules**, and **Support** (report a problem, share an idea,
   the Discord, links to the guides, the AMPED code).
-- **Health bar:** a colored dot + `build <id>` (green = known build; amber = Vest changed its site,
-  re-verify) and a live `API nnn/200` rate indicator.
-- **Accounts:** grouped by size and type. Each row shows the account, its type chip, a green/red
-  "can trade" dot, **balance** (true equity), **floor** (or **daily floor** on plans with a daily loss limit, when it's
-  the higher one today), **room left** to that floor, **% used**, and two
-  selectors — **M** (make master) and **Flw** (add follower).
-- **Controls:** a big **ARM / DISARM** button and a red **Flatten All**.
-- **Activity log:** a clean, live feed, with **Diag** / **CSV** / **Clear** buttons.
+- **Accounts:** your **master** on top in its own block, then the **followers** with how many are copying, then any
+  other account sizes. Each row shows the account, its type chip, a green/red "can trade" dot, **balance** (true
+  equity), **floor** (or **daily floor** on plans with a daily loss limit, when it's the higher one today), **room
+  left** to that floor, **% used**, and two selectors, **M** (make master) and **FLW** (add follower).
+- **Controls:** **ARM / DISARM** and a red **Flatten All**.
+- **Activity log:** folded to one line showing the latest event. Click it to open the full feed, with **Diag** /
+  **CSV** / **Clear**. The panel remembers whether you left it open. Prompts that need you (Flatten / Keep for
+  followers left without the master) always show above it.
+- **Bottom bar:** the AMPED code on the left; on the right a colored dot with **Vest's build**, your **version** and a
+  live `API nnn/200` budget. Green = a known build; amber = Vest changed its site (click to run the site check).
 
 Drag the header to move the panel; drag the bottom-right corner to resize. Position and size are
 remembered.
@@ -92,7 +95,8 @@ follower size = master size × (follower equity ÷ master equity)
 - Every account then takes the **same % risk** and sees the **same stop distance** (the stop is a
   mirrored price; only the position size differs). Dollar P&L scales with account size.
 - A small safety buffer (0.95) applies **only when scaling down**, so a follower never gets rejected
-  right at the margin edge. Equal- or larger-equity followers send exact 1:1 — no haircut.
+  right at the margin edge. Equal- or larger-equity followers send exact 1:1 with no haircut, and so do followers
+  within 0.5% of the master's equity (same-size accounts a few cents apart).
 - If an account is too small to hold even the minimum size, it's **skipped** with a clear log line
   rather than sent a bad order.
 
@@ -104,7 +108,7 @@ same percentage rather than the same contracts.
 ## 5. Using it, step by step
 
 1. Your accounts load by themselves (click **Reload accounts** ↻ if not). Check the green "can trade" dots.
-2. Click **M** on your master. Click **Flw** on each follower.
+2. Click **M** on your master. Click **FLW** on each follower.
    - Strict 1:1: followers must match the master's group. For different sizes, turn on **Cap-to-fit**
      in **Settings** first.
 3. Set your leverage on Vest the way you'll trade for the session.
@@ -121,42 +125,75 @@ same percentage rather than the same contracts.
 
 ## 6. Trade tab (points-based order panel)
 
-Open **Trade** (top tabs). It trades your selected **master**; if the copier is armed, followers copy it
-like any other master order.
+Open **Trade** (top tabs). It trades your selected **master** in the **market Vest is showing**: switch Vest's chart
+to ES and the tab switches to ES. Each market keeps its own size, stop and targets, since points mean different money
+on ES and NQ; the first time you open a market, the log reminds you to check them. If the copier is armed, followers
+copy every order like any other master order.
 
-- **Size** — *Contracts*, *Risk $* (risk ÷ stop points → contracts; NQ is $1/point per contract), or *Max*: the
-  most the account can open right now, worked out the way Vest's own ticket works out its 100% (free cash × leverage,
-  less room for the fee and the spread). When the copier is armed in strict 1:1, Max is the smallest of the master's and
-  every follower's, since they all copy the same size.
-- **Stop** — in points. **Targets** — in points; **+ Add target** for more.
-- **Scale** — how the size splits across targets: **Start** (heaviest first), **Even**, **End** (heaviest last).
-- **Breakeven** — *Off*, *After TP1*, or *At +pts*; **lock** adds a point or two of profit to cover fees.
-- It shows each target's size and dollars, your risk (plus the fees on top) / reward / R, and the exact stop/target
-  prices for both Buy and Sell, with the **fail** price (where the account's equity reaches its floor: the drawdown
-  floor, or the daily-loss floor when that's higher) and, on an evaluation, the **pass** price (where it reaches the
-  target). Both count the opening fee and the account's current equity, like Vest's own estimates.
-- **Allowed range** (live, under Size and Stop): size = risk ÷ stop, the size can't go over what the account can open,
-  and a stop-out can't take you past your floor. So in *Risk $* mode the panel shows how much you can risk at your stop
-  and in total ("Can risk up to $159 at 20 pts · $278 max before the floor") and the smallest stop for your risk ("Stop
-  must be at least 25 pts to risk $200"); in *Contracts* mode, how many contracts fit and the widest stop before the
-  account fails.
-- **Blocked orders:** a size the account can't open is never sent (Vest would accept it and not fill it). Buy and Sell
+**Top: margin and risk bars.**
+
+- **Margin:** how much of Vest's buying power (its 100%) your position uses, and how many contracts are left.
+- **Risk:** what your stop would lose, fees included, against the room left before your floor.
+- The striped part previews the order you're about to send. A bar turns amber near the limit and red past it. Both
+  use the **tightest account**: when the copier is armed in strict 1:1, the master or a follower, whichever has less.
+
+**Setup.**
+
+- **Size:** *Qty*, *Risk $* (risk ÷ stop points → contracts; $1 per point per contract on Vest's perps), or *Max*:
+  the most the account can open right now, worked out the way Vest's own ticket works out its 100% (free cash ×
+  leverage, less room for the fee and the spread). Armed in strict 1:1, Max is the smallest of the master's and every
+  follower's, since they all copy the same size.
+- **Targets:** how the size splits across them, **Start** (heaviest first), **Even** or **End** (heaviest last);
+  **+ Add** for another target, × to remove one.
+- **The price ladder:** one table, top to bottom: your targets (farthest first), the entry, the stop, and the **fail**
+  price (where the account's equity reaches its floor: the drawdown floor, or the daily-loss floor when that's higher).
+  On an evaluation there's a **pass** row too (where it reaches the target). The middle column holds each level's
+  points (type them there), size and dollars; **Sell** prices are on the left and **Buy** prices on the right. Fail and
+  pass count the opening fee and the account's current equity, like Vest's own estimates.
+- **Allowed range** (live): size = risk ÷ stop, the size can't go over what the account can open, and a stop-out can't
+  take you past your floor. In *Risk $* mode the panel shows how much you can risk at your stop and in total ("Can
+  risk up to $159 at 20 pts · $278 max before the floor") and the smallest stop for your risk ("Stop must be at least
+  25 pts to risk $200"); in *Qty* mode, how many contracts fit and the widest stop before the account fails.
+- **Auto BE:** *Off*, *After TP1* or *At +pts*. It moves the stop to your entry once due; **lock** adds that many
+  points of profit beyond the entry (0 = exact breakeven). It watches market orders from the panel, so leave the Vest tab open.
+  It survives a page reload and stops watching when the trade closes.
+- **Blocked orders:** a size the account can't open is never sent (Vest would accept it and not fill it). The buttons
   turn off with the reason and one-click fixes: **Set stop to …** (keeps your $ risk), **Risk $… instead** (keeps your
   stop) or **Use max**.
-- **Warning** (amber, the order can still be sent): a stop-out would lose more, fees included, than the room left to the
-  floor, so the account fails before the stop fills.
-- It then sends a market order with the stop and targets attached as native Vest legs (they work on
-  Vest's side even if your tab closes). Right after the fill, the stop and targets are re-placed exactly N points from
-  your **fill** price, so the distances are always your real points.
-- **Fits your screen:** on the Trade tab the panel grows to the bottom of the window, and Buy/Sell stay pinned in view
-  while you scroll the form.
-- **Adding to a trade** — if the master already holds the same direction, Buy/Sell **adds** to it (Vest's own
-  "add to position" order, which followers copy, scaled). The stop and targets are then rebuilt as **one ladder for
-  the whole position**, measured from the **new average entry**: stop N points away, targets re-priced, and the full
-  size re-split by your scale setting. Breakeven is re-measured from the new average too. An order in the
-  **opposite** direction is refused — close or reduce the trade first.
-- Breakeven runs from the panel: keep the tab open for it. It survives a page reload and stops watching when the
-  trade closes.
+- **Warning** (amber, the order can still be sent): a stop-out would lose more, fees included, than the room left to
+  the floor, so the account fails before the stop fills.
+
+**Bottom: the buttons.**
+
+- **Buy / Sell** send a market order with the stop and targets attached as native Vest legs (they work on Vest's side
+  even if your tab closes). Right after the fill, the stop and targets are re-placed exactly your points from your
+  **fill** price.
+- **Buy LMT / Sell LMT** price a limit order with a click on Vest's chart (a click, not a drag), or type the price.
+  A dashed line shows the order on the chart and the ladder shows its stop and targets measured from the limit price.
+  Nothing is sent until **Place**; **Esc** or **Cancel** stops. A buy limit goes below the mark and a sell limit
+  above it. The stop and targets go in with the order and Vest activates them when it fills. Limits open a new trade;
+  Auto BE stays with market orders (use **Breakeven** once a limit fills). Move or cancel a resting limit on Vest's own
+  chart or order list: followers' limits move and cancel with it when armed.
+- **Fits your screen:** on the Trade tab the panel grows to the bottom of the window, and the buttons stay pinned in
+  view while you scroll the form.
+
+**In a trade.** Your position sits right above the buttons: side, size, average entry, how many accounts are in it,
+and live P&L.
+
+- **Breakeven** moves the stop to your **average entry** (an average between ticks rounds toward profit to the nearest
+  tick, so it never locks a loss). It's offered once price is 4 ticks clear of the entry, since Vest refuses a stop
+  the bid or ask has already passed; hover it for the reason when it's grey.
+- **Close** closes the master's position; armed, the copier closes the followers.
+- **Add:** the button for your direction becomes **Add**, with chips **+25%**, **+50%**, **+100%** of your position
+  or **MAX**, the largest add that fits Vest's buying power and keeps a stop-out above the floor. A chip that wouldn't
+  fit is greyed with the reason ("over margin", "past floor"). Click a picked chip again to go back to your Size. A
+  preview shows the new total, average and stop-out cost.
+- An add uses Vest's own "add to position" order, which followers copy, scaled. The targets are then rebuilt as **one
+  ladder for the whole position**, measured from the **new average entry**, with the full size re-split by your scale
+  setting, and breakeven is re-measured from it too. **The stop is never loosened:** a stop already tighter than the
+  rebuilt one (moved to breakeven, say) stays where it is. While you're in, the ladder shows the levels the add would
+  leave, with a live **Mark** row.
+- The other direction is replaced by Close: the panel doesn't reverse a position in one click.
 
 ## 7. Settings
 
@@ -183,8 +220,8 @@ Options are saved and persist across refreshes. Active ones show as `FAST` / `CA
 - **Fill confirmation** — after each entry, the copier checks that every follower actually filled.
   A follower that was accepted but didn't fill (usually too small for the trade) is flagged loudly
   and dropped from tracking, so later stops/closes don't target a trade that isn't there.
-- **Site check (after Vest updates)** — when Vest ships a site update, the health bar turns amber
-  ("Vest updated — click to run site check") and **arming is paused**. Click the bar: the copier probes
+- **Site check (after Vest updates)** — when Vest ships a site update, the status in the bottom right turns amber
+  ("Vest updated — click to run the site check") and **arming is paused**. Click it: the copier probes
   every Vest endpoint it relies on and scans Vest's code for the order endpoints and fields it uses —
   read-only, no orders placed. Each check shows green / amber / red. If nothing is red, click
   **Accept this build**, then do one small test (one follower: open with a stop, move the stop, close).
@@ -198,14 +235,14 @@ Options are saved and persist across refreshes. Active ones show as `FAST` / `CA
 
 - **P&L** (tab) — per-account profit and a total. Profit = current equity − starting capital. Live, like Vest's
   Account Value: open trades re-price with every price tick, and balances re-read about 2 seconds after any order and
-  when a stop or target is reached (and every 20 seconds regardless). The green figure on the right is **what you keep**: each funded account's profit ×
+  when a stop or target is reached (and every 20 seconds regardless). The figure beside the total, with the lime edge, is **what you keep**: each funded account's profit ×
   its own profit split, added up, as if you claimed it all now (Vest applies the split flat at each claim). Each
   account shows its share. Evaluations aren't counted (their profit doesn't pay out until you're funded), and an
   account in a loss counts as $0, since claims are per account. With trades open it reads "if closed now"; Vest may
   ask you to close positions before a claim.
 - **Claim all profit** (bottom of the P&L tab) — claims every funded account's available profit to your Primary
-  Account, the same claim as Vest's own Claim Profit window, for the full amount. First a **preview**: what each account
-  claims and what you receive after its split, or why it can't claim (an open position or order, no profit, an
+  Account, the same claim as the Claim Profit window Vest itself offers, for the full amount. First a **preview**: what each account
+  claims and what you receive after its split, or the reason it can't claim (an open position or order, no profit, an
   evaluation). Nothing is sent until you click **Claim … → you get …**. Accounts are then claimed one at a time, a few
   seconds apart, each re-checked just before its claim; **Stop after this account** ends the run early. Each result is
   in the activity log. Claims arrive within 24 hours and **can't be reversed**. Withdrawing from your Primary Account to
@@ -224,7 +261,8 @@ Options are saved and persist across refreshes. Active ones show as `FAST` / `CA
   `required margin ≈ position size × price × (1 ÷ leverage)`. At 50x that's ~2% of the notional.
 - **Portfolio value = collateral + realized + unrealized PnL** — this is the "equity" the copier
   sizes and anchors on (not free collateral, which under-reports while a trade is open).
-- Vest uses **cross margin** by default; **funded** accounts cap at **50x**, primary at 100x.
+- Vest uses **cross margin** by default. Leverage caps are per market and plan (on funded accounts NQ is 50x and ES
+  75x on most plans); the copier reads them from Vest.
 - The most a new order can be (Vest's 100%, "Trading Power") is your **free** cash (less any open loss) × leverage,
   minus a little for the trading fee (0.0025% of the order value on NQ, charged on the way in and out) and the spread.
   Cash already holding other positions isn't free. The Trade tab's **Max** uses the same rule.
@@ -246,7 +284,7 @@ and exactly what **Cap-to-fit** solves by sizing each account to what it can act
 - **Disarm if you'll place a manual trade** you don't want copied.
 - **Re-arm after changing leverage or symbol** so followers re-sync.
 - **Keep accounts flat between sessions**, and disarm when you're not actively trading.
-- **After a Vest site update** (amber badge), do a tiny test before trading heavily.
+- **After a Vest site update** (amber status), do a tiny test before trading heavily.
 - Keep sizes small enough that a **simultaneous loss across every account** is survivable.
 
 ---
@@ -261,12 +299,14 @@ Support** turns the switching on or off and has a **Copy code AMPED** button.
 
 ## 13. Troubleshooting
 
-Questions or setup help: ask in the [Vest Copier Discord](https://discord.gg/Aa69y9KnM3).
+Questions or setup help: ask in the [Discord](https://discord.gg/Aa69y9KnM3).
 
 - **Panel didn't appear** — confirm the script is enabled in Tampermonkey and you're on
   `next.vestmarkets.com`; refresh.
 - **"Couldn't capture your Vest session"** — click around Vest for a second, then click
   **Reload accounts** (↻) in the panel.
+- **Breakeven stays grey** — price isn't 4 ticks clear of your entry yet, the stop is already at or past breakeven,
+  or the position has no stop. Hover the button for which.
 - **Can't select a follower** — it's a different size/type than the master. Turn on **Cap-to-fit**,
   or pick matching accounts.
 - **Can't arm** — the log says why: a follower in the opposite direction, a follower in a trade the
@@ -275,8 +315,7 @@ Questions or setup help: ask in the [Vest Copier Discord](https://discord.gg/Aa6
 - **An order didn't fill** — the log says which account (master included). Vest accepted it but didn't execute
   it, usually because there wasn't enough margin for that size. A follower that misses an entry is dropped from
   tracking; one that misses an add keeps its original position.
-- **Something looks wrong** — open the **Support** tab (or click **Problem? Report it** at the bottom of the panel).
-  Describe what happened and
+- **Something looks wrong** — open the **Support** tab. Describe what happened and
   click **Save report & open issue**: it saves one report file (activity log, diagnostics, settings, balances;
   account ids replaced by names) and opens a GitHub issue with your description filled in. Drag the file in and
   submit (a free GitHub account is needed).

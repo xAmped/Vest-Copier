@@ -1,6 +1,20 @@
-# Vest Copier — What's New
+# STRATUH Copier (formerly Vest Copier) — What's New
 
 Newest first. To update, click **Install** on the green bar that appears in the panel whenever there's a newer version.
+
+## v0.32.0
+- **New look: STRATUH Copier.** The copier joins STRATUH, the trading tools by xAmped, and the panel takes its style: square corners, hairline dividers, lime for what's live (the master, ARMED, profit, Buy) and red only for what closes trades. It's the same script and install link, and your settings carry over.
+- **Accounts:** your master sits on top in its own block, with the followers listed under it and how many are copying.
+- **Activity folds to one line** showing the latest event. Click it to open the full log (Diag, CSV and Clear are there); the panel remembers. Prompts that need you, like Flatten / Keep for followers left without the master, always show above it.
+- **Bottom bar:** Vest's build, your version and the API budget sit at the bottom right (click to run the site check). Report a problem is in the Support tab.
+- **Trade tab, rebuilt to read top to bottom.** Stop, entry and targets are one price ladder: Sell prices on the left, Buy prices on the right, points, size and dollars in the middle, with the fail (and pass, on evaluations) prices underneath.
+- **Margin and risk bars** head the Trade tab, live: how much of Vest's buying power is used and what's left, and what your stop would lose (fees counted) against the room to the floor, on the tightest account. The striped part previews the order you're about to send, amber near the limit, red over it.
+- **In a trade:** your position sits right above the buttons with its live P&L, plus **Breakeven** (moves the stop to your average entry, rounded toward profit to the nearest tick, once price is clear of it) and **Close**. Both are copied to followers when armed. Buy or Sell becomes **Add**, and the ladder shows the levels the add would leave, rebuilt from the new average, with a live mark row.
+- **Add chips:** +25%, +50%, +100% of your position, or **MAX**, the largest add that fits Vest's buying power and keeps a stop-out above the floor. Chips that wouldn't fit are greyed out with the reason. Click a picked chip again to go back to the Size field.
+- **Limit orders from the panel:** Buy LMT or Sell LMT, then click Vest's chart where you want it (or type the price). The pending order shows as a line on the chart and in the ladder, with the stop and targets measured from the limit price; nothing is sent until **Place**, and Esc cancels. A buy limit must sit below the mark and a sell limit above it. Limits open a new trade; Auto BE stays with market orders (use Breakeven once a limit fills).
+- **The Trade tab follows the market Vest is showing** (switch Vest to ES and the tab trades ES), and each market remembers its own size, stop and targets. A market you haven't traded from the panel starts with your current numbers and a reminder to check them, since points mean different money on ES and NQ.
+- **Adding never loosens your stop.** An add still rebuilds the targets from the new average, but a stop that's already tighter (moved to breakeven, say) stays where it is.
+- **Cap-to-fit:** accounts within 0.5% of the master's equity (same-size accounts a few cents apart) now copy 1:1 instead of taking the 5% safety margin meant for smaller accounts.
 
 ## v0.31.2
 - **Site check fix:** with no active accounts (for example after an account closes), Vest's site update could show a red "Something Vest-side changed" and block arming, because one of Vest's servers answers with an error when there are no accounts. The check now says there are no active accounts and skips the account checks, and the equity history check (only a backup since v0.31.1) can warn but no longer blocks arming.
@@ -16,7 +30,7 @@ Newest first. To update, click **Install** on the green bar that appears in the 
 - **Claim all profit is faster:** accounts are now claimed 2 seconds apart instead of 6, still one at a time and each re-checked right before its claim.
 
 ## v0.30.0
-- **Claim all profit, from the P&L tab.** One button claims the profit of every funded account to your Primary Account, the same claim Vest's own Claim Profit window makes, for the full available amount. It shows a preview first (what each account claims and what you receive after its split, or why an account can't claim: an open position or order, no profit, an evaluation) and sends nothing until you confirm. Accounts are then claimed one at a time, a few seconds apart, each re-checked right before its claim, and you can stop between accounts. Claims arrive in your Primary Account within 24 hours and can't be reversed. Moving money from the Primary Account to your wallet stays on Vest.
+- **Claim all profit, from the P&L tab.** One button claims the profit of every funded account to your Primary Account, the same claim the Claim Profit window Vest itself offers makes, for the full available amount. It shows a preview first (what each account claims and what you receive after its split, or why an account can't claim: an open position or order, no profit, an evaluation) and sends nothing until you confirm. Accounts are then claimed one at a time, a few seconds apart, each re-checked right before its claim, and you can stop between accounts. Claims arrive in your Primary Account within 24 hours and can't be reversed. Moving money from the Primary Account to your wallet stays on Vest.
 - The P&L tab's "you keep" figures are cut to the cent the way Vest pays them.
 
 ## v0.29.0

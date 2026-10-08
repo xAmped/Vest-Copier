@@ -1,11 +1,11 @@
 # Disclaimer and assumption of risk
 
-By installing or using Vest Copier you agree to the following. The panel asks you to accept these terms before
-it can be used.
+By installing or using STRATUH Copier (formerly Vest Copier) you agree to the following. The panel asks you to
+accept these terms before it can be used.
 
 ## It trades for you
 
-Vest Copier places **real orders on live trading accounts**, automatically, using your logged-in Vest session.
+STRATUH Copier places **real orders on live trading accounts**, automatically, using your logged-in Vest session.
 Once armed, an order you place on your master account is sent to every follower account you selected.
 
 ## Things can go wrong
@@ -18,16 +18,16 @@ survivable.
 
 ## You are responsible
 
-Every order Vest Copier sends, and every trade on your accounts, is your responsibility alone. That includes any
+Every order STRATUH Copier sends, and every trade on your accounts, is your responsibility alone. That includes any
 loss, drawdown breach, failed evaluation, closed account or lost payout.
 
-Vest Copier is free and comes **with no warranty of any kind**. Its author accepts **no responsibility
+STRATUH Copier is free and comes **with no warranty of any kind**. Its author accepts **no responsibility
 or liability** for any loss or damage arising from its use, including orders that are placed, missed, duplicated
 or sized differently than you expected. See sections 7 and 8 of the [LICENSE](LICENSE).
 
 ## Not Vest, not advice
 
-Vest Copier is an independent tool. It is not affiliated with, endorsed by or supported by Vest Markets. Whether
+STRATUH Copier is an independent tool. It is not affiliated with, endorsed by or supported by Vest Markets. Whether
 the trading or prop-trading program you use allows a trade copier is yours to check. Nothing in this project is
 financial or trading advice.
 

@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Vest Copier
 // @namespace    vestcopier
-// @version      0.31.2
+// @version      0.32.0
 // @description  Copies a master Vest account's trades to your other Vest accounts, live, and adds a points-based order panel.
 // @author       xAmped
-// @license      Vest Copier License — free to use, no selling; see LICENSE
+// @license      STRATUH Copier License — free to use, no selling; see LICENSE
 // @homepageURL  https://github.com/xAmped/Vest-Copier
 // @supportURL   https://github.com/xAmped/Vest-Copier/issues
 // @updateURL    https://raw.githubusercontent.com/xAmped/Vest-Copier/main/src/vest-copier.user.js
@@ -14,7 +14,7 @@
 // @grant        none
 // ==/UserScript==
 
-// Vest Copier — Copyright (c) 2026 xAmped. Free to use for your own trading and to share unmodified; not for sale.
+// STRATUH Copier (formerly Vest Copier) — Copyright (c) 2026 xAmped. Free to use for your own trading and to share unmodified; not for sale.
 // Full terms: LICENSE (https://github.com/xAmped/Vest-Copier/blob/main/LICENSE). Not affiliated with Vest Markets.
 
 (() => {
@@ -22,7 +22,7 @@
   if (window.__vestCopier) return;
   window.__vestCopier = true;
 
-  const VERSION = '0.31.2';
+  const VERSION = '0.32.0';
   const API = 'https://api-gateway.hz.vestmarkets.com';
   const _fetch = window.fetch.bind(window);
   // Console echo of the activity log, for troubleshooting: localStorage.setItem('vc-debug', '1') and reload.
@@ -108,7 +108,7 @@
       scale: 'even',
       beMode: 'tp1',
       beTrigger: 15,
-      beOffset: 1,
+      beOffset: 0,
     },
     price: {}, // symbol -> { px, at } live price
   };
@@ -161,6 +161,7 @@
         'takeProfits',
         'stopLosses',
         'price',
+        'expirationTime', // sent when Vest moves a limit (its chart drag re-places it, keeping the old order's expiry)
       ],
     },
     // add to an open position: Vest's ticket sends this, not /open, when you already hold the same direction
@@ -268,16 +269,22 @@
     let auth = null;
     try {
       auth = new Headers((init && init.headers) || (input && input.headers) || {}).get('authorization');
-    } catch {}
+    } catch {
+      /* best effort: nothing to do if this fails */
+    }
     const method = ((init && init.method) || (input && input.method) || 'GET').toUpperCase();
     const body = init && init.body;
     let pending = null;
     try {
       if (method === 'POST') pending = maybeFastOpen(url, body, auth);
-    } catch {}
+    } catch {
+      /* best effort: nothing to do if this fails */
+    }
     try {
       offerUser(auth);
-    } catch {}
+    } catch {
+      /* best effort: nothing to do if this fails */
+    }
     const p = _fetch.apply(this, arguments);
     // Only order requests are read back (never other responses, which may be long-lived streams).
     if (pending || (auth && orderAction(url))) {
@@ -316,7 +323,9 @@
       let pending = null;
       try {
         pending = vc.method === 'POST' ? maybeFastOpen(vc.url, b, vc.auth) : null;
-      } catch {}
+      } catch {
+        /* best effort: nothing to do if this fails */
+      }
       this.addEventListener(
         'loadend',
         () => {
@@ -324,7 +333,9 @@
           let r = '';
           try {
             r = this.responseText;
-          } catch {}
+          } catch {
+            /* best effort: nothing to do if this fails */
+          }
           if (pending) reconcileFast(pending, r, this.status);
           else onRequest(vc.url, b, r, vc.auth, vc.method, this.status);
         },
@@ -366,7 +377,9 @@
         S.rate = { remaining: +rem, limit: +r.headers.get('x-ratelimit-limit') || S.rate.limit };
         renderRate();
       }
-    } catch {}
+    } catch {
+      /* best effort: nothing to do if this fails */
+    }
     const text = await r.text();
     if (!r.ok) throw new Error(`${path} -> ${r.status}`);
     return parseJson(text, text);
@@ -535,12 +548,13 @@
     return {
       positions: ((pos && pos.positions) || [])
         .map((p) => ({
+          id: posIdOf(p),
           symbol: p.symbol,
           side: p.side,
           qty: num(p.quantity),
           openPrice: num(p.openPrice),
           collateral: num(p.collateral) || 0,
-          triggers: posLegs(p).map((l) => ({ kind: l.kind, price: l.price })),
+          triggers: posLegs(p).map((l) => ({ id: l.id, kind: l.kind, price: l.price })),
         }))
         .filter((p) => p.qty > 0),
       ordersCollateral: ((ord && ord.orders) || []).reduce(
@@ -561,7 +575,9 @@
           await _fetch(`${API}/v3/ticker/latest?symbols=${need.map(encodeURIComponent).join(',')}`)
         ).json();
         for (const t of r.tickers || []) if (parseFloat(t.markPrice) > 0) out[t.symbol] = parseFloat(t.markPrice);
-      } catch {}
+      } catch {
+        /* best effort: nothing to do if this fails */
+      }
     }
     return out;
   }
@@ -630,6 +646,7 @@
       if (S.tradeOpen) refreshTradeState();
       render();
     } catch {
+      /* best effort: nothing to do if this fails */
     } finally {
       _balBusy = false;
       if (_balAgain) {
@@ -920,6 +937,7 @@
   // The proportional size gives the follower the same margin use, and so the same % risk, as the master. A follower with
   // equal or more equity sends the master's exact size; a smaller one is scaled down with a small buffer for fees and
   // equity that is up to one poll old. Returns the size to send, whether it was scaled, and whether to skip the account.
+  const CAP_SAME_SIZE = 0.005; // cap-to-fit: within 0.5% of the master's equity counts as the same size
   function capQty(followerId, masterQtyStr, sym) {
     const mQ = parseFloat(masterQtyStr);
     const mEq = (S.byId[S.master] || {}).equity,
@@ -930,7 +948,9 @@
       return { qty: masterQtyStr, scaled: false, skip: false, calc: { ...calc, reason: 'missing-equity' } };
     const prop = mQ * (fEq / mEq);
     calc.proportionalQty = +prop.toFixed(6);
-    if (prop >= mQ) return { qty: masterQtyStr, scaled: false, skip: false, calc };
+    // Equal-size accounts a few cents apart (seen live: $499.988 vs $499.987) copy 1:1; the buffer is for real
+    // differences in size.
+    if (prop >= mQ || fEq >= mEq * (1 - CAP_SAME_SIZE)) return { qty: masterQtyStr, scaled: false, skip: false, calc };
     const buffered = prop * CAP_BUFFER;
     Object.assign(calc, { bufferedQty: +buffered.toFixed(6), buffer: CAP_BUFFER });
     const q = floorStep(buffered, sizeStepOf(sym)); // the symbol's step, not the master string's decimals
@@ -1183,6 +1203,7 @@
         stopLosses: scaleLegs(o.req.stopLosses, o.qty, cq.qty, o.sym),
       };
       if (o.req.price != null) payload.price = o.req.price;
+      if (o.req.expirationTime != null) payload.expirationTime = o.req.expirationTime; // a moved limit keeps its expiry
       const r = await acctPost(f, '/v3/positions/open', payload);
       const rec = { positionId: r.positionId, orderId: r.orderId, legs: legsOf(payload, r), qty: cq.qty };
       if (followersMap) followersMap[f] = rec;
@@ -1195,7 +1216,7 @@
         orderId: r.orderId,
         delayedOrderStatus: r.delayedOrderStatus || null,
         sendMs: msSince(t0),
-        expected: 'fill',
+        expected: isImmediate(o.req) ? 'fill' : 'rest', // a resting limit fills later, if at all
         met: null,
       });
       return { accountId: f, orderId: r.orderId, positionId: r.positionId, label: accLabel(f), qty: cq.qty, diag: d };
@@ -1812,8 +1833,11 @@
     riskUsd > 0 && stopPts > 0 && pointValue > 0 ? floorStep(riskUsd / (stopPts * pointValue), step) : 0;
 
   /** Breakeven stop price: entry plus an offset in your favour (e.g. +1 pt covers fees), tick-rounded. */
-  const breakevenPrice = ({ side, entry, offsetPts, tick }) =>
-    roundTick(entry + (side === 'long' ? 1 : -1) * (offsetPts || 0), tick);
+  // Entry (an average can sit between ticks) plus the offset, rounded to the tick on the profit side: never a loss.
+  const breakevenPrice = ({ side, entry, offsetPts, tick }) => {
+    const n = (entry + (side === 'long' ? 1 : -1) * (offsetPts || 0)) / tick;
+    return +((side === 'long' ? Math.ceil(n - 1e-9) : Math.floor(n + 1e-9)) * tick).toFixed(decimalsOf(tick));
+  };
   /**
    * Should the stop move to breakeven now?  mode: 'off' | 'tp1' (after the first target fills) | 'points'
    * (price has moved `triggerPts` in your favour). Never fires twice.
@@ -1945,7 +1969,9 @@
     if (ws)
       try {
         ws.close();
-      } catch {}
+      } catch {
+        /* best effort: nothing to do if this fails */
+      }
   }
   function stopWsTimers() {
     clearInterval(_wsPing);
@@ -1978,7 +2004,9 @@
       _wsPing = setInterval(() => {
         try {
           ws.send(JSON.stringify({ method: 'PING', params: [], id: Date.now() }));
-        } catch {}
+        } catch {
+          /* best effort: nothing to do if this fails */
+        }
       }, WS_PING_MS);
       _wsDog = setInterval(() => {
         // quiet for 3× the staleness limit: reconnect
@@ -1989,7 +2017,9 @@
         }
         try {
           ws.close();
-        } catch {}
+        } catch {
+          /* best effort: nothing to do if this fails */
+        }
         if (ws === _ws) {
           _ws = null;
           stopWsTimers();
@@ -2021,7 +2051,9 @@
   function subscribePrices() {
     try {
       _ws.send(JSON.stringify({ method: 'SUBSCRIBE', params: [..._wsSyms].map((s) => s + '@ticker'), id: Date.now() }));
-    } catch {}
+    } catch {
+      /* best effort: nothing to do if this fails */
+    }
   }
   async function fetchPriceOnce(sym) {
     // REST fallback so the tab has a price immediately
@@ -2030,7 +2062,9 @@
       const t = (r.tickers || []).find((x) => x.symbol === sym);
       const px = t ? parseFloat(t.markPrice) : NaN;
       if (px > 0 && !priceOf(sym)) onPrice(sym, px, parseFloat(t.marginMarkPrice));
-    } catch {}
+    } catch {
+      /* best effort: nothing to do if this fails */
+    }
   }
   // Tick, size step and margin ratios from exchangeInfo. A market's `capitalInitMarginRatio` that is absent means "not
   // listed, use the funded ratio"; present but null means "no capital-account ratio". Vest's leverage rule depends on
@@ -2052,7 +2086,9 @@
       const r = await (await _fetch(`${API}/v3/exchangeInfo?symbols=${encodeURIComponent(sym)}`)).json();
       const x = (r.symbols || []).find((s) => s.symbol === sym);
       if (x) applySymbolRules(x);
-    } catch {}
+    } catch {
+      /* best effort: nothing to do if this fails */
+    }
   }
   function applySymbolRules(x) {
     try {
@@ -2083,9 +2119,95 @@
         takerFee: parseFloat(x.takerFee) || 0, // fraction of notional per fill (NQ 0.000025)
         margin,
       };
-    } catch {}
+    } catch {
+      /* best effort: nothing to do if this fails */
+    }
   }
   const symLabel = (sym) => (SYMBOLS[sym] && SYMBOLS[sym].label) || String(sym).replace(/-USD-PERP$|-PERP$/, '');
+
+  // ── The Trade tab trades the market Vest is showing: the page address is /trade/<display name> ("ES-PERP"), which Vest
+  // also keeps as "last-market". Display names map to symbols (ES-PERP → SPX-USD-PERP) through Vest's exchange info,
+  // read once (it also loads every market's tick, size step, fees and margin). Each market keeps its own size, stop and
+  // targets: points mean different money on ES and NQ.
+  const MARKETS_KEY = 'vc-trade-markets';
+  let _displayMap = null,
+    _displayMapAt = 0;
+  async function loadDisplayMap() {
+    if (_displayMap || Date.now() - _displayMapAt < 30000) return _displayMap;
+    _displayMapAt = Date.now();
+    try {
+      const r = await (await _fetch(`${API}/v3/exchangeInfo`)).json();
+      const m = {};
+      for (const x of r.symbols || [])
+        if (x && x.symbol) {
+          m[String(x.displaySymbol || x.symbol).toUpperCase()] = x.symbol;
+          m[x.symbol.toUpperCase()] = x.symbol;
+          applySymbolRules(x);
+        }
+      if (Object.keys(m).length) _displayMap = m;
+    } catch {
+      /* best effort: nothing to do if this fails */
+    }
+    return _displayMap;
+  }
+  function vestMarketName() {
+    const m = location.pathname.match(/^\/trade\/([^/?#]+)/);
+    if (m) return decodeURIComponent(m[1]).toUpperCase();
+    try {
+      const l = localStorage.getItem('last-market');
+      return l ? l.toUpperCase() : null;
+    } catch {
+      return null;
+    }
+  }
+  let _following = false;
+  async function followVestMarket() {
+    if (_following || !S.tradeOpen) return;
+    _following = true;
+    try {
+      const name = vestMarketName();
+      const map = name && (await loadDisplayMap());
+      const sym = map && map[name];
+      if (sym && sym !== S.trade.symbol && SYMBOLS[sym] && !S.placing && !S.adjusting) switchMarket(sym);
+    } finally {
+      _following = false;
+    }
+  }
+  setInterval(followVestMarket, 1000);
+  function switchMarket(sym) {
+    const prev = S.trade.symbol,
+      all = store.get(MARKETS_KEY, {}) || {};
+    const t = S.trade;
+    all[prev] = {
+      sizeMode: t.sizeMode,
+      qty: t.qty,
+      risk: t.risk,
+      stopPts: t.stopPts,
+      targets: [...t.targets],
+      scale: t.scale,
+    };
+    const saved = all[sym];
+    stopPick(true);
+    S.addPick = null;
+    t.symbol = sym;
+    if (saved && typeof saved === 'object')
+      Object.assign(t, saved, {
+        targets: Array.isArray(saved.targets) && saved.targets.length ? saved.targets : t.targets,
+      });
+    store.set(MARKETS_KEY, all);
+    saveTrade();
+    logEvent(
+      saved ? 'info' : 'warn',
+      `Trade tab: now ${symLabel(sym)}, the market Vest is showing.${saved ? '' : ` Its stop and targets are in ${symLabel(sym)} points, carried over from ${symLabel(prev)}: check them before trading.`}`,
+    );
+    diag('trade_panel', { outcome: 'market', from: prev, to: sym, saved: !!saved });
+    const body = _root && _root.querySelector('.body');
+    if (body && body.dataset.view === 'trade') {
+      body.dataset.view = ''; // rebuild: the inputs and the number of targets may differ
+      renderTrade(body);
+    }
+    unwatchUnused();
+  }
   function onPrice(sym, px, mpx) {
     S.price[sym] = { px, mpx: mpx > 0 ? mpx : null, at: Date.now() };
     try {
@@ -2095,7 +2217,9 @@
     }
     try {
       tickEquity(sym);
-    } catch {}
+    } catch {
+      /* best effort: nothing to do if this fails */
+    }
     if (S.tradeOpen) updateTrade();
   }
 
@@ -2431,7 +2555,7 @@
     const t = store.get(TRADE_KEY, null);
     if (!t || typeof t !== 'object') return;
     Object.assign(S.trade, t, {
-      symbol: SYMBOLS[t.symbol] ? t.symbol : S.trade.symbol,
+      symbol: SYMBOLS[t.symbol] ? t.symbol : S.trade.symbol, // another market comes back via followVestMarket
       targets: Array.isArray(t.targets) && t.targets.length ? t.targets : S.trade.targets,
     });
     delete S.trade.anchor; // "Price at click" was removed in v0.31.0: stop and targets are always measured from the fill
@@ -2504,7 +2628,7 @@
   function downloadLog() {
     const rows = [...S.log].reverse();
     const csv =
-      `time,level,message\n${new Date().toISOString()},info,"Exported from Vest Copier v${VERSION} (Vest build ${fingerprint() || 'unknown'})"\n` +
+      `time,level,message\n${new Date().toISOString()},info,"Exported from STRATUH Copier v${VERSION} (Vest build ${fingerprint() || 'unknown'})"\n` +
       rows.map((e) => `${e.t.toISOString()},${e.level},"${String(e.msg).replace(/"/g, '""')}"`).join('\n');
     saveFile(`vest-copier-log-${stamp()}.csv`, 'text/csv', csv);
   }
@@ -2543,7 +2667,9 @@
     }
     try {
       localStorage.setItem(DIAG_KEY, json);
-    } catch {}
+    } catch {
+      /* best effort: nothing to do if this fails */
+    }
   }
   function persistDiagSoon() {
     if (_diagTimer) return;
@@ -2587,19 +2713,25 @@
     try {
       const b = window.__NEXT_DATA__ && window.__NEXT_DATA__.buildId;
       if (b) return b.slice(0, 10);
-    } catch {}
+    } catch {
+      /* best effort: nothing to do if this fails */
+    }
     try {
       for (const s of document.scripts) {
         const m = (s.src || '').match(/\/index-([A-Za-z0-9_-]{6,})\.js(?:$|\?)/);
         if (m) return m[1];
       }
-    } catch {}
+    } catch {
+      /* best effort: nothing to do if this fails */
+    }
     try {
       for (const s of document.scripts) {
         const d = (s.src || '').match(/[?&]dpl=(?:dpl_)?([A-Za-z0-9]{6,})/);
         if (d) return d[1].slice(0, 12);
       }
-    } catch {}
+    } catch {
+      /* best effort: nothing to do if this fails */
+    }
     try {
       const sameHost = (s) => {
         try {
@@ -2616,7 +2748,9 @@
         .map((s) => new URL(s).pathname)
         .sort();
       if (a.length) return 'b:' + fnv(a.join('|'));
-    } catch {}
+    } catch {
+      /* best effort: nothing to do if this fails */
+    }
     return null;
   };
   const BUILD_KEY = 'vc-known-build-v3';
@@ -2626,20 +2760,25 @@
     const fp = fingerprint();
     try {
       if (fp && !localStorage.getItem(BUILD_KEY)) localStorage.setItem(BUILD_KEY, fp);
-    } catch {}
+    } catch {
+      /* best effort: nothing to do if this fails */
+    }
   }
   const healthState = () => {
     const fp = fingerprint();
     let last = null;
     try {
       last = localStorage.getItem(BUILD_KEY);
-    } catch {}
+    } catch {
+      /* best effort: nothing to do if this fails */
+    }
     if (!fp)
       return _unknownBuildChecked
         ? { level: 'amber', text: 'build unknown (checked)', changed: false }
-        : { level: 'amber', text: "Can't identify Vest's build — click to run site check", changed: true };
-    if (last && last !== fp) return { level: 'amber', text: 'Vest updated — click to run site check', changed: true };
-    return { level: 'green', text: 'build ' + fp, changed: false };
+        : { level: 'amber', text: 'Unknown Vest build — click to run the site check', changed: true };
+    if (last && last !== fp)
+      return { level: 'amber', text: 'Vest updated — click to run the site check', changed: true };
+    return { level: 'green', text: fp, changed: false };
   };
 
   // ───────────────────────── updates ─────────────────────────
@@ -2691,7 +2830,9 @@
           latest = j.tag_name.replace(/^v/, '');
           S.update.installUrl = asset.browser_download_url || releaseAsset(j.tag_name);
         }
-      } catch {} // API unavailable or rate-limited: fall back to the raw file
+      } catch {
+        /* best effort: nothing to do if this fails */
+      } // API unavailable or rate-limited: fall back to the raw file
       if (!latest) {
         const r = await _fetch(SCRIPT_URL, { cache: 'no-store' });
         if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -3015,7 +3156,7 @@
     const ask = cur
       ? `You currently use code <b>${cur}</b>. Switch to <b>${SUPPORT_CODE}</b>?`
       : `Use code <b>${SUPPORT_CODE}</b>?`;
-    bar.innerHTML = `<span class="utext"><b>Vest Copier is free.</b> ${ask} It takes <b>5% off</b> your Vest purchases
+    bar.innerHTML = `<span class="utext"><b>STRATUH Copier is free.</b> ${ask} It takes <b>5% off</b> your Vest purchases
         (the highest discount available) and helps keep the copier maintained until Vest releases its own. Yes sets
         AMPED in Vest's purchase window from now on (Settings → Support turns it off). Asked only this once.</span>
       <button class="ubtn" data-act="support-yes">${cur ? 'Yes, switch to' : 'Yes, use'} ${SUPPORT_CODE}</button>
@@ -3164,7 +3305,9 @@
       for (const u of own.slice(0, 60)) {
         try {
           code += await (await _fetch(u)).text();
-        } catch {}
+        } catch {
+          /* best effort: nothing to do if this fails */
+        }
       }
       if (!code) return ['warn', "Couldn't read the site's code"];
       const lost = SCAN_TERMS.filter((t) => !hasTerm(code, t));
@@ -3193,7 +3336,9 @@
     if (fp) {
       try {
         localStorage.setItem(BUILD_KEY, fp);
-      } catch {}
+      } catch {
+        /* best effort: nothing to do if this fails */
+      }
     } else _unknownBuildChecked = true;
     logEvent('info', `Vest build ${fp || '(unknown)'} accepted. Do one small test trade before trading size.`);
     diag('build_accepted', { fp });
@@ -3219,7 +3364,7 @@
   const pct = (n) => (isNaN(n) ? '—' : (n * 100).toFixed(0) + '%');
   const esc = (s) =>
     String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-  const acctNum = (label) => (String(label).match(/(\d+)\s*$/) || [, '--'])[1]; // "Account 07" → "07"
+  const acctNum = (label) => (String(label).match(/(\d+)\s*$/) || ['', '--'])[1]; // "Account 07" → "07"
 
   const CSS = `
     :host {
@@ -3227,31 +3372,33 @@
     }
     * {
       box-sizing: border-box;
-      font-family:
-        'Inter',
-        -apple-system,
-        BlinkMacSystemFont,
-        system-ui,
-        sans-serif;
+      font-family: inherit;
     }
     .panel {
-      --bg: #0d0f12;
-      --elev: #16191e;
-      --elev2: #1b1f25;
-      --line: #232830;
-      --line2: #2d333c;
-      --text: #eceef1;
-      --dim: #8b929c;
-      --faint: #5b626c;
-      --accent: #3ddc91;
-      --accent-dim: #16271f;
-      --accent-line: #255041;
-      --danger: #f0574b;
-      --danger-dim: #2a1513;
-      --danger-line: #51261f;
-      --warn: #e4a73c;
-      --blue: #5aa2e8;
-      --mono: ui-monospace, 'SF Mono', Menlo, monospace;
+      font-family: var(--sans);
+      --bg: #0c0c0d;
+      --elev: #141416;
+      --elev2: #1a1a1d;
+      --sunk: #080809;
+      --line: rgba(255, 255, 255, 0.09);
+      --line2: rgba(255, 255, 255, 0.18);
+      --text: #f0f0f1;
+      --dim: #a1a1a8;
+      --faint: #66666e;
+      --accent: #c8f542;
+      --ink: #0c0c0d;
+      --accent-dim: rgba(200, 245, 66, 0.1);
+      --accent-line: rgba(200, 245, 66, 0.45);
+      --danger: #ff5a4f;
+      --danger-dim: rgba(255, 90, 79, 0.1);
+      --danger-line: rgba(255, 90, 79, 0.45);
+      --warn: #f5b942;
+      --warn-dim: rgba(245, 185, 66, 0.1);
+      --warn-line: rgba(245, 185, 66, 0.4);
+      --blue: #7ab8ff;
+      --blue-dim: rgba(122, 184, 255, 0.12);
+      --sans: 'Geist', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', Consolas, Menlo, monospace;
       position: fixed;
       top: 16px;
       right: 16px;
@@ -3262,58 +3409,84 @@
       flex-direction: column;
       background: var(--bg);
       color: var(--text);
-      border: 1px solid var(--line);
-      border-radius: 16px;
-      box-shadow:
-        0 18px 50px rgba(0, 0, 0, 0.55),
-        0 2px 8px rgba(0, 0, 0, 0.4);
+      border: 1px solid var(--line2);
+      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
       font-size: 13px;
       overflow: hidden;
-      backdrop-filter: blur(8px);
+    }
+    /* Labels: small mono capitals, like stratuh.com */
+    .group-h,
+    .set-h,
+    .logh,
+    .tr-lbl,
+    .tr-pxl,
+    .tab,
+    .title {
+      font-family: var(--mono);
+      text-transform: uppercase;
     }
     .hdr {
       display: flex;
       align-items: center;
       gap: 8px;
-      padding: 13px 15px;
+      height: 46px;
+      padding: 0 8px 0 13px;
       cursor: move;
-      background: linear-gradient(180deg, #14171c, #101216);
-      border-bottom: 1px solid var(--line);
+      border-bottom: 1px solid var(--line2);
       flex: none;
       touch-action: none;
       user-select: none;
     }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      flex: none;
+    }
+    .brand svg {
+      display: block;
+    }
+    .sep {
+      width: 1px;
+      height: 16px;
+      background: var(--line2);
+      flex: none;
+    }
     .title {
-      font-weight: 650;
-      letter-spacing: 0.2px;
-      font-size: 13px;
+      font-size: 10.5px;
+      letter-spacing: 0.12em;
+      color: var(--dim);
       white-space: nowrap;
     }
     .armtag {
+      font-family: var(--mono);
       font-size: 9.5px;
-      font-weight: 600;
-      letter-spacing: 0.4px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
       text-transform: uppercase;
-      border-radius: 999px;
-      padding: 3px 8px;
+      padding: 3px 6px;
       border: 1px solid;
+      white-space: nowrap;
+      line-height: 1.2;
     }
     .armtag.off {
       color: var(--dim);
       border-color: var(--line2);
-      background: #14171c;
     }
     .armtag.on {
-      color: var(--danger);
-      border-color: var(--danger-line);
-      background: var(--danger-dim);
-      box-shadow: 0 0 0 3px rgba(240, 87, 75, 0.08);
+      color: var(--ink);
+      border-color: var(--accent);
+      background: var(--accent);
     }
     .opttag {
+      font-family: var(--mono);
       font-size: 9px;
       font-weight: 600;
       color: var(--faint);
-      letter-spacing: 1px;
+      letter-spacing: 0.08em;
+      white-space: nowrap;
+      overflow: hidden;
+      min-width: 0;
     }
     .spacer {
       flex: 1;
@@ -3322,40 +3495,66 @@
       cursor: pointer;
       color: var(--dim);
       background: none;
-      border: none;
+      border: 1px solid transparent;
+      font-family: var(--mono);
       font-size: 11px;
       font-weight: 600;
-      letter-spacing: 0.3px;
       line-height: 1;
       padding: 5px 7px;
-      border-radius: 7px;
       transition: 0.12s;
     }
     .iconbtn:hover {
       color: var(--text);
-      background: var(--elev2);
+      border-color: var(--line2);
     }
     .iconbtn.active {
       color: var(--accent);
-      background: var(--accent-dim);
+      border-color: var(--accent-line);
     }
-    .health {
-      display: flex;
+    .iconbtn.ico {
+      display: inline-flex;
       align-items: center;
-      gap: 8px;
-      padding: 8px 15px;
-      border-bottom: 1px solid var(--line);
-      font-size: 10.5px;
-      color: var(--dim);
+      padding: 5px 6px;
+    }
+    .tabs {
+      display: flex;
+      padding: 0 6px;
+      border-bottom: 1px dashed var(--line2);
       flex: none;
-      background: #0f1216;
+      overflow-x: auto; /* a narrow panel scrolls the tabs instead of squashing them */
+      scrollbar-width: none;
+    }
+    .tabs::-webkit-scrollbar {
+      display: none;
+    }
+    .tab {
+      flex: none;
       cursor: pointer;
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: var(--faint);
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.08em;
+      padding: 11px 7px 9px;
+      margin-bottom: -1px;
+    }
+    .tab:hover {
+      color: var(--text);
+    }
+    .tab.on {
+      color: var(--text);
+      border-bottom-color: var(--accent);
+    }
+    .tab.tab-support {
+      color: var(--accent);
     }
     .dot {
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
+      width: 6px;
+      height: 6px;
       flex: none;
+      display: inline-block;
     }
     .green {
       background: var(--accent);
@@ -3367,20 +3566,7 @@
       background: var(--danger);
     }
     .gray {
-      background: #484f59;
-    }
-    .rate {
-      font-size: 10px;
-      font-family: var(--mono);
-    }
-    .r-ok {
-      color: var(--faint);
-    }
-    .r-amber {
-      color: var(--warn);
-    }
-    .r-red {
-      color: var(--danger);
+      background: #4a4a50;
     }
     .body {
       flex: 1 1 auto;
@@ -3389,203 +3575,281 @@
     }
     .body::-webkit-scrollbar,
     .log::-webkit-scrollbar {
-      width: 8px;
+      width: 6px;
     }
     .body::-webkit-scrollbar-thumb,
     .log::-webkit-scrollbar-thumb {
-      background: #262c34;
-      border-radius: 4px;
+      background: #2a2a2e;
     }
+    .update {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      padding: 8px 14px;
+      border-bottom: 1px dashed var(--line2);
+      background: var(--accent-dim);
+      color: var(--accent);
+      font-size: 11px;
+      flex: none;
+    }
+    .utext {
+      flex-basis: 100%;
+      line-height: 1.5;
+    }
+    .update.muted {
+      background: none;
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 10px;
+    }
+    .update[hidden] {
+      display: none;
+    }
+    .ubtn {
+      cursor: pointer;
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      padding: 5px 9px;
+      border: 1px solid var(--accent);
+      background: var(--accent);
+      color: var(--ink);
+      text-decoration: none;
+    }
+    .ubtn.ghost {
+      border-color: var(--line2);
+      background: none;
+      color: var(--dim);
+    }
+    .ubtn:hover {
+      filter: brightness(1.1);
+    }
+
+    /* Accounts */
     .group {
-      padding: 12px 15px 2px;
+      padding: 12px 14px 4px;
     }
     .group-h {
+      display: flex;
+      align-items: center;
+      gap: 8px;
       font-size: 9.5px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 1px;
+      font-weight: 500;
+      letter-spacing: 0.1em;
       color: var(--faint);
       margin-bottom: 8px;
     }
+    .group-h .lime {
+      color: var(--accent);
+    }
+    .group-h .gr {
+      margin-left: auto;
+      text-transform: none;
+      letter-spacing: 0.02em;
+    }
     .row {
       display: grid;
-      grid-template-columns: auto 1fr auto auto;
-      gap: 11px;
+      grid-template-columns: auto minmax(0, 1fr) auto auto;
+      gap: 10px;
       align-items: center;
-      padding: 10px 11px;
-      border: 1px solid var(--line);
-      border-radius: 11px;
-      margin-bottom: 7px;
-      background: var(--elev);
-      transition:
-        border-color 0.12s,
-        background 0.12s;
+      padding: 10px 0;
+      border-top: 1px dashed var(--line);
     }
-    .row:hover {
-      border-color: var(--line2);
+    .row:last-child {
+      border-bottom: 1px dashed var(--line);
     }
     .row.master {
-      border-color: var(--accent-line);
-      background: linear-gradient(180deg, #121c17, #0f1713);
-    }
-    .row.follower {
-      border-color: #223647;
-      background: linear-gradient(180deg, #121820, #0f141a);
+      padding: 11px 10px;
+      border: 1px solid var(--line2);
+      border-left: 2px solid var(--accent);
+      background: var(--elev);
     }
     .badge {
-      width: 31px;
-      height: 31px;
-      border-radius: 9px;
-      background: var(--elev2);
+      width: 30px;
+      height: 30px;
       color: var(--dim);
       display: flex;
       align-items: center;
       justify-content: center;
-      font-weight: 650;
+      font-weight: 600;
       font-size: 11px;
       border: 1px solid var(--line2);
       font-family: var(--mono);
     }
     .row.master .badge {
-      color: var(--accent);
-      border-color: var(--accent-line);
-      background: var(--accent-dim);
+      color: var(--ink);
+      border-color: var(--accent);
+      background: var(--accent);
+      font-weight: 700;
     }
     .row.follower .badge {
       color: var(--blue);
-      border-color: #223647;
+      border-color: rgba(122, 184, 255, 0.45);
+    }
+    .meta {
+      min-width: 0;
     }
     .name {
       font-weight: 600;
+      font-size: 13px;
       display: flex;
       align-items: center;
       gap: 6px;
+      white-space: nowrap;
     }
     .chip {
+      font-family: var(--mono);
       font-size: 8.5px;
-      font-weight: 600;
-      letter-spacing: 0.3px;
+      font-weight: 500;
+      letter-spacing: 0.08em;
       text-transform: uppercase;
       color: var(--dim);
       border: 1px solid var(--line2);
-      border-radius: 5px;
-      padding: 1px 5px;
+      padding: 1px 4px;
     }
     .sub {
-      color: var(--dim);
-      font-size: 11px;
+      color: var(--faint);
+      font-size: 10px;
       margin-top: 3px;
       font-family: var(--mono);
+      line-height: 1.45;
+    }
+    .sub > span {
+      display: block;
+      white-space: nowrap;
     }
     .right {
       text-align: right;
     }
     .right .room {
-      font-weight: 650;
+      font-weight: 600;
       font-family: var(--mono);
+      font-size: 13px;
     }
     .used {
+      font-family: var(--mono);
       font-size: 9.5px;
       color: var(--faint);
       margin-top: 2px;
+      white-space: nowrap;
     }
     .bar {
-      height: 3px;
-      background: #20252c;
-      border-radius: 2px;
+      height: 2px;
+      background: var(--line2);
       margin-top: 5px;
       overflow: hidden;
     }
     .bar > i {
       display: block;
       height: 100%;
-      border-radius: 2px;
+    }
+    .bar-ok {
+      background: var(--accent);
+    }
+    .bar-warn {
+      background: var(--warn);
+    }
+    .bar-hot {
+      background: var(--danger);
     }
     .sel {
       display: flex;
-      flex-direction: column;
-      gap: 5px;
+      border: 1px solid var(--line2);
     }
     .selbtn {
       cursor: pointer;
+      font-family: var(--mono);
       font-size: 9.5px;
-      font-weight: 650;
-      letter-spacing: 0.3px;
-      border-radius: 7px;
-      padding: 4px 8px;
-      border: 1px solid var(--line2);
-      background: var(--elev2);
-      color: var(--dim);
-      min-width: 38px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      padding: 5px 0;
+      border: none;
+      background: none;
+      color: var(--faint);
+      min-width: 30px;
       text-align: center;
       transition: 0.12s;
     }
+    .selbtn + .selbtn {
+      border-left: 1px solid var(--line2);
+    }
     .selbtn:hover:not(:disabled) {
-      border-color: #3a424d;
       color: var(--text);
     }
     .selbtn.m.on {
-      background: var(--accent-dim);
-      border-color: var(--accent);
-      color: var(--accent);
+      background: var(--accent);
+      color: var(--ink);
     }
     .selbtn.f.on {
-      background: #10202c;
-      border-color: var(--blue);
-      color: #8ec2f2;
+      background: var(--blue-dim);
+      color: var(--blue);
     }
     .selbtn:disabled {
-      opacity: 0.28;
+      opacity: 0.3;
       cursor: not-allowed;
     }
+
+    /* Arm / Flatten All */
     .ctl {
       display: flex;
       align-items: center;
-      gap: 9px;
-      padding: 11px 15px;
-      border-top: 1px solid var(--line);
-      background: #0f1216;
+      gap: 6px;
+      padding: 10px 14px;
+      border-top: 1px solid var(--line2);
       flex: none;
     }
     .armbtn {
       flex: 1;
       cursor: pointer;
-      font-weight: 650;
-      font-size: 12.5px;
-      letter-spacing: 0.5px;
-      border-radius: 10px;
-      padding: 10px;
-      border: 1px solid var(--accent-line);
-      background: linear-gradient(180deg, #163a2c, #122a20);
-      color: var(--accent);
+      font-family: var(--mono);
+      font-weight: 700;
+      font-size: 11.5px;
+      letter-spacing: 0.1em;
+      padding: 9px;
+      border: 1px solid var(--text);
+      background: var(--text);
+      color: var(--ink);
       transition: 0.12s;
     }
     .armbtn:hover:not(:disabled) {
-      filter: brightness(1.12);
+      background: #fff;
     }
     .armbtn.armed {
-      background: linear-gradient(180deg, #36201d, #2a1613);
-      border-color: var(--danger-line);
+      background: none;
+      border-color: var(--danger);
       color: var(--danger);
     }
+    .armbtn.armed:hover:not(:disabled) {
+      background: var(--danger-dim);
+    }
     .armbtn:disabled {
-      opacity: 0.4;
+      opacity: 0.35;
       cursor: not-allowed;
+    }
+    .armbtn.sm {
+      flex: none;
+      padding: 8px 14px;
+      font-size: 10.5px;
     }
     .dangerbtn {
       cursor: pointer;
-      font-weight: 600;
-      font-size: 11px;
-      border-radius: 10px;
-      padding: 10px 12px;
+      font-family: var(--mono);
+      font-weight: 700;
+      font-size: 10.5px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      padding: 9px 14px;
       border: 1px solid var(--danger-line);
-      background: var(--danger-dim);
+      background: none;
       color: var(--danger);
       white-space: nowrap;
       transition: 0.12s;
     }
     .dangerbtn:hover:not(:disabled) {
-      background: #361714;
+      background: var(--danger-dim);
+      border-color: var(--danger);
     }
     .dangerbtn:disabled {
       opacity: 0.5;
@@ -3593,35 +3857,41 @@
     }
     .ghostbtn {
       cursor: pointer;
-      font-size: 11px;
+      font-family: var(--mono);
+      font-size: 10.5px;
       font-weight: 600;
-      border-radius: 9px;
-      padding: 8px 12px;
+      letter-spacing: 0.03em;
+      padding: 7px 11px;
       border: 1px solid var(--line2);
-      background: var(--elev2);
+      background: none;
       color: var(--dim);
     }
     .ghostbtn:hover {
       color: var(--text);
-      border-color: #3a424d;
+      border-color: var(--text);
     }
+    a.ghostbtn {
+      text-decoration: none;
+      display: inline-block;
+    }
+
+    /* Settings */
     .settings {
-      padding: 6px 15px 14px;
+      padding: 4px 14px 14px;
     }
     .set-h {
       font-size: 9.5px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      color: var(--faint);
-      padding: 12px 0 4px;
+      font-weight: 500;
+      letter-spacing: 0.1em;
+      color: var(--accent);
+      padding: 14px 0 4px;
     }
     .opt {
       display: flex;
       align-items: flex-start;
       gap: 12px;
-      padding: 12px 0;
-      border-bottom: 1px solid var(--line);
+      padding: 11px 0;
+      border-bottom: 1px dashed var(--line);
     }
     .opt:last-child {
       border-bottom: none;
@@ -3645,11 +3915,10 @@
     .switch {
       flex: none;
       position: relative;
-      width: 40px;
-      height: 23px;
-      border-radius: 999px;
+      width: 38px;
+      height: 20px;
       border: 1px solid var(--line2);
-      background: var(--elev2);
+      background: none;
       cursor: pointer;
       padding: 0;
       transition: 0.15s;
@@ -3657,85 +3926,151 @@
     }
     .switch .knob {
       position: absolute;
-      top: 2px;
-      left: 2px;
-      width: 17px;
-      height: 17px;
-      border-radius: 50%;
-      background: var(--dim);
+      top: 3px;
+      left: 3px;
+      width: 12px;
+      height: 12px;
+      background: var(--faint);
       transition: 0.15s;
     }
     .switch.on {
-      background: var(--accent-dim);
       border-color: var(--accent);
+      background: var(--accent-dim);
     }
     .switch.on .knob {
-      transform: translateX(17px);
+      transform: translateX(18px);
       background: var(--accent);
     }
+    .set-row {
+      display: flex;
+      gap: 6px;
+      padding: 4px 0 6px;
+    }
+
+    /* Activity: one line until opened; the orphan prompt and notices stay above it */
+    .alerts:empty {
+      display: none;
+    }
+    .alerts {
+      padding: 10px 14px 0;
+      border-top: 1px solid var(--line2);
+      flex: none;
+    }
     .orphan {
-      margin: 0 15px 10px;
-      padding: 9px 11px;
+      margin: 0 0 10px;
+      padding: 9px 10px;
       background: var(--danger-dim);
       border: 1px solid var(--danger-line);
       color: var(--danger);
-      border-radius: 9px;
       font-size: 11px;
       line-height: 1.45;
     }
     .orphan .obtn {
       cursor: pointer;
       margin-left: 6px;
+      font-family: var(--mono);
       font-size: 10px;
-      font-weight: 650;
-      border-radius: 7px;
+      font-weight: 700;
       padding: 3px 9px;
-      border: 1px solid var(--danger-line);
-      background: #311714;
-      color: var(--danger);
+      border: 1px solid var(--danger);
+      background: var(--danger);
+      color: var(--ink);
     }
     .orphan .obtn.keep {
       border-color: var(--line2);
-      background: var(--elev2);
+      background: none;
       color: var(--dim);
     }
+    .toast {
+      margin: 0 0 10px;
+      padding: 8px 10px;
+      background: var(--warn-dim);
+      border: 1px solid var(--warn-line);
+      color: var(--warn);
+      font-size: 11px;
+    }
     .logwrap {
-      border-top: 1px solid var(--line);
+      border-top: 1px solid var(--line2);
       flex: none;
-      background: #0f1216;
     }
     .logh {
       font-size: 9.5px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 1px;
+      font-weight: 500;
+      letter-spacing: 0.1em;
       color: var(--faint);
-      padding: 9px 15px 5px;
+      padding: 8px 10px 8px 14px;
       display: flex;
       align-items: center;
-      justify-content: space-between;
+      gap: 8px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .logh:hover .logt {
+      color: var(--text);
+    }
+    .caret {
+      width: 8px;
+      flex: none;
+    }
+    .logt {
+      flex: none;
+    }
+    .loglast {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      text-transform: none;
+      letter-spacing: 0;
+      font-size: 10.5px;
+      color: var(--dim);
+    }
+    .loglast.ok {
+      color: var(--accent);
+    }
+    .loglast.warn {
+      color: var(--warn);
+    }
+    .logwrap.open .loglast {
+      visibility: hidden;
     }
     .loghbtns {
-      display: flex;
+      display: none;
       gap: 2px;
+      text-transform: none;
+    }
+    .logwrap.open .loghbtns {
+      display: flex;
     }
     .iconbtn.sm {
-      font-size: 12px;
-      padding: 2px 6px;
+      font-size: 10px;
+      padding: 2px 5px;
     }
     .log {
       max-height: 22vh;
       overflow: auto;
-      padding: 0 15px 11px;
-      font-size: 11px;
+      padding: 0 14px 10px;
+      font-size: 10.5px;
       line-height: 1.55;
       font-family: var(--mono);
+    }
+    .logwrap:not(.open) .log {
+      max-height: 0;
+      padding: 0;
+      overflow: hidden;
+    }
+    .panel.v-trade .log {
+      max-height: 11vh;
+    }
+    .panel.v-trade .logwrap:not(.open) .log {
+      max-height: 0;
     }
     .le {
       display: flex;
       gap: 8px;
-      padding: 2px 0;
-      color: #c4c9d0;
+      padding: 1px 0;
+      color: var(--dim);
     }
     .le .ts {
       color: var(--faint);
@@ -3748,101 +4083,170 @@
       color: var(--warn);
     }
     .le.info {
-      color: #aab0b9;
+      color: var(--dim);
     }
-    .update {
+
+    /* Bottom bar: the code on the left, Vest's build + version + API budget on the right (click = site check) */
+    .reportbar {
       display: flex;
       align-items: center;
-      gap: 6px;
-      flex-wrap: wrap;
-      padding: 8px 15px;
-      border-bottom: 1px solid var(--line);
-      background: var(--accent-dim);
-      color: var(--accent);
-      font-size: 11px;
+      gap: 8px;
+      padding: 8px 18px 8px 14px; /* clear of the resize grip in the corner */
+      background: var(--sunk);
+      border-top: 1px solid var(--line2);
+      flex: none;
+      white-space: nowrap;
+    }
+    .codebtn {
+      cursor: pointer;
+      background: none;
+      border: none;
+      padding: 0;
+      font-size: 10.5px;
+      color: var(--dim);
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
       flex: none;
     }
-    .utext {
-      flex-basis: 100%;
+    .codebtn b {
+      background: var(--accent);
+      color: var(--ink);
+      font-family: var(--mono);
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      padding: 2px 5px;
+      font-size: 10.5px;
     }
-    .update.muted {
-      background: var(--elev);
-      color: var(--dim);
+    .codebtn .off {
+      color: var(--text);
     }
-    .update[hidden] {
+    .codebtn:hover b {
+      filter: brightness(1.1);
+    }
+    .codebtn[hidden],
+    .reportbar.alert .codebtn {
       display: none;
     }
-    .ubtn {
-      cursor: pointer;
-      font-size: 10.5px;
-      font-weight: 650;
-      border-radius: 7px;
-      padding: 4px 9px;
-      border: 1px solid var(--accent-line);
-      background: #163a2c;
-      color: var(--accent);
-      text-decoration: none;
-    }
-    .ubtn.ghost {
-      border-color: var(--line2);
-      background: var(--elev2);
-      color: var(--dim);
-    }
-    .ubtn:hover {
-      filter: brightness(1.15);
-    }
-    .set-row {
+    .health {
+      margin-left: auto;
       display: flex;
-      gap: 8px;
-      padding: 4px 0 6px;
+      align-items: center;
+      gap: 4px;
+      min-width: 0;
+      font-family: var(--mono);
+      font-size: 9px;
+      color: var(--faint);
+      cursor: pointer;
     }
-    a.ghostbtn {
-      text-decoration: none;
+    .reportbar.alert .health {
+      margin-left: 0;
+      flex: 1;
     }
-    .toast {
-      margin: 0 15px 10px;
-      padding: 8px 11px;
-      background: #241c10;
-      border: 1px solid #4a3a1a;
+    .htext {
+      color: var(--dim);
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .health:hover .htext {
+      color: var(--text);
+    }
+    .health.amber-bar .htext {
       color: var(--warn);
-      border-radius: 9px;
-      font-size: 11px;
+    }
+    .ver,
+    .rate {
+      flex: none;
+    }
+    .ver::before,
+    .rate:not(:empty)::before {
+      content: '· ';
+      color: var(--faint);
+    }
+    .r-ok {
+      color: var(--faint);
+    }
+    .r-amber {
+      color: var(--warn);
+    }
+    .r-red {
+      color: var(--danger);
+    }
+    .linkbtn {
+      cursor: pointer;
+      background: none;
+      border: none;
+      padding: 2px 0;
+      color: var(--dim);
+      font-size: 10.5px;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    .linkbtn:hover {
+      color: var(--text);
+    }
+    .grip {
+      position: absolute;
+      right: 2px;
+      bottom: 2px;
+      width: 12px;
+      height: 12px;
+      cursor: nwse-resize;
+      z-index: 3;
+      touch-action: none;
+      background: linear-gradient(
+        135deg,
+        transparent 45%,
+        var(--faint) 45%,
+        var(--faint) 52%,
+        transparent 52%,
+        transparent 68%,
+        var(--faint) 68%,
+        var(--faint) 75%,
+        transparent 75%
+      );
     }
     .empty {
-      padding: 26px 15px;
+      padding: 26px 14px;
       color: var(--dim);
       text-align: center;
       line-height: 1.5;
     }
+
+    /* Rules, site check, support */
     .rules {
-      padding: 15px;
+      padding: 14px;
     }
     .rules-h {
-      font-weight: 650;
-      margin-bottom: 11px;
-      font-size: 13px;
+      font-weight: 600;
+      margin: 2px 0 10px;
+      font-size: 13.5px;
+      letter-spacing: -0.01em;
     }
     .rules-list {
       margin: 0 0 14px;
-      padding-left: 18px;
-      color: #c4c9d0;
+      padding-left: 16px;
+      color: var(--dim);
       font-size: 12px;
       line-height: 1.6;
     }
     .rules-list li {
-      margin-bottom: 9px;
+      margin-bottom: 8px;
+    }
+    .rules-list li::marker {
+      color: var(--accent);
     }
     .rules-list b {
       color: var(--text);
+      font-weight: 600;
     }
     .rules-accept {
       display: flex;
       gap: 9px;
       align-items: flex-start;
       margin: 4px 0 14px;
-      padding: 10px 11px;
+      padding: 10px;
       border: 1px solid var(--line2);
-      border-radius: 9px;
       background: var(--elev);
       font-size: 11.5px;
       line-height: 1.5;
@@ -3858,113 +4262,13 @@
       color: var(--dim);
       margin: -6px 0 14px;
     }
-    .rules-terms a {
-      color: var(--accent);
-    }
-    .reportbar {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 10px;
-      padding: 8px 30px 9px 15px; /* clear of the resize grip in the corner */
-      background: linear-gradient(90deg, #13281f, #0f1915 70%);
-      border-top: 1px solid var(--accent-line);
-      flex: none;
-    }
-    .reportbar .linkbtn {
-      color: #9db5aa;
-    }
-    .reportbar .linkbtn:hover {
-      color: var(--accent);
-    }
-    .linkbtn {
-      cursor: pointer;
-      background: none;
-      border: none;
-      padding: 2px 0;
-      color: var(--dim);
-      font-size: 10.5px;
-      text-decoration: underline;
-      text-underline-offset: 2px;
-    }
-    .linkbtn:hover {
-      color: var(--text);
-    }
-    .codebtn {
-      cursor: pointer;
-      background: none;
-      border: none;
-      padding: 0;
-      font-size: 11px;
-      font-weight: 550;
-      color: var(--text);
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-    }
-    .codebtn b {
-      background: var(--accent);
-      color: #08150f;
-      font-family: var(--mono);
-      font-weight: 750;
-      letter-spacing: 0.6px;
-      padding: 2px 7px;
-      border-radius: 6px;
-    }
-    .codebtn .off {
-      color: var(--accent);
-      font-weight: 700;
-    }
-    .codebtn:hover b {
-      filter: brightness(1.12);
-    }
-    .codebtn[hidden] {
-      display: none;
-    }
-    .tab.tab-support {
-      color: var(--accent);
-    }
+    .rules-terms a,
     .support-tab .sc-sub a {
       color: var(--accent);
     }
-    .sup-card {
-      border: 1px solid var(--line);
-      border-radius: 11px;
-      background: var(--elev);
-      padding: 12px 13px;
-      margin-bottom: 10px;
-    }
-    .sup-h {
-      font-weight: 650;
-      font-size: 12.5px;
-      margin-bottom: 4px;
-    }
-    .report-note {
-      width: 100%;
-      margin: 2px 0 10px;
-      background: #0f1216;
-      border: 1px solid var(--line2);
-      border-radius: 9px;
-      color: var(--text);
-      font: inherit;
-      font-size: 12px;
-      padding: 9px 10px;
-      resize: vertical;
-      outline: none;
-    }
-    .report-note:focus {
-      border-color: var(--accent-line);
-    }
     .rules-btns {
       display: flex;
-      gap: 8px;
-    }
-    .health:hover {
-      background: #13171c;
-    }
-    .health.amber-bar {
-      background: #1d170e;
-      color: var(--warn);
+      gap: 6px;
     }
     .sc-sub {
       font-size: 11px;
@@ -3975,28 +4279,27 @@
     .sc-list {
       display: flex;
       flex-direction: column;
-      gap: 7px;
       margin-bottom: 14px;
+      border-top: 1px dashed var(--line);
     }
     .sc-row {
       display: grid;
       grid-template-columns: auto 1fr;
       gap: 9px;
       align-items: start;
-      padding: 8px 10px;
-      border: 1px solid var(--line);
-      border-radius: 9px;
-      background: var(--elev);
+      padding: 8px 0;
+      border-bottom: 1px dashed var(--line);
     }
     .sc-row .dot {
-      margin-top: 4px;
+      margin-top: 5px;
     }
     .sc-name {
       font-weight: 600;
       font-size: 12px;
     }
     .sc-detail {
-      font-size: 10.5px;
+      font-family: var(--mono);
+      font-size: 10px;
       color: var(--dim);
       margin-top: 2px;
       line-height: 1.45;
@@ -4007,54 +4310,39 @@
       margin-top: 12px;
       line-height: 1.5;
     }
-    .armbtn.sm {
-      flex: none;
-      padding: 8px 14px;
-      font-size: 11.5px;
+    .sup-card {
+      border: 1px solid var(--line2);
+      padding: 12px;
+      margin-bottom: 10px;
     }
-    .iconbtn.ico {
-      display: inline-flex;
-      align-items: center;
-      padding: 4px 6px;
-    }
-    .tabs {
-      display: flex;
-      gap: 2px;
-      padding: 0 11px;
-      background: #101216;
-      border-bottom: 1px solid var(--line);
-      flex: none;
-      overflow-x: auto; /* a narrow panel scrolls the tabs instead of squashing them */
-      scrollbar-width: none;
-    }
-    .tabs::-webkit-scrollbar {
-      display: none;
-    }
-    .tab {
-      flex: none;
-      cursor: pointer;
-      background: none;
-      border: none;
-      border-bottom: 2px solid transparent;
-      color: var(--dim);
-      font-size: 11px;
-      font-weight: 600;
-      letter-spacing: 0.2px;
-      padding: 8px 8px 7px;
-      margin-bottom: -1px;
-    }
-    .tab:hover {
-      color: var(--text);
-    }
-    .tab.on {
+    .sup-h {
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
       color: var(--accent);
-      border-bottom-color: var(--accent);
+      margin-bottom: 8px;
     }
-    .tr-sec > .seg {
-      align-self: flex-start;
+    .report-note {
+      width: 100%;
+      margin: 2px 0 10px;
+      background: var(--sunk);
+      border: 1px solid var(--line2);
+      color: var(--text);
+      font: inherit;
+      font-size: 12px;
+      padding: 9px 10px;
+      resize: vertical;
+      outline: none;
     }
+    .report-note:focus {
+      border-color: var(--accent);
+    }
+
+    /* Trade */
     .trade {
-      padding: 12px 15px 14px;
+      padding: 12px 14px 14px;
       display: flex;
       flex-direction: column;
       gap: 12px;
@@ -4067,12 +4355,10 @@
       display: flex;
       flex-direction: column;
       gap: 6px;
-      margin: 0 -15px;
-      padding: 8px 15px 14px;
-      background: linear-gradient(180deg, rgba(13, 15, 18, 0.88), var(--bg) 30%);
-    }
-    .panel.v-trade .log {
-      max-height: 11vh;
+      margin: 0 -14px;
+      padding: 10px 14px 14px;
+      background: var(--bg);
+      border-top: 1px solid var(--line2);
     }
     .tr-top {
       display: flex;
@@ -4081,44 +4367,48 @@
       gap: 10px;
     }
     .tr-sym {
-      font-weight: 650;
-      font-size: 14px;
+      font-weight: 700;
+      font-size: 20px;
+      letter-spacing: -0.02em;
       display: flex;
       align-items: center;
-      gap: 7px;
+      gap: 8px;
     }
     .tr-acct {
-      font-size: 10.5px;
-      color: var(--dim);
-      margin-top: 3px;
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--faint);
+      margin-top: 4px;
     }
     .tr-pxw {
       text-align: right;
     }
     .tr-px {
       font-family: var(--mono);
-      font-size: 17px;
+      font-size: 18px;
       font-weight: 600;
     }
     .tr-pxl {
-      font-size: 9.5px;
+      font-size: 9px;
       color: var(--faint);
-      text-transform: uppercase;
-      letter-spacing: 0.8px;
+      letter-spacing: 0.1em;
+      margin-top: 2px;
     }
     .tr-sec {
       display: flex;
       flex-direction: column;
       gap: 6px;
     }
+    .tr-sec > .seg {
+      align-self: flex-start;
+    }
     .tr-lbl {
       display: flex;
       align-items: center;
       justify-content: space-between;
       font-size: 9.5px;
-      font-weight: 600;
-      letter-spacing: 1px;
-      text-transform: uppercase;
+      font-weight: 500;
+      letter-spacing: 0.1em;
       color: var(--faint);
     }
     .tr-row {
@@ -4130,24 +4420,24 @@
     }
     .tr-in {
       width: 74px;
-      background: #0f1216;
+      background: var(--sunk);
       border: 1px solid var(--line2);
       color: var(--text);
-      border-radius: 7px;
       padding: 6px 8px;
       font-family: var(--mono);
       font-size: 12px;
       outline: none;
     }
     .tr-in:focus {
-      border-color: var(--accent-line);
+      border-color: var(--accent);
     }
     .tr-in.sm {
       width: 48px;
       padding: 4px 6px;
     }
     .tr-u {
-      font-size: 10.5px;
+      font-family: var(--mono);
+      font-size: 10px;
       color: var(--faint);
     }
     .tr-calc {
@@ -4162,62 +4452,294 @@
     .seg {
       display: inline-flex;
       border: 1px solid var(--line2);
-      border-radius: 8px;
-      overflow: hidden;
-      background: var(--elev2);
     }
     .seg button {
       background: none;
       border: none;
       color: var(--dim);
+      font-family: var(--mono);
       font-size: 10.5px;
-      font-weight: 600;
+      font-weight: 500;
       padding: 5px 9px;
       cursor: pointer;
-      letter-spacing: 0.2px;
       text-transform: none;
+      letter-spacing: 0;
     }
     .seg button + button {
       border-left: 1px solid var(--line2);
     }
+    .seg button:hover {
+      color: var(--text);
+    }
     .seg button.on {
-      background: var(--accent-dim);
-      color: var(--accent);
+      background: var(--accent);
+      color: var(--ink);
+      font-weight: 700;
     }
     .tr-lbl .seg button {
       padding: 3px 8px;
       font-size: 9.5px;
     }
-    .tr-tgt {
+    /* label + control rows */
+    .tr-f {
       display: grid;
-      grid-template-columns: 30px 74px 22px 1fr auto 20px;
+      grid-template-columns: 62px 1fr;
       align-items: center;
-      gap: 6px;
-      font-size: 11px;
+      gap: 8px;
+    }
+    .tr-k {
+      font-family: var(--mono);
+      font-size: 9.5px;
+      font-weight: 500;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--faint);
+    }
+    .tr-f .tr-add {
+      margin-left: auto;
+    }
+    .tr-ind {
+      margin: -6px 0 0 70px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .tr-ind:empty,
+    .tr-ind:not(:has(:not(:empty))) {
+      display: none;
+    }
+    .tr-row.tr-ind {
+      flex-direction: row;
+      margin-top: -4px;
+    }
+    /* margin and risk bars */
+    .tr-lims {
+      border: 1px solid var(--line2);
+      background: var(--sunk);
+      padding: 9px 10px 8px;
+    }
+    .tr-lb {
+      display: grid;
+      grid-template-columns: 50px 1fr;
+      align-items: center;
+      column-gap: 8px;
+      margin-bottom: 6px;
+    }
+    .tr-lk {
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--faint);
+    }
+    .tr-track {
+      position: relative;
+      height: 6px;
+      background: rgba(255, 255, 255, 0.07);
+      overflow: hidden;
+    }
+    .tr-track i {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 0;
+      width: 0;
+      background: var(--accent);
+      transition: width 0.2s;
+    }
+    .tr-track i.pv {
+      background: repeating-linear-gradient(135deg, rgba(200, 245, 66, 0.85) 0 3px, rgba(200, 245, 66, 0.25) 3px 6px);
+    }
+    .tr-track i.warn {
+      background: var(--warn);
+    }
+    .tr-track i.pv.warn {
+      background: repeating-linear-gradient(135deg, rgba(245, 185, 66, 0.9) 0 3px, rgba(245, 185, 66, 0.25) 3px 6px);
+    }
+    .tr-track i.hot {
+      background: var(--danger);
+    }
+    .tr-track i.pv.hot {
+      background: repeating-linear-gradient(135deg, rgba(255, 90, 79, 0.9) 0 3px, rgba(255, 90, 79, 0.25) 3px 6px);
+    }
+    .tr-lt {
+      grid-column: 2;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      font-family: var(--mono);
+      font-size: 9.5px;
+      color: var(--faint);
+      margin-top: 4px;
+      white-space: nowrap;
+    }
+    .tr-lt b {
+      color: var(--text);
+      font-weight: 600;
+    }
+    .tr-lt .ok {
+      color: var(--accent);
+    }
+    .tr-lt .warn {
+      color: var(--warn);
+    }
+    .tr-lt .hot {
+      color: var(--danger);
+    }
+    .tr-tight {
+      font-family: var(--mono);
+      font-size: 9px;
+      color: var(--faint);
+      padding-left: 58px;
+    }
+    .tr-tight:empty {
+      display: none;
+    }
+    /* the price ladder */
+    .tr-lad {
+      border: 1px solid var(--line2);
+    }
+    .tr-lh,
+    .tr-lr {
+      display: grid;
+      grid-template-columns: 66px minmax(0, 1fr) 66px;
+      align-items: center;
+      padding: 4px 7px;
+      font-family: var(--mono);
+      font-size: 10.5px;
+    }
+    .tr-lh {
+      font-size: 8.5px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--faint);
+      background: var(--sunk);
+      border-bottom: 1px solid var(--line2);
+      padding: 5px 7px;
+    }
+    .tr-lh span:nth-child(2) {
+      text-align: center;
+      text-transform: none;
+      letter-spacing: 0.04em;
+    }
+    .tr-lr {
+      border-bottom: 1px dashed var(--line);
+    }
+    .tr-lr:last-child {
+      border-bottom: none;
+    }
+    .tr-lr[hidden] {
+      display: none;
+    }
+    .tr-sp,
+    .tr-bp {
+      color: var(--dim);
+      white-space: nowrap;
+    }
+    .tr-bp,
+    .tr-lh span:last-child {
+      text-align: right;
+    }
+    .tr-mid {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      min-width: 0;
     }
     .tr-n {
-      font-weight: 650;
+      font-weight: 700;
+      font-size: 10px;
+      color: var(--accent);
+      width: 30px;
+    }
+    .tr-n.sl {
+      color: var(--danger);
+    }
+    .tr-in.tr-pt {
+      width: 38px;
+      padding: 3px 4px;
       font-size: 11px;
-      color: var(--text);
+      text-align: right;
     }
     .tr-q {
-      font-family: var(--mono);
-      color: var(--text);
+      color: var(--faint);
+      font-size: 9.5px;
+      width: 34px;
       text-align: right;
+      white-space: nowrap;
     }
     .tr-g {
-      font-family: var(--mono);
       color: var(--accent);
-      font-size: 10.5px;
+      font-size: 10px;
       text-align: right;
-      min-width: 52px;
+      min-width: 50px;
+      white-space: nowrap;
+    }
+    .tr-g.dn {
+      color: var(--danger);
+    }
+    .tr-xs {
+      width: 10px;
+      flex: none;
+    }
+    .tr-en {
+      background: rgba(255, 255, 255, 0.035);
+    }
+    .tr-lad.one .tr-lh,
+    .tr-lad.one .tr-lr {
+      grid-template-columns: 0 minmax(0, 1fr) 70px;
+    }
+    .tr-lad.one .tr-sp {
+      visibility: hidden;
+      overflow: hidden;
+    }
+    .tr-mk {
+      background: var(--accent-dim);
+    }
+    .tr-mk .tr-mid,
+    .tr-mk .tr-bp {
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .tr-mk .tr-mid {
+      font-size: 9.5px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .tr-en .tr-mid {
+      color: var(--text);
+      font-weight: 600;
+      font-size: 9.5px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .tr-en .tr-sp,
+    .tr-en .tr-bp {
+      color: var(--text);
+    }
+    .tr-fl .tr-mid,
+    .tr-ps .tr-mid {
+      font-size: 9px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--faint);
+    }
+    .tr-fl .tr-sp,
+    .tr-fl .tr-bp {
+      color: var(--danger);
+    }
+    .tr-ps .tr-sp,
+    .tr-ps .tr-bp {
+      color: var(--accent);
     }
     .tr-x {
       background: none;
       border: none;
       color: var(--faint);
       cursor: pointer;
-      font-size: 14px;
+      width: 10px;
+      font-size: 13px;
       line-height: 1;
       padding: 0;
     }
@@ -4233,22 +4755,24 @@
       background: none;
       border: 1px dashed var(--line2);
       color: var(--dim);
-      border-radius: 7px;
       padding: 5px 10px;
-      font-size: 10.5px;
-      font-weight: 600;
+      font-family: var(--mono);
+      font-size: 10px;
       cursor: pointer;
     }
     .tr-add:hover {
       color: var(--text);
-      border-color: #3a424d;
+      border-color: var(--text);
     }
     .tr-be {
       margin-top: 2px;
     }
     .tr-sum {
-      font-size: 11px;
+      font-family: var(--mono);
+      font-size: 10.5px;
       color: var(--dim);
+      padding-top: 10px;
+      border-top: 1px dashed var(--line);
     }
     .tr-sum b {
       color: var(--text);
@@ -4275,7 +4799,7 @@
     }
     .tr-lim {
       font-size: 10.5px;
-      color: var(--dim);
+      color: var(--faint);
       line-height: 1.45;
     }
     .tr-lim:empty {
@@ -4288,7 +4812,6 @@
       color: var(--danger);
       background: var(--danger-dim);
       border: 1px solid var(--danger-line);
-      border-radius: 8px;
       padding: 7px 9px;
     }
     .tr-fixes {
@@ -4302,13 +4825,13 @@
     }
     .tr-usemax {
       cursor: pointer;
+      font-family: var(--mono);
       font-size: 10px;
-      font-weight: 650;
-      border-radius: 6px;
+      font-weight: 600;
       padding: 2px 7px;
       margin-left: 4px;
-      border: 1px solid #4a3a1a;
-      background: #241c10;
+      border: 1px solid var(--warn-line);
+      background: var(--warn-dim);
       color: var(--warn);
     }
     .tr-preview b.tr-fail {
@@ -4318,37 +4841,307 @@
       color: var(--accent);
     }
     .tr-note {
-      font-family: 'Inter', -apple-system, system-ui, sans-serif;
+      font-family: var(--sans);
       margin-top: 2px;
     }
     .tr-go {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 8px;
+      gap: 6px;
     }
     .tr-buy,
     .tr-sell {
       cursor: pointer;
-      font-weight: 650;
-      font-size: 12.5px;
-      border-radius: 10px;
+      font-weight: 700;
+      font-size: 12px;
       padding: 11px;
       font-family: var(--mono);
-      letter-spacing: 0.3px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--ink);
+      transition: 0.12s;
     }
     .tr-buy {
-      border: 1px solid var(--accent-line);
-      background: linear-gradient(180deg, #163a2c, #122a20);
-      color: var(--accent);
+      border: 1px solid var(--accent);
+      background: var(--accent);
     }
     .tr-sell {
-      border: 1px solid var(--danger-line);
-      background: linear-gradient(180deg, #36201d, #2a1613);
-      color: var(--danger);
+      border: 1px solid var(--danger);
+      background: var(--danger);
+    }
+    .tr-buy:hover:not(:disabled),
+    .tr-sell:hover:not(:disabled) {
+      filter: brightness(1.08);
     }
     .tr-buy:disabled,
     .tr-sell:disabled {
+      opacity: 0.3;
+      cursor: not-allowed;
+    }
+    .tr-go:has(> [hidden]) {
+      grid-template-columns: 1fr;
+    }
+    .tr-go[hidden] {
+      display: none;
+    }
+    .tr-lbuy,
+    .tr-lsell {
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      font-family: var(--mono);
+      font-weight: 700;
+      font-size: 11px;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      padding: 8px;
+      background: none;
+      transition: 0.12s;
+    }
+    .tr-lbuy {
+      border: 1px solid var(--accent);
+      color: var(--accent);
+    }
+    .tr-lsell {
+      border: 1px solid var(--danger);
+      color: var(--danger);
+    }
+    .tr-lbuy:hover:not(:disabled) {
+      background: var(--accent-dim);
+    }
+    .tr-lsell:hover:not(:disabled) {
+      background: var(--danger-dim);
+    }
+    .tr-lbuy:disabled,
+    .tr-lsell:disabled {
+      opacity: 0.3;
+      cursor: not-allowed;
+    }
+    .tr-pick {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .tr-pick[hidden] {
+      display: none;
+    }
+    .tr-pickbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 9px;
+      border: 1px dashed var(--accent);
+      background: var(--accent-dim);
+      color: var(--accent);
+      font-family: var(--mono);
+      font-size: 10px;
+    }
+    .tr-pickbar .bad {
+      color: var(--warn);
+    }
+    .tr-esc {
+      margin-left: auto;
+      color: var(--faint);
+    }
+    .tr-pickrow {
+      display: grid;
+      grid-template-columns: 84px 1fr auto;
+      gap: 6px;
+    }
+    .tr-pickrow .tr-in {
+      width: auto;
+    }
+    .tr-place,
+    .tr-pcancel {
+      cursor: pointer;
+      font-family: var(--mono);
+      font-weight: 700;
+      font-size: 10.5px;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      padding: 8px 10px;
+      white-space: nowrap;
+    }
+    .tr-place {
+      border: 1px solid var(--accent);
+      background: var(--accent);
+      color: var(--ink);
+    }
+    .tr-place.short {
+      border-color: var(--danger);
+      background: var(--danger);
+    }
+    .tr-place:disabled {
       opacity: 0.35;
+      cursor: not-allowed;
+    }
+    .tr-pcancel {
+      border: 1px solid var(--line2);
+      background: none;
+      color: var(--dim);
+    }
+    .tr-pcancel:hover {
+      color: var(--text);
+      border-color: var(--text);
+    }
+    /* in a trade: the position, with Breakeven and Close, right above the add button */
+    .tr-pos {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .tr-pos[hidden] {
+      display: none;
+    }
+    .tr-posbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 9px;
+      border: 1px solid var(--line2);
+      border-left: 2px solid var(--accent);
+      background: var(--elev);
+      font-family: var(--mono);
+      font-size: 10.5px;
+      white-space: nowrap;
+      overflow: hidden;
+    }
+    .tr-side {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 2px 5px;
+      color: var(--ink);
+      background: var(--accent);
+    }
+    .tr-side.short {
+      background: var(--danger);
+    }
+    .tr-pq {
+      font-weight: 600;
+      color: var(--text);
+    }
+    .tr-pa {
+      color: var(--faint);
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .tr-ppl {
+      margin-left: auto;
+      font-weight: 700;
+      font-size: 12px;
+    }
+    .tr-ppl.pos {
+      color: var(--accent);
+    }
+    .tr-ppl.neg {
+      color: var(--danger);
+    }
+    .tr-addh {
+      display: flex;
+      justify-content: space-between;
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--faint);
+      margin-top: 2px;
+    }
+    .tr-addh span + span {
+      text-transform: none;
+      letter-spacing: 0;
+    }
+    .tr-chips {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 5px;
+    }
+    .tr-chips:empty {
+      display: none;
+    }
+    .tr-chip {
+      cursor: pointer;
+      border: 1px solid var(--line2);
+      background: none;
+      padding: 4px 0 3px;
+      font-family: var(--mono);
+      line-height: 1.25;
+      color: var(--text);
+    }
+    .tr-chip b {
+      display: block;
+      font-size: 11px;
+    }
+    .tr-chip span {
+      font-size: 9px;
+      color: var(--faint);
+      white-space: nowrap;
+    }
+    .tr-chip:hover:not(:disabled) {
+      border-color: var(--accent);
+    }
+    .tr-chip.on {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: var(--ink);
+    }
+    .tr-chip.on span {
+      color: var(--ink);
+    }
+    .tr-chip.no {
+      border-style: dashed;
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+    .tr-chip.no b {
+      color: var(--faint);
+      text-decoration: line-through;
+    }
+    .tr-chip.no span {
+      color: var(--danger);
+    }
+    .tr-addpv {
+      font-family: var(--mono);
+      font-size: 9.5px;
+      color: var(--dim);
+      border-left: 2px solid var(--accent);
+      padding: 2px 0 2px 7px;
+      line-height: 1.45;
+    }
+    .tr-addpv:empty {
+      display: none;
+    }
+    .tr-bebtn,
+    .tr-close {
+      cursor: pointer;
+      font-family: var(--mono);
+      font-weight: 700;
+      font-size: 11px;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      padding: 9px;
+      transition: 0.12s;
+    }
+    .tr-bebtn {
+      border: 1px solid var(--text);
+      background: var(--text);
+      color: var(--ink);
+    }
+    .tr-close {
+      border: 1px solid var(--danger);
+      background: var(--danger);
+      color: var(--ink);
+    }
+    .tr-bebtn:hover:not(:disabled),
+    .tr-close:hover:not(:disabled) {
+      filter: brightness(1.08);
+    }
+    .tr-bebtn:disabled,
+    .tr-close:disabled {
+      opacity: 0.3;
       cursor: not-allowed;
     }
     .tr-plans {
@@ -4367,18 +5160,17 @@
       font-size: 10.5px;
       color: var(--dim);
       padding: 7px 9px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
+      border: 1px solid var(--line2);
+      border-left: 2px solid var(--accent);
       background: var(--elev);
     }
     .tr-plan b {
       color: var(--text);
     }
     .tr-preview {
-      font-size: 10px;
+      font-size: 10.5px;
       color: var(--faint);
-      line-height: 1.6;
-      font-family: var(--mono);
+      line-height: 1.5;
     }
     .tr-preview b {
       color: var(--dim);
@@ -4389,15 +5181,17 @@
       width: 30px;
       color: var(--dim);
     }
+
+    /* P&L */
     .summary {
-      padding: 15px;
+      padding: 14px;
     }
     .sum-total {
-      font-size: 28px;
-      font-weight: 750;
-      line-height: 1.05;
-      letter-spacing: -0.5px;
-      font-family: var(--mono);
+      font-size: 34px;
+      font-weight: 700;
+      line-height: 1;
+      letter-spacing: -0.04em;
+      font-stretch: condensed;
     }
     .sum-total.pos {
       color: var(--accent);
@@ -4406,9 +5200,10 @@
       color: var(--danger);
     }
     .sum-sub {
-      font-size: 11px;
-      color: var(--dim);
-      margin: 4px 0 14px;
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--faint);
+      margin: 6px 0 14px;
     }
     .sum-top {
       display: flex;
@@ -4417,19 +5212,39 @@
       gap: 12px;
     }
     .sum-keep {
-      text-align: right;
+      border-left: 2px solid var(--accent);
+      padding-left: 10px;
     }
     .sum-keep-v {
-      font-size: 18px;
+      font-size: 17px;
       font-weight: 700;
       font-family: var(--mono);
-      color: var(--accent);
+      color: var(--text);
       line-height: 1.1;
     }
     .sum-keep-l {
+      font-family: var(--mono);
+      font-size: 9.5px;
+      color: var(--faint);
+      margin-top: 3px;
+    }
+    .sum-list {
+      display: flex;
+      flex-direction: column;
+      border-top: 1px dashed var(--line);
+    }
+    .sum-row {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto auto;
+      gap: 10px;
+      align-items: center;
+      padding: 9px 0;
+      border-bottom: 1px dashed var(--line);
+    }
+    .badge.sm {
+      width: 26px;
+      height: 26px;
       font-size: 10px;
-      color: var(--dim);
-      margin-top: 2px;
     }
     .sum-left {
       display: flex;
@@ -4437,18 +5252,45 @@
       min-width: 0;
     }
     .sum-name {
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
       white-space: nowrap;
     }
     .sum-k {
       font-size: 9.5px;
+      color: var(--faint);
+      font-family: var(--mono);
+      margin-top: 2px;
+    }
+    .sum-eq {
+      font-size: 10.5px;
       color: var(--dim);
       font-family: var(--mono);
-      margin-top: 1px;
+    }
+    .sum-pnl {
+      font-weight: 600;
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+    .sum-pnl.pos {
+      color: var(--accent);
+    }
+    .sum-pnl.neg {
+      color: var(--danger);
+    }
+    .sum-note {
+      font-size: 10.5px;
+      color: var(--faint);
+      line-height: 1.5;
+      margin-top: 10px;
     }
     .claim {
       margin-top: 14px;
-      padding-top: 12px;
-      border-top: 1px solid var(--line);
+      padding: 12px;
+      border: 1px dashed var(--line2);
       display: flex;
       flex-direction: column;
       gap: 6px;
@@ -4456,19 +5298,29 @@
     }
     .claim-go {
       align-self: flex-start;
-      color: var(--accent);
-      border-color: var(--accent-line);
+      background: var(--text);
+      border-color: var(--text);
+      color: var(--ink);
+      font-weight: 700;
+    }
+    .claim-go:hover {
+      background: #fff;
+      color: var(--ink);
     }
     .claim-h {
-      font-weight: 650;
-      font-size: 12px;
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--accent);
     }
     .claim-row {
       display: flex;
       justify-content: space-between;
       gap: 10px;
       padding: 5px 0;
-      border-bottom: 1px solid var(--line);
+      border-bottom: 1px dashed var(--line);
       font-family: var(--mono);
       font-size: 10.5px;
     }
@@ -4486,96 +5338,37 @@
     }
     .claim-btns {
       display: flex;
-      gap: 8px;
+      gap: 6px;
       flex-wrap: wrap;
       margin-top: 4px;
     }
-    .sum-note {
-      font-size: 10.5px;
-      color: var(--faint);
-      line-height: 1.5;
-      margin-top: 10px;
-    }
-    .sum-list {
-      display: flex;
-      flex-direction: column;
-      gap: 7px;
-    }
-    .sum-row {
-      display: grid;
-      grid-template-columns: auto 1fr auto auto;
-      gap: 9px;
-      align-items: center;
-      padding: 8px 11px;
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      background: var(--elev);
-    }
-    .badge.sm {
-      width: 25px;
-      height: 25px;
-      font-size: 10px;
-      border-radius: 7px;
-    }
-    .sum-name {
-      font-weight: 600;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      min-width: 0;
-    }
-    .sum-eq {
-      font-size: 11px;
-      color: var(--dim);
-      font-family: var(--mono);
-    }
-    .sum-pnl {
-      font-weight: 650;
-      font-family: var(--mono);
-    }
-    .sum-pnl.pos {
-      color: var(--accent);
-    }
-    .sum-pnl.neg {
-      color: var(--danger);
-    }
+
     button:focus-visible,
     .tr-in:focus-visible,
-    .health:focus-visible {
+    .health:focus-visible,
+    .logh:focus-visible {
       outline: 2px solid var(--accent);
       outline-offset: 1px;
-    }
-    .bar-ok {
-      background: var(--accent);
-    }
-    .bar-warn {
-      background: var(--warn);
-    }
-    .bar-hot {
-      background: var(--danger);
-    }
-    .grip {
-      position: absolute;
-      right: 4px;
-      bottom: 4px;
-      width: 15px;
-      height: 15px;
-      cursor: nwse-resize;
-      z-index: 3;
-      touch-action: none;
-      background: repeating-linear-gradient(135deg, transparent, transparent 2px, #3a414b 2px, #3a414b 3px);
-      opacity: 0.7;
     }
     .collapsed .reportbar,
     .collapsed .body,
     .collapsed .tabs,
-    .collapsed .health,
     .collapsed .ctl,
+    .collapsed .alerts,
     .collapsed .logwrap,
     .collapsed .grip {
       display: none;
     }
   `;
+
+  // STRATUH logo: the five-bar profile mark (lime point of control) and the "stratuh" wordmark (Instrument Sans,
+  // condensed, as on stratuh.com) drawn as paths, so nothing is downloaded.
+  const LOG_OPEN_KEY = 'vc-log-open';
+  const BRAND_SVG = `<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="vc-poc" x1="0" x2="1">
+      <stop offset="0" stop-color="#9fe02f"/><stop offset="1" stop-color="#e4ff7a"/></linearGradient></defs>
+      <rect x="1" y="1" width="10" height="3.4" fill="#77777d"/><rect x="1" y="5.65" width="16" height="3.4" fill="#f0f0f1"/>
+      <rect x="1" y="10.3" width="22" height="3.4" fill="url(#vc-poc)"/><rect x="1" y="14.95" width="15" height="3.4" fill="#f0f0f1"/>
+      <rect x="1" y="19.6" width="8" height="3.4" fill="#77777d"/></svg><svg height="16" viewBox="0 -73 237.9 75" aria-hidden="true"><path fill="#f0f0f1" d="M18.3 1L18.3 1Q10.9 1 6.8-3.4Q2.7-7.8 2.3-15.7L2.3-15.7L11.7-15.7Q12-11.7 13.8-9.7Q15.6-7.6 18.5-7.6L18.5-7.6Q20.9-7.6 22.2-8.8Q23.5-10.1 23.5-12.5L23.5-12.5Q23.5-14.4 22.5-16.1Q21.5-17.8 18.3-19.8L18.3-19.8L12.4-23.5Q8.4-26.1 6.2-29.6Q4-33.1 4-38L4-38Q4-44.2 7.9-48.1Q11.8-52 18.2-52L18.2-52Q24.9-52 28.7-48.1Q32.4-44.1 32.8-36.9L32.8-36.9L23.4-36.9Q23.1-40.4 21.9-41.9Q20.6-43.4 18.5-43.4L18.5-43.4Q16.4-43.4 15.2-42.2Q13.9-41 13.9-38.7L13.9-38.7Q13.9-36.9 15.0-35.3Q16-33.6 18.8-31.8L18.8-31.8L25.2-27.8Q28.9-25.5 31.2-21.7Q33.4-17.9 33.4-13L33.4-13Q33.4-6.7 29.4-2.9Q25.4 1 18.3 1ZM54.2 1L54.2 1Q47 1 43.5-2.5Q40-5.9 40-12.9L40-12.9L40-60.6L51.4-65.6L51.4-13Q51.4-10.5 52.8-9.3Q54.1-8.1 57-8.1L57-8.1Q58.1-8.1 59.0-8.3Q60-8.5 60.7-8.9L60.7-8.9L60.7-0.1Q59.7 0.5 58.0 0.8Q56.2 1 54.2 1ZM60.4-41.9L33.4-41.9L33.4-51L60.4-51L60.4-41.9ZM75.6 0L64.2 0L64.2-51L75.1-51L75.1-39.1L75.6-39.1L75.6 0ZM75.6-30.3L75.6-30.3L74-38.8Q75.7-45.8 78.6-48.9Q81.5-52 85.6-52L85.6-52Q86.7-52 87.6-51.7L87.6-51.7L87.6-40.3Q87.3-40.4 86.7-40.5Q86.1-40.5 85.2-40.5L85.2-40.5Q80.8-40.5 78.2-38Q75.6-35.5 75.6-30.3ZM123.3 0L112.8 0Q112.2-1.8 111.9-4.0Q111.7-6.1 111.7-8.5L111.7-8.5L111.2-8.5L111.2-36.6Q111.2-40.1 109.9-41.7Q108.7-43.3 106.3-43.3L106.3-43.3Q103.6-43.3 102.2-41.3Q100.8-39.3 100.8-35.8L100.8-35.8L90.7-35.8Q90.7-42.9 95.1-47.5Q99.5-52 107.2-52L107.2-52Q114.4-52 118.3-48Q122.3-44 122.3-36.7L122.3-36.7L122.3-8.5Q122.3-6.4 122.5-4.3Q122.7-2.1 123.3 0L123.3 0ZM100.6 1L100.6 1Q95.8 1 92.7-2.5Q89.6-6 89.6-12L89.6-12Q89.6-17.4 92.1-21.2Q94.7-24.9 101-28L101-28L113.9-34.5L113.9-25.7L106.9-22Q103.6-20.3 102.1-18.2Q100.6-16 100.6-13.2L100.6-13.2Q100.6-10.5 101.9-9.1Q103.3-7.7 105.5-7.7L105.5-7.7Q108-7.7 109.6-9.5Q111.2-11.2 111.2-13.9L111.2-13.9L112.2-7.6Q110.7-3.2 107.7-1.1Q104.7 1 100.6 1ZM145.8 1L145.8 1Q138.6 1 135.1-2.5Q131.6-5.9 131.6-12.9L131.6-12.9L131.6-60.6L143-65.6L143-13Q143-10.5 144.3-9.3Q145.7-8.1 148.6-8.1L148.6-8.1Q149.7-8.1 150.6-8.3Q151.6-8.5 152.3-8.9L152.3-8.9L152.3-0.1Q151.3 0.5 149.5 0.8Q147.8 1 145.8 1ZM152-41.9L125.0-41.9L125.0-51L152-51L152-41.9ZM166.7 1L166.7 1Q163.3 1 160.7-0.5Q158.1-1.9 156.8-4.8Q155.4-7.6 155.4-11.6L155.4-11.6L155.4-51L166.8-51L166.8-14.1Q166.8-11.3 168.1-9.9Q169.4-8.4 171.7-8.4L171.7-8.4Q173.9-8.4 175.5-9.7Q177.1-10.9 178-13.0Q178.9-15 178.9-17.3L178.9-17.3L180.4-9.4Q178.5-4.5 175-1.8Q171.5 1 166.7 1ZM190.4 0L179.5 0L179.5-9.5L178.9-9.5L178.9-51L190.4-51L190.4 0ZM208.9 0L197.5 0L197.5-72L208.9-72L208.9 0ZM233.3 0L221.8 0L221.8-36.4Q221.8-39.7 220.5-41.2Q219.2-42.6 216.6-42.6L216.6-42.6Q214.2-42.6 212.4-41.4Q210.7-40.1 209.8-38.1Q208.9-36 208.9-33.5L208.9-33.5L207.4-41.4Q209.4-46.5 213.0-49.3Q216.6-52 221.7-52L221.7-52Q227.1-52 230.2-48.6Q233.3-45.1 233.3-39L233.3-39L233.3 0Z"/></svg>`;
 
   function buildPanel() {
     const host = document.createElement('div');
@@ -4585,7 +5378,8 @@
     root.innerHTML = `<style>${CSS}</style>
       <div class="panel">
         <div class="hdr">
-          <span class="title">Vest Copier</span><span class="armtag off" id="armtag">idle</span><span class="opttag" id="opttag"></span>
+          <span class="brand" role="img" aria-label="STRATUH">${BRAND_SVG}</span><span class="sep"></span><span class="title">Copier</span>
+          <span class="armtag off" id="armtag">idle</span><span class="opttag" id="opttag"></span>
           <span class="spacer"></span>
           <button class="iconbtn ico" data-act="refresh" title="Reload accounts" aria-label="Reload accounts">
             <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 10-2.3 5.7M20 4v7h-7" fill="none" stroke="currentColor"
@@ -4600,9 +5394,6 @@
           <button class="tab" role="tab" data-tab="rules">Rules</button>
           <button class="tab tab-support" role="tab" data-tab="support" title="Report a problem, share ideas, get help">Support</button>
         </div>
-        <div class="health" role="button" tabindex="0" title="Click to run the site check">
-          <span class="dot gray"></span><span class="htext">Starting…</span><span class="spacer"></span><span class="rate" id="rate"></span>
-        </div>
         <div class="update" hidden></div>
         <div class="support update" hidden></div>
         <div class="body"><div class="empty">Waiting for your Vest session…</div></div>
@@ -4610,16 +5401,20 @@
           <button class="armbtn" data-act="arm" disabled>ARM</button>
           <button class="dangerbtn" data-act="flatall" title="Instantly closes every position and cancels every order on every account. No confirmation. The copier stays armed.">Flatten All</button>
         </div>
+        <div class="alerts"></div>
         <div class="logwrap">
-          <div class="logh"><span>Activity</span><span class="loghbtns">
+          <div class="logh" role="button" tabindex="0" aria-expanded="false" title="Show or hide the activity log">
+            <span class="caret">▸</span><span class="logt">Activity</span><span class="loglast"></span><span class="loghbtns">
             <button class="iconbtn sm" data-act="dldiag" title="Download diagnostics (JSON) for troubleshooting">Diag</button>
             <button class="iconbtn sm" data-act="dllog" title="Download the activity log (CSV)">CSV</button>
             <button class="iconbtn sm" data-act="clearlog" title="Clear the activity log">Clear</button>
           </span></div>
           <div class="log" aria-live="polite"></div>
         </div>
-        <div class="reportbar"><button class="codebtn" data-act="code" title="Click to copy the code" hidden>Use code <b>${SUPPORT_CODE}</b> for <span class="off">5% off</span></button><span></span>
-          <button class="linkbtn" data-act="report">Problem? Report it</button></div>
+        <div class="reportbar"><button class="codebtn" data-act="code" title="Click to copy the code" hidden>Use code <b>${SUPPORT_CODE}</b> · <span class="off">5% off</span></button>
+          <div class="health" role="button" tabindex="0" title="Vest's build, this version and the API budget. Click to run the site check.">
+            <span class="dot gray"></span><span class="htext">Starting…</span><span class="ver">v${VERSION}</span><span class="rate" id="rate"></span>
+          </div></div>
         <div class="grip" title="Drag to resize"></div>
       </div>`;
     const panel = root.querySelector('.panel');
@@ -4639,7 +5434,9 @@
       Object.assign(panel.style, { right: 'auto', left: r.left + 'px', top: r.top + 'px' });
       try {
         hdr.setPointerCapture(e.pointerId);
-      } catch {}
+      } catch {
+        /* best effort: nothing to do if this fails */
+      }
       e.preventDefault();
     });
     hdr.addEventListener('pointermove', (e) => {
@@ -4665,7 +5462,9 @@
       rs = { w: r.width, h: r.height, sx: e.clientX, sy: e.clientY };
       try {
         grip.setPointerCapture(e.pointerId);
-      } catch {}
+      } catch {
+        /* best effort: nothing to do if this fails */
+      }
       e.preventDefault();
       e.stopPropagation();
     });
@@ -4714,10 +5513,26 @@
     };
     on('[data-act="arm"]', () => (S.armed ? disarm() : arm()));
     on('[data-act="flatall"]', () => flattenAll()); // acts at once, no confirmation
+    // The activity log folds to one line (the latest event); open or closed is remembered.
+    const logwrap = root.querySelector('.logwrap'),
+      logh = root.querySelector('.logh');
+    const setLogOpen = (open) => {
+      logwrap.classList.toggle('open', open);
+      logh.setAttribute('aria-expanded', String(open));
+      logh.querySelector('.caret').textContent = open ? '▾' : '▸';
+      store.set(LOG_OPEN_KEY, open);
+    };
+    setLogOpen(store.get(LOG_OPEN_KEY, false) === true);
+    logh.onclick = (e) => !e.target.closest('button') && setLogOpen(!logwrap.classList.contains('open'));
+    logh.onkeydown = (e) => {
+      if (e.target === logh && (e.key === 'Enter' || e.key === ' ')) {
+        e.preventDefault();
+        setLogOpen(!logwrap.classList.contains('open'));
+      }
+    };
     on('[data-act="dldiag"]', () => downloadDiag());
     on('[data-act="dllog"]', () => downloadLog());
     on('[data-act="clearlog"]', () => clearLog());
-    on('[data-act="report"]', () => setView('support'));
     on('[data-act="code"]', () =>
       copySupportCode().then((ok) =>
         toast(ok ? `Code ${SUPPORT_CODE} copied: 5% off at Vest's checkout.` : `Code: ${SUPPORT_CODE}`),
@@ -4734,6 +5549,7 @@
     _root.querySelector('.health .dot').className = 'dot ' + h.level;
     _root.querySelector('.htext').textContent = h.text;
     _root.querySelector('.health').classList.toggle('amber-bar', h.changed);
+    _root.querySelector('.reportbar').classList.toggle('alert', h.level !== 'green');
     renderRate();
     renderUpdate();
     renderSupport();
@@ -4782,6 +5598,7 @@
   window.addEventListener('resize', () => S.tradeOpen && fitPanel());
 
   function setView(v) {
+    if (v !== 'trade') stopPick(true);
     S.tradeOpen = v === 'trade';
     S.summaryOpen = v === 'summary';
     S.settingsOpen = v === 'settings';
@@ -4812,42 +5629,57 @@
     } else if (!S.groups.length) {
       body.innerHTML = `<div class="empty">No active accounts found.</div>`;
     } else {
-      body.innerHTML = S.groups
-        .map((g) => {
-          const masterGroup = S.master && S.byId[S.master] && S.byId[S.master].groupKey === g.key;
-          const rows = g.rows
-            .map((r) => {
-              const td = r.canTrade === false ? 'red' : r.canTrade === true ? 'green' : 'gray';
-              const tdText =
-                r.canTrade === false
-                  ? 'Trading disabled'
-                  : r.canTrade === true
-                    ? 'Can trade'
-                    : 'Trading status unknown';
-              const isM = S.master === r.id,
-                isF = S.followers.has(r.id);
-              const fDisabled = !S.master || isM || (!S.capFit && !masterGroup) || r.canTrade === false;
-              const bar = r.usedPct > 0.8 ? 'bar-hot' : r.usedPct > 0.5 ? 'bar-warn' : 'bar-ok';
-              const id = esc(r.id),
-                label = esc(r.label);
-              return `<div class="row ${isM ? 'master' : isF ? 'follower' : ''}">
+      // The master on top in its own block; then each account size, the master's first, with how many copy it.
+      const row = (r, masterGroup) => {
+        const td = r.canTrade === false ? 'red' : r.canTrade === true ? 'green' : 'gray';
+        const tdText =
+          r.canTrade === false ? 'Trading disabled' : r.canTrade === true ? 'Can trade' : 'Trading status unknown';
+        const isM = S.master === r.id,
+          isF = S.followers.has(r.id);
+        const fDisabled = !S.master || isM || (!S.capFit && !masterGroup) || r.canTrade === false;
+        const bar = r.usedPct > 0.8 ? 'bar-hot' : r.usedPct > 0.5 ? 'bar-warn' : 'bar-ok';
+        const id = esc(r.id),
+          label = esc(r.label);
+        return `<div class="row ${isM ? 'master' : isF ? 'follower' : ''}">
               <div class="badge">${esc(acctNum(r.label))}</div>
               <div class="meta"><div class="name">${label} <span class="chip">${esc(r.chip)}</span> <span class="dot ${td}" title="${tdText}"></span></div>
-                <div class="sub">bal ${money(r.equity)} · ${r.dailyFloor > r.floor ? '<span title="Daily loss floor, higher than the drawdown floor today">daily floor</span>' : 'floor'} ${money(floorOf(r))}</div></div>
-              <div class="right"><div class="room">${money(r.room)}</div><div class="used">${pct(r.usedPct)} used</div>
+                <div class="sub"><span>bal ${money(r.equity)}</span><span>${r.dailyFloor > r.floor ? '<span title="Daily loss floor, higher than the drawdown floor today">daily floor</span>' : 'floor'} ${money(floorOf(r))}</span></div></div>
+              <div class="right" title="Room left before the floor"><div class="room">${money(r.room)}</div><div class="used">${pct(r.usedPct)} used</div>
                 <div class="bar"><i class="${bar}" style="width:${Math.round(r.usedPct * 100)}%"></i></div></div>
               <div class="sel">
                 <button class="selbtn m ${isM ? 'on' : ''}" data-m="${id}" title="Make ${label} the master" aria-label="Make ${label} the master"
                   aria-pressed="${isM}" ${r.canTrade === false ? 'disabled' : ''}>M</button>
                 <button class="selbtn f ${isF ? 'on' : ''}" data-f="${id}" title="Copy the master to ${label}" aria-label="Copy the master to ${label}"
-                  aria-pressed="${isF}" ${fDisabled ? 'disabled' : ''}>Flw</button>
+                  aria-pressed="${isF}" ${fDisabled ? 'disabled' : ''}>FLW</button>
               </div></div>`;
-            })
-            .join('');
-          const n = g.rows.length;
-          return `<div class="group"><div class="group-h">${money(g.size)} · ${esc(g.type)} · ${n} account${n > 1 ? 's' : ''}</div>${rows}</div>`;
-        })
-        .join('');
+      };
+      const m = S.master && S.byId[S.master];
+      const groups = m ? [...S.groups].sort((a, b) => (b.key === m.groupKey) - (a.key === m.groupKey)) : S.groups;
+      body.innerHTML =
+        (m
+          ? `<div class="group"><div class="group-h"><span class="lime">Master</span><span class="gr">${money(m.size)} · ${esc(m.type)}</span></div>${row(m, true)}</div>`
+          : '') +
+        groups
+          .map((g) => {
+            const masterGroup = !!m && m.groupKey === g.key;
+            const rest = g.rows.filter((r) => r.id !== S.master);
+            if (!rest.length) return '';
+            const copying = rest.filter((r) => S.followers.has(r.id)).length;
+            const n = g.rows.length;
+            const right =
+              masterGroup || (m && S.capFit)
+                ? `${copying} copying · ${S.capFit ? 'cap-to-fit' : '1:1'}`
+                : `${n} account${n > 1 ? 's' : ''}`;
+            const title = m
+              ? masterGroup
+                ? 'Followers'
+                : `${money(g.size)} · ${esc(g.type)}`
+              : `${money(g.size)} · ${esc(g.type)}`;
+            return `<div class="group"><div class="group-h"><span>${title}</span><span class="gr">${right}</span></div>${rest
+              .map((r) => row(r, masterGroup))
+              .join('')}</div>`;
+          })
+          .join('');
       body.querySelectorAll('[data-m]').forEach((b) => (b.onclick = () => setMaster(b.getAttribute('data-m'))));
       body.querySelectorAll('[data-f]').forEach((b) => (b.onclick = () => toggleFollower(b.getAttribute('data-f'))));
     }
@@ -4941,6 +5773,7 @@
       if (levs) S.levs = levs;
       S.acctState[master] = st;
     } catch {
+      /* best effort: nothing to do if this fails */
     } finally {
       _tradeStateBusy = false;
     }
@@ -4994,8 +5827,72 @@
       }
     }
 
-    const qty =
-      t.sizeMode === 'max'
+    // Room before the floor on the tightest account that copies the same size: the master, plus followers in strict
+    // 1:1 while armed (their live equity from the balance poll).
+    const rm = master && S.byId[master];
+    let riskRoom = rm && live ? live.equity - floorOf(rm) : null,
+      riskBy = master;
+    if (master && S.armed && !S.capFit)
+      for (const id of S.followers) {
+        const f = S.byId[id];
+        if (f && f.equity > 0 && riskRoom !== null && f.equity - floorOf(f) < riskRoom)
+          [riskRoom, riskBy] = [f.equity - floorOf(f), id];
+      }
+
+    // In a trade: add chips sized from the open position (+25%, +50%, +100%) and MAX, the largest add that fits both
+    // Vest's buying power and a stop-out above the floor (the stop rebuilt from the new average, fees counted).
+    let chips = null,
+      pick = null;
+    if (held && price > 0 && +t.stopPts > 0) {
+      const dir = held.side === 'long' ? 1 : -1;
+      const lossFor = (a) => {
+        const total = held.qty + a,
+          avg = (held.qty * held.openPrice + a * price) / total;
+        return stopOutLoss({
+          side: held.side,
+          qty: total,
+          price,
+          stopPrice: avg - dir * +t.stopPts,
+          openFee: a * price * fee,
+          takerFee: fee,
+        });
+      };
+      const fits = (a) => riskRoom === null || lossFor(a) < riskRoom;
+      const chip = (key, label, a) => ({
+        key,
+        label,
+        qty: a,
+        why: !(a > 0)
+          ? key === 'max'
+            ? 'no room'
+            : 'too small'
+          : maxQty !== null && a > maxQty + meta.step / 2
+            ? 'over margin'
+            : !fits(a)
+              ? 'past floor'
+              : null,
+      });
+      let best = 0;
+      if (maxQty !== null && maxQty > 0) {
+        let lo = 0,
+          hi = maxQty;
+        for (let i = 0; i < 40; i++) {
+          const mid = (lo + hi) / 2;
+          fits(mid) ? (lo = mid) : (hi = mid);
+        }
+        best = floorStep(lo, meta.step);
+      }
+      chips = [
+        chip('25', '+25%', floorStep(held.qty * 0.25, meta.step)),
+        chip('50', '+50%', floorStep(held.qty * 0.5, meta.step)),
+        chip('100', '+100%', floorStep(held.qty, meta.step)),
+        chip('max', 'MAX', best),
+      ];
+      pick = chips.find((x) => x.key === S.addPick) || null;
+    }
+    const qty = pick
+      ? pick.qty
+      : t.sizeMode === 'max'
         ? maxQty || 0
         : t.sizeMode === 'risk'
           ? riskQty(+t.risk, +t.stopPts, meta.pointValue, meta.step)
@@ -5055,6 +5952,7 @@
     else if (!(price > 0)) error = 'Waiting for a live price…';
     else if (long.error) error = long.error;
     else if (t.beMode === 'points' && !(+t.beTrigger > 0)) error = 'Breakeven trigger must be above zero points.';
+    if (master && pick && pick.why) error = `Add ${pick.label}: ${pick.why}.`;
 
     // The allowed range for this account now: where the stop may go and how much can be risked (new positions; an add
     // is held to Vest's max only, since its room depends on the position already open).
@@ -5084,6 +5982,31 @@
           });
       } else fixes.push({ act: 'max', label: `Use max (${fmtQty(maxQty, sym)})` });
     }
+
+    // The Trade tab's two bars. Margin: how much of Vest's buying power the open position uses now and with this order
+    // (the max above is what's left, on the tightest account). Risk: what the stop would lose, fees included, now and with
+    // this order (an add rebuilds the stop from the new average), against the room left before the floor on the tightest
+    // account that copies the same size (the master, plus followers in strict 1:1 while armed).
+    const heldQty = held ? held.qty : 0;
+    const margin =
+      maxQty === null
+        ? null
+        : {
+            now: heldQty / (heldQty + maxQty || 1),
+            after: (heldQty + (qty > 0 ? qty : 0)) / (heldQty + maxQty || 1),
+            left: maxQty - (qty > 0 ? qty : 0),
+          };
+    const heldStop = held && (held.triggers || []).find((x) => x.kind === 'sl');
+    const risk2 = {
+      room: riskRoom,
+      by: riskBy,
+      now: !held
+        ? 0
+        : heldStop && price > 0
+          ? stopOutLoss({ side: held.side, qty: held.qty, price, stopPrice: heldStop.price, openFee: 0, takerFee: fee })
+          : null, // an open position without a stop
+      after: (held ? sides[held.side] : sides.long) ? (held ? sides[held.side] : sides.long).loss : null,
+    };
 
     // Warnings: the order can go, but it's probably not what you want.
     const warnings = [];
@@ -5116,6 +6039,10 @@
       fixes,
       warnings,
       error,
+      margin,
+      risk2,
+      chips,
+      pick,
     };
   }
 
@@ -5128,55 +6055,73 @@
     body.innerHTML = `
       <div class="trade">
         <div class="tr-top">
-          <div><div class="tr-sym" id="tr-sym"></div><div class="tr-acct" id="tr-acct"></div></div>
-          <div class="tr-pxw"><div class="tr-px" id="tr-px">—</div><div class="tr-pxl">Mark price</div></div>
+          <div class="tr-sym" id="tr-sym"></div>
+          <div class="tr-pxw"><div class="tr-px" id="tr-px">—</div><div class="tr-pxl">Mark</div></div>
         </div>
-        <div class="tr-sec">
-          <div class="tr-lbl">Size</div>
-          <div class="tr-row">${seg('sizeMode', [
-            ['qty', 'Contracts'],
-            ['risk', 'Risk $'],
-            ['max', 'Max'],
-          ])}<input class="tr-in" id="tr-size" inputmode="decimal" aria-label="Size"></div>
+        <div class="tr-acct" id="tr-acct"></div>
+        <div class="tr-lims" id="tr-lims" title="Margin: Vest's buying power (its 100%). Risk: what the stop would lose, fees included, against the room left before the floor.">
+          <div class="tr-lb"><span class="tr-lk">Margin</span><div class="tr-track"><i class="pv" id="tr-mpv"></i><i id="tr-mnow"></i></div>
+            <div class="tr-lt" id="tr-mtxt"></div></div>
+          <div class="tr-lb"><span class="tr-lk">Risk</span><div class="tr-track"><i class="pv" id="tr-rpv"></i><i id="tr-rnow"></i></div>
+            <div class="tr-lt" id="tr-rtxt"></div></div>
+          <div class="tr-tight" id="tr-tight"></div>
+        </div>
+        <div class="tr-f"><span class="tr-k">Size</span><div class="tr-row">${seg('sizeMode', [
+          ['qty', 'Qty'],
+          ['risk', 'Risk $'],
+          ['max', 'Max'],
+        ])}<input class="tr-in" id="tr-size" inputmode="decimal" aria-label="Size"></div></div>
+        <div class="tr-ind">
           <div class="tr-calc" id="tr-sizecalc"></div>
           <div class="tr-lim" id="tr-sizelim"></div>
         </div>
-        <div class="tr-sec">
-          <div class="tr-lbl">Stop</div>
-          <div class="tr-row">
-            <input class="tr-in" id="tr-stop" inputmode="decimal" aria-label="Stop, in points" value="${esc(t.stopPts)}">
-            <span class="tr-u">pts</span><span class="tr-calc tr-right" id="tr-stopcalc"></span>
-          </div>
-          <div class="tr-lim" id="tr-stoplim"></div>
-        </div>
-        <div class="tr-sec">
-          <div class="tr-lbl">Targets ${seg('scale', [
-            ['start', 'Start'],
-            ['even', 'Even'],
-            ['end', 'End'],
-          ])}</div>
+        <div class="tr-f"><span class="tr-k">Targets</span><div class="tr-row">${seg('scale', [
+          ['start', 'Start'],
+          ['even', 'Even'],
+          ['end', 'End'],
+        ])}<button class="tr-add" id="tr-add">+ Add</button></div></div>
+        <div class="tr-lad" role="table" aria-label="Stop, entry and targets">
+          <div class="tr-lh"><span id="tr-lhs">Sell at</span><span>pts · qty · $</span><span id="tr-lhb">Buy at</span></div>
+          <div class="tr-lr tr-ps" id="tr-passrow"><span class="tr-sp" id="ls-pass"></span><span class="tr-mid">Pass</span><span class="tr-bp" id="lb-pass"></span></div>
           <div id="tr-targets"></div>
-          <button class="tr-add" id="tr-add">+ Add target</button>
-          <div class="tr-lim">Stop and targets sit exactly your points from your fill price, re-placed right after entry.
-            Adding to an open trade rebuilds them for the whole position from the new average entry.</div>
+          <div class="tr-lr tr-mk" id="tr-mkrow" hidden><span class="tr-sp"></span><span class="tr-mid" id="tr-mk">Mark</span><span class="tr-bp" id="lb-mk"></span></div>
+          <div class="tr-lr tr-en"><span class="tr-sp" id="ls-entry"></span><span class="tr-mid" id="tr-entry">Entry</span><span class="tr-bp" id="lb-entry"></span></div>
+          <div class="tr-lr tr-slr"><span class="tr-sp" id="ls-stop"></span><span class="tr-mid"><span class="tr-n sl">STOP</span>
+            <input class="tr-in tr-pt" id="tr-stop" inputmode="decimal" aria-label="Stop, in points" value="${esc(t.stopPts)}">
+            <span class="tr-q" id="tr-stopq"></span><span class="tr-g dn" id="tr-stopcalc"></span><span class="tr-xs"></span></span><span class="tr-bp" id="lb-stop"></span></div>
+          <div class="tr-lr tr-fl" id="tr-failrow"><span class="tr-sp" id="ls-fail"></span><span class="tr-mid">Fail</span><span class="tr-bp" id="lb-fail"></span></div>
         </div>
-        <div class="tr-sec">
-          <div class="tr-lbl">Breakeven</div>
-          ${seg('beMode', [
-            ['off', 'Off'],
-            ['tp1', 'After TP1'],
-            ['points', 'At +pts'],
-          ])}
-          <div class="tr-row tr-be">
-            <span id="tr-betrigw">at <input class="tr-in sm" id="tr-betrig" inputmode="decimal" aria-label="Breakeven trigger, in points" value="${esc(t.beTrigger)}"> pts ·</span>
-            lock <input class="tr-in sm" id="tr-beoff" inputmode="decimal" aria-label="Profit to lock, in points" value="${esc(t.beOffset)}"> pts profit
-          </div>
+        <div class="tr-lim" id="tr-stoplim"></div>
+        <div class="tr-f"><span class="tr-k">Auto BE</span><div class="tr-row">${seg('beMode', [
+          ['off', 'Off'],
+          ['tp1', 'After TP1'],
+          ['points', 'At +pts'],
+        ])}</div></div>
+        <div class="tr-row tr-be tr-ind">
+          <span id="tr-betrigw">at <input class="tr-in sm" id="tr-betrig" inputmode="decimal" aria-label="Breakeven trigger, in points" value="${esc(t.beTrigger)}"> pts ·</span>
+          lock <input class="tr-in sm" id="tr-beoff" inputmode="decimal" aria-label="Profit to lock, in points" value="${esc(t.beOffset)}"> pts profit
         </div>
         <div class="tr-sum" id="tr-sum"></div>
         <div class="tr-warn" id="tr-warn"></div>
         <div class="tr-action">
           <div class="tr-err" id="tr-err"></div>
-          <div class="tr-go"><button class="tr-buy" id="tr-buy">Buy</button><button class="tr-sell" id="tr-sell">Sell</button></div>
+          <div class="tr-pos" id="tr-pos" hidden>
+            <div class="tr-posbar"><span class="tr-side" id="tr-pside"></span><span class="tr-pq" id="tr-pqty"></span>
+              <span class="tr-pa" id="tr-pavg"></span><span class="tr-ppl" id="tr-ppl"></span></div>
+            <div class="tr-go"><button class="tr-bebtn" id="tr-be">Breakeven</button><button class="tr-close" id="tr-close">Close</button></div>
+            <div class="tr-addh"><span>Add to position</span><span id="tr-addof"></span></div>
+            <div class="tr-chips" id="tr-chips"></div>
+            <div class="tr-addpv" id="tr-addpv"></div>
+          </div>
+          <div class="tr-go" id="tr-mgo"><button class="tr-buy" id="tr-buy">Buy</button><button class="tr-sell" id="tr-sell">Sell</button></div>
+          <div class="tr-go tr-lgo" id="tr-lgo">
+            <button class="tr-lbuy" id="tr-lbuy" title="Buy limit: click Vest's chart for the price, or type it"><svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1v4M8 11v4M1 8h4M11 8h4" stroke="currentColor" stroke-width="1.6" fill="none"/><circle cx="8" cy="8" r="1.4" fill="currentColor"/></svg> Buy LMT</button>
+            <button class="tr-lsell" id="tr-lsell" title="Sell limit: click Vest's chart for the price, or type it"><svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1v4M8 11v4M1 8h4M11 8h4" stroke="currentColor" stroke-width="1.6" fill="none"/><circle cx="8" cy="8" r="1.4" fill="currentColor"/></svg> Sell LMT</button></div>
+          <div class="tr-pick" id="tr-pick" hidden>
+            <div class="tr-pickbar"><span id="tr-picktxt"></span><span class="tr-esc">Esc to cancel</span></div>
+            <div class="tr-pickrow"><input class="tr-in" id="tr-lpx" inputmode="decimal" aria-label="Limit price" placeholder="price">
+              <button class="tr-place" id="tr-place">Place</button><button class="tr-pcancel" id="tr-pcancel">Cancel</button></div>
+          </div>
         </div>
         <div class="tr-preview" id="tr-preview"></div>
         <div class="tr-plans" id="tr-plans"></div>
@@ -5224,7 +6169,16 @@
     };
     body.querySelector('#tr-buy').onclick = () => placeTrade('long');
     body.querySelector('#tr-sell').onclick = () => placeTrade('short');
+    body.querySelector('#tr-be').onclick = () => breakevenNow();
+    body.querySelector('#tr-lbuy').onclick = () => startPick('long');
+    body.querySelector('#tr-lsell').onclick = () => startPick('short');
+    body.querySelector('#tr-place').onclick = () => placePick();
+    body.querySelector('#tr-pcancel').onclick = () => stopPick();
+    const lpx = body.querySelector('#tr-lpx');
+    lpx.addEventListener('input', () => setPickPrice(parse(lpx), false));
+    body.querySelector('#tr-close').onclick = () => closeNow();
     renderTargets(body);
+    followVestMarket();
     watchPrice(t.symbol);
     loadSymbolRules(t.symbol).then(updateTrade);
     refreshTradeState();
@@ -5290,7 +6244,9 @@
       });
   }
 
-  async function placeTrade(side) {
+  // `limitPx`: a GTC limit order at that price (a new trade only), with the stop and targets measured from it; without
+  // it, a market order. Returns true once Vest has accepted the order.
+  async function placeTrade(side, limitPx = null) {
     if (S.placing || S.adjusting) return;
     if (S.flattening) return toast('Wait for Flatten All to finish.');
     if (!S.ack) {
@@ -5320,9 +6276,19 @@
       master = S.master;
     S.placing = true;
     updateTrade();
+    let placed = false;
     try {
       const px = priceOf(sym); // the price at the moment of the click
-      const plan = planPrices({ side, entry: px, stopPts, targetPts: t.targets, tick: meta.tick });
+      if (limitPx) {
+        const lp = fmtNum(limitPx, pDec);
+        if (!nearMarket(limitPx, px, NEAR_MARKET_LOOSE))
+          throw new Error(`a limit at ${lp} is nowhere near the market (${fmtNum(px, pDec)})`);
+        if (side === 'long' ? limitPx >= px : limitPx <= px)
+          throw new Error(
+            `a ${side === 'long' ? 'buy' : 'sell'} limit must be ${side === 'long' ? 'below' : 'above'} the mark (${fmtNum(px, pDec)}): there it would fill at once — use ${side === 'long' ? 'Buy' : 'Sell'} for a market order`,
+          );
+      }
+      const plan = planPrices({ side, entry: limitPx || px, stopPts, targetPts: t.targets, tick: meta.tick });
       if (plan.error) throw new Error(plan.error);
       if (!(SYMBOLS[sym] && SYMBOLS[sym].margin)) await loadSymbolRules(sym);
       const lev = orderLeverage(levFor(await fetchLeverages(), master, sym), maxLeverageFor(sym, master));
@@ -5333,6 +6299,14 @@
       // Already in this market? Vest ignores a second open on the same symbol (accepted, never filled), so do what its own
       // ticket does: same direction adds to the position; the opposite direction is refused here.
       const held = await openPosition(master, sym);
+      if (held && !(parseFloat(held.quantity) > 0))
+        throw new Error(
+          `an order is already waiting on ${meta.label} for ${accLabel(master)} — cancel it in Vest first (Vest allows one per market)`,
+        );
+      if (held && limitPx)
+        throw new Error(
+          `${accLabel(master)} is already in ${meta.label}: a limit from the panel opens a new trade only`,
+        );
       if (held && held.side !== side) {
         throw new Error(
           `${accLabel(master)} is ${held.side} ${held.quantity} ${meta.label} — close or reduce it first (the panel only adds in the same direction)`,
@@ -5351,14 +6325,15 @@
       });
       const stopLosses = [{ executionType: 'market', triggerPrice: fmtNum(plan.stop, pDec) }];
       const body = {
-        orderType: 'market',
+        orderType: limitPx ? 'limit' : 'market',
         leverage: fmtNum(lev, 2),
         side,
         symbol: sym,
         quantity: fmtQty(c.qty, sym),
-        timeInForce: 'IOC',
+        timeInForce: limitPx ? 'GTC' : 'IOC',
         takeProfits,
         stopLosses,
+        ...(limitPx ? { price: fmtNum(limitPx, pDec) } : {}),
       };
       const res = await send('POST', '/v3/positions/open', master, body);
       if (!res.positionId) throw new Error('Vest returned no position');
@@ -5367,8 +6342,9 @@
         .join(' · ');
       logEvent(
         'ok',
-        `Trade panel: ${side === 'long' ? 'BUY' : 'SELL'} ${body.quantity} ${meta.label} · stop ${stopLosses[0].triggerPrice} · ${tps}`,
+        `Trade panel: ${side === 'long' ? 'BUY' : 'SELL'}${limitPx ? ' LIMIT' : ''} ${body.quantity} ${meta.label}${limitPx ? ` @ ${body.price}` : ''} · stop ${stopLosses[0].triggerPrice} · ${tps}`,
       );
+      placed = true;
       diag('trade_panel', {
         outcome: 'placed',
         side,
@@ -5379,9 +6355,14 @@
         takeProfitIds: res.takeProfitIds,
         stopLossIds: res.stopLossIds,
       });
-      const reanchorOn = true; // always: stop and targets end up exactly their points from the real fill
+      // A market order's stop and targets are re-placed exactly from the real fill. A limit's are already measured from its
+      // price (it fills there or better) and it may rest for a long time, so it isn't re-anchored or watched for
+      // breakeven: Breakeven by hand does that once it fills.
+      const reanchorOn = !limitPx;
+      if (limitPx && t.beMode !== 'off')
+        logEvent('info', 'Auto breakeven watches market orders only: once this limit fills, use Breakeven.');
       let bePlan = null;
-      if (t.beMode !== 'off') {
+      if (t.beMode !== 'off' && !limitPx) {
         bePlan = {
           positionId: res.positionId,
           orderId: res.orderId,
@@ -5424,8 +6405,10 @@
     } finally {
       S.placing = false;
       updateTrade();
+      refreshTradeState(); // the position (or the add) shows right away, not with the next balance read
       setTimeout(refreshBalances, BALANCE_AFTER_TRADE_MS); // the next max size and fail price start from the new balance
     }
+    return placed;
   }
 
   // Vest's position `openPrice` can be wrong for a moment right after a fill (seen live: 290.25 for a 31,148 fill), so
@@ -5591,15 +6574,22 @@
       SL = '/v3/positions/stop-loss',
       base = { positionId, executionType: 'market' };
     tps.slice(n).forEach((l) => ops.push({ m: 'DELETE', path: TP, body: { positionId, takeProfitId: l.id } }));
+    // An add never loosens the stop: one already tighter than the rebuilt one (moved to breakeven, say) stays put.
+    let stopAt = exact.stop,
+      keptStop = false;
     if (stops[0]) {
       const st = stops[0];
-      if (Math.abs(st.price - exact.stop) >= tick / 2 || st.qty != null) {
+      if (side === 'long' ? st.price > exact.stop + tick / 2 : st.price < exact.stop - tick / 2) {
+        stopAt = st.price;
+        keptStop = true;
+      }
+      if (Math.abs(st.price - stopAt) >= tick / 2 || st.qty != null) {
         ops.push({
           m: 'PUT',
           path: SL,
           body: {
             ...base,
-            triggerPrice: fmtP(exact.stop),
+            triggerPrice: fmtP(stopAt),
             stopLossId: st.id,
             ...(st.qty != null ? { quantity: fmtQ(total) } : {}),
           },
@@ -5652,14 +6642,15 @@
     else
       logEvent(
         'ok',
-        `Added — ${fmtQ(total)} @ avg ${fmtP(entry)} · stop ${fmtP(exact.stop)} · ${goal.map((g, i) => `TP${i + 1} ${fmtP(g.price)}${g.qty != null ? ' × ' + fmtQ(g.qty) : ''}`).join(' · ')}`,
+        `Added — ${fmtQ(total)} @ avg ${fmtP(entry)} · stop ${fmtP(stopAt)}${keptStop ? ' (kept: tighter than a rebuilt one)' : ''} · ${goal.map((g, i) => `TP${i + 1} ${fmtP(g.price)}${g.qty != null ? ' × ' + fmtQ(g.qty) : ''}`).join(' · ')}`,
       );
     diag('add_ladder', {
       positionId,
       outcome: failed ? 'partial' : 'rebuilt',
       total,
       entry,
-      stop: exact.stop,
+      stop: stopAt,
+      keptStop,
       targets: goal,
       ops: ops.map((o) => o.m + ' ' + o.path.split('/').pop()),
       failed,
@@ -5668,6 +6659,13 @@
     // breakeven follows the panel's setting, measured from the new average entry
     if (t.beMode === 'off') {
       if (old && S.plans[positionId] === old) endPlan(old, 'Breakeven: off for this trade now (Trade tab setting).');
+      return;
+    }
+    // a kept stop already at or past breakeven of the new average: breakeven is done for this trade
+    const beNew = breakevenPrice({ side, entry, offsetPts: +t.beOffset || 0, tick });
+    if (keptStop && (side === 'long' ? stopAt >= beNew - tick / 2 : stopAt <= beNew + tick / 2)) {
+      if (old && S.plans[positionId] === old)
+        endPlan(old, `Breakeven: the stop (${fmtP(stopAt)}) is already at or past breakeven for the new average.`);
       return;
     }
     const fresh = await tryOpenPosition(master, sym);
@@ -5795,6 +6793,245 @@
     done();
   }
 
+  // ── A limit price from a click on Vest's chart. The chart is TradingView in a same-origin frame, whose API Vest itself
+  // uses for its own ticket's Limit: the crosshair's price at a click (the mouse moving at most 3 px between down and
+  // up), rounded to the tick. The panel listens only while picking, draws the pending order as a line, and sends
+  // nothing until Place. Typing the price works too, with or without the chart.
+  const PICK_CLICK_PX = 3;
+  S.pick = null; // { side, price, chart } while picking a limit price
+  let _pickOff = null,
+    _pickLine = null,
+    _pickLineKey = '';
+  function chartApi() {
+    for (const f of document.querySelectorAll('iframe')) {
+      try {
+        const w = f.contentWindow,
+          api = w && w.tradingViewApi;
+        if (api && typeof api.activeChart === 'function' && typeof api.subscribe === 'function') return { api, win: w };
+      } catch {
+        /* best effort: nothing to do if this fails */
+      }
+    }
+    return null;
+  }
+  const onPickKey = (e) => {
+    if (e.key === 'Escape' && S.pick) {
+      e.preventDefault();
+      stopPick();
+    }
+  };
+  function startPick(side) {
+    if (S.placing || S.adjusting || S.flattening) return;
+    stopPick(true);
+    S.pick = { side, price: null, chart: false };
+    window.addEventListener('keydown', onPickKey, true);
+    const tv = chartApi();
+    if (tv)
+      try {
+        const chart = tv.api.activeChart();
+        let last = null,
+          down = null;
+        const move = (d) => (last = d && Number.isFinite(d.price) && d.price > 0 ? d.price : null);
+        const dn = (d) => (down = d ? { x: d.clientX, y: d.clientY } : null);
+        const up = (d) => {
+          const click =
+            down && d && Math.abs(d.clientX - down.x) <= PICK_CLICK_PX && Math.abs(d.clientY - down.y) <= PICK_CLICK_PX;
+          down = null;
+          if (click && last !== null && S.pick) setPickPrice(roundTick(last, SYMBOLS[S.trade.symbol].tick), true);
+        };
+        chart.crossHairMoved().subscribe(null, move);
+        tv.api.subscribe('mouse_down', dn);
+        tv.api.subscribe('mouse_up', up);
+        tv.win.addEventListener('keydown', onPickKey, true);
+        S.pick.chart = chart;
+        _pickOff = () => {
+          try {
+            chart.crossHairMoved().unsubscribe(null, move);
+            tv.api.unsubscribe('mouse_down', dn);
+            tv.api.unsubscribe('mouse_up', up);
+            tv.win.removeEventListener('keydown', onPickKey, true);
+          } catch {
+            /* best effort: nothing to do if this fails */
+          }
+        };
+      } catch {
+        S.pick.chart = false;
+      }
+    diag('trade_panel', { outcome: 'pick-start', side, chart: !!S.pick.chart });
+    updateTrade();
+    const el = _root && _root.querySelector('#tr-lpx');
+    if (el) {
+      el.value = '';
+      if (!S.pick.chart) el.focus();
+    }
+  }
+  function setPickPrice(p, fromChart) {
+    if (!S.pick) return;
+    S.pick.price = p > 0 ? p : null;
+    const el = _root && _root.querySelector('#tr-lpx');
+    if (fromChart && el) el.value = S.pick.price ? fmtNum(p, decimalsOf(SYMBOLS[S.trade.symbol].tick)) : '';
+    updateTrade();
+  }
+  // The pending order on Vest's chart, as a line (TradingView's order line), kept in step with the price and size.
+  function drawPickLine(qty) {
+    const chart = S.pick && S.pick.chart;
+    const key = chart && S.pick.price ? `${S.pick.side}|${S.pick.price}|${qty}` : '';
+    if (key === _pickLineKey) return;
+    _pickLineKey = key;
+    try {
+      if (!key) {
+        if (_pickLine) _pickLine.remove();
+        _pickLine = null;
+        return;
+      }
+      const col = S.pick.side === 'long' ? '#c8f542' : '#ff5a4f';
+      if (!_pickLine) _pickLine = chart.createOrderLine();
+      _pickLine
+        .setPrice(S.pick.price)
+        .setText(`${S.pick.side === 'long' ? 'BUY' : 'SELL'} LMT · STRATUH Copier`)
+        .setQuantity(qty > 0 ? fmtQty(qty, S.trade.symbol) : '')
+        .setLineColor(col)
+        .setBodyBorderColor(col)
+        .setBodyTextColor('#0c0c0d')
+        .setBodyBackgroundColor(col)
+        .setQuantityBorderColor(col)
+        .setQuantityBackgroundColor('#0c0c0d')
+        .setQuantityTextColor(col)
+        .setLineStyle(2);
+    } catch {
+      // the line is a convenience: the panel shows the price either way
+    }
+  }
+  function stopPick(quiet) {
+    if (_pickOff) _pickOff();
+    _pickOff = null;
+    if (_pickLine)
+      try {
+        _pickLine.remove();
+      } catch {
+        /* best effort: nothing to do if this fails */
+      }
+    _pickLine = null;
+    _pickLineKey = '';
+    window.removeEventListener('keydown', onPickKey, true);
+    if (!S.pick) return;
+    S.pick = null;
+    if (!quiet) updateTrade();
+  }
+  async function placePick() {
+    if (!S.pick || !(S.pick.price > 0)) return;
+    const { side, price } = S.pick;
+    if (await placeTrade(side, price)) stopPick();
+  }
+
+  // ── Breakeven and Close by hand, for the master's open position in this market. Both go through the hooked fetch, so
+  // an armed copier moves each follower's stop / closes each follower like the master. Breakeven = entry + the Auto BE
+  // "lock" points, only once price is past it (a stop must stay on the losing side) and only if it tightens the stop.
+  // Vest triggers stops on the best bid (longs) / ask (shorts), and refuses a stop the bid has already passed (seen live:
+  // HTTP 400 with the mark a fraction above it). So price must be clear of breakeven by about a spread: 4 ticks.
+  const BE_CLEAR_TICKS = 4;
+  function breakevenPlan(h, px, tick) {
+    const be = breakevenPrice({ side: h.side, entry: h.openPrice, offsetPts: 0, tick }); // breakeven: the average entry
+    const clear = BE_CLEAR_TICKS * tick;
+    const sl = (h.triggers || []).find((x) => x.kind === 'sl');
+    const long = h.side === 'long';
+    const why = !sl
+      ? 'This position has no stop to move.'
+      : !(px > 0)
+        ? 'Waiting for a live price…'
+        : long
+          ? sl.price >= be
+            ? 'The stop is already at or past breakeven.'
+            : px <= be + clear
+              ? `Price needs to be above ${fmtPx(be + clear, tick)} first (stops trigger on the bid).`
+              : null
+          : sl.price <= be
+            ? 'The stop is already at or past breakeven.'
+            : px >= be - clear
+              ? `Price needs to be below ${fmtPx(be - clear, tick)} first (stops trigger on the ask).`
+              : null;
+    return { price: be, sl, why };
+  }
+  async function breakevenNow() {
+    if (S.placing || S.adjusting || S.flattening) return;
+    const master = S.master,
+      sym = S.trade.symbol,
+      meta = SYMBOLS[sym],
+      tick = meta.tick,
+      fmt = (n) => fmtNum(n, decimalsOf(tick));
+    if (!master) return;
+    S.placing = true;
+    updateTrade();
+    try {
+      // read the position fresh: its entry and stop as Vest has them now
+      const pos = await openPosition(master, sym);
+      if (!pos) throw new Error(`${accLabel(master)} has no open ${meta.label} position`);
+      const px = priceOf(sym),
+        entry = parseFloat(pos.openPrice);
+      if (!nearMarket(entry, px, NEAR_MARKET_LOOSE))
+        throw new Error(`Vest shows an entry of ${pos.openPrice}, nowhere near the market — move the stop yourself`);
+      const h = { side: pos.side, openPrice: entry, triggers: posLegs(pos) };
+      const be = breakevenPlan(h, px, tick);
+      if (be.why) throw new Error(be.why.replace(/\.$/, ''));
+      await send('PUT', '/v3/positions/stop-loss', master, {
+        positionId: posIdOf(pos),
+        executionType: 'market',
+        triggerPrice: fmt(be.price),
+        stopLossId: be.sl.id,
+      });
+      const plan = S.plans[posIdOf(pos)];
+      if (plan) {
+        plan.moved = true;
+        endPlan(plan, null);
+      }
+      logEvent('ok', `Breakeven: stop moved to ${fmt(be.price)} (entry ${fmt(entry)}, by hand).`);
+      diag('breakeven', { outcome: 'moved-manual', positionId: posIdOf(pos), entry, stop: fmt(be.price), price: px });
+    } catch (e) {
+      const why =
+        /HTTP 400/.test(e.message) && !e.message.includes('Price needs')
+          ? `Vest refused the stop (price was too close to breakeven: stops trigger on the bid/ask)`
+          : e.message;
+      logEvent('warn', `Breakeven: not moved — ${why}.`);
+      diag('breakeven', {
+        outcome: 'manual-refused',
+        error: e.message,
+        errorCode: errCode(e),
+        price: priceOf(sym),
+      });
+    } finally {
+      S.placing = false;
+      updateTrade();
+      refreshTradeState();
+    }
+  }
+  async function closeNow() {
+    if (S.placing || S.adjusting || S.flattening) return;
+    const master = S.master,
+      sym = S.trade.symbol,
+      meta = SYMBOLS[sym];
+    if (!master) return;
+    S.placing = true;
+    updateTrade();
+    try {
+      const pos = await openPosition(master, sym);
+      if (!pos) throw new Error(`${accLabel(master)} has no open ${meta.label} position`);
+      const lev = orderLeverage(levFor(await fetchLeverages(), master, sym), maxLeverageFor(sym, master));
+      await send('POST', '/v3/positions/close', master, closeBody(sym, posIdOf(pos), lev, master));
+      logEvent(
+        'ok',
+        `Trade panel: CLOSE ${pos.quantity} ${meta.label} on ${accLabel(master)}${S.armed ? ' — the copier closes the followers' : ''}.`,
+      );
+      diag('trade_panel', { outcome: 'closed', positionId: posIdOf(pos), quantity: pos.quantity });
+    } catch (e) {
+      logEvent('warn', `Close: not sent — ${e.message}.`);
+      diag('trade_panel', { outcome: 'close-failed', error: e.message, errorCode: errCode(e) });
+    } finally {
+      S.placing = false;
+      updateTrade();
+      refreshTradeState();
+    }
+  }
+
   // ── Breakeven engine. One plan per trade placed from the panel, saved so a page reload keeps watching. It watches the
   // live mark price; once due (TP1 crossed, or +X pts in favour) it moves the master's stop to entry + offset. That move
   // goes through the hooked fetch too, so an armed copier moves the followers' stops with it.
@@ -5849,7 +7086,9 @@
         const open = pos ? parseFloat(pos.openPrice) : NaN;
         if (pos && nearMarket(open, priceOf(p.symbol) || open, NEAR_MARKET_LOOSE)) p.entry = open;
         else return endPlan(p, "Breakeven: the trade didn't open, nothing to watch.");
-      } catch {}
+      } catch {
+        /* best effort: nothing to do if this fails */
+      }
     }
     savePlans();
     updateTrade();
@@ -5976,7 +7215,9 @@
             .forEach((p) =>
               endPlan(p, "Breakeven: couldn't find this trade's entry — stopped watching. Manage the stop yourself."),
             );
-        } catch {}
+        } catch {
+          /* best effort: nothing to do if this fails */
+        }
       }
     }, PLAN_WATCH_MS);
   }
@@ -5986,15 +7227,17 @@
   const DEFAULT_TARGET_PTS = 20;
   function renderTargets(body) {
     const box = body.querySelector('#tr-targets');
+    // ladder rows, farthest target on top (Buy prices rise up the right column, Sell prices fall down the left)
     box.innerHTML = S.trade.targets
       .map(
         (p, i) => `
-      <div class="tr-tgt"><span class="tr-n">TP${i + 1}</span>
-        <input class="tr-in" data-t="${i}" inputmode="decimal" aria-label="Target ${i + 1}, in points" value="${esc(p)}"><span class="tr-u">pts</span>
+      <div class="tr-lr tr-tgt"><span class="tr-sp" id="ls-t${i}"></span><span class="tr-mid"><span class="tr-n">TP${i + 1}</span>
+        <input class="tr-in tr-pt" data-t="${i}" inputmode="decimal" aria-label="Target ${i + 1}, in points" value="${esc(p)}">
         <span class="tr-q" id="tq${i}"></span><span class="tr-g" id="tg${i}"></span>
         <button class="tr-x" data-del="${i}" title="Remove target ${i + 1}" aria-label="Remove target ${i + 1}"
-          ${S.trade.targets.length < 2 ? 'disabled' : ''}>×</button></div>`,
+          ${S.trade.targets.length < 2 ? 'disabled' : ''}>×</button></span><span class="tr-bp" id="lb-t${i}"></span></div>`,
       )
+      .reverse()
       .join('');
     box.querySelectorAll('[data-t]').forEach((el) =>
       el.addEventListener('input', () => {
@@ -6020,6 +7263,10 @@
     if (!body || body.dataset.view !== 'trade' || !body.querySelector('.trade')) return;
     const c = tradeCalc(),
       $ = (id) => body.querySelector('#' + id);
+    const set = (id, v) => {
+      const el = $(id);
+      if (el && el.textContent !== v) el.textContent = v;
+    };
     $('tr-sym').innerHTML = `${esc(c.meta.label)} <span class="chip">${esc(c.t.symbol)}</span>`;
     $('tr-acct').textContent =
       S.master && S.byId[S.master]
@@ -6036,8 +7283,9 @@
       c.maxQty === null
         ? ''
         : `Vest's 100% at ${c.lev}x${c.limitedBy && c.limitedBy !== S.master ? `, limited by ${accLabel(c.limitedBy)}` : ''}`;
-    $('tr-sizecalc').textContent =
-      c.t.sizeMode === 'max'
+    $('tr-sizecalc').textContent = c.pick
+      ? `Add uses ${c.pick.label} (${fmtQty(c.qty, c.t.symbol)}): click it again for this size`
+      : c.t.sizeMode === 'max'
         ? c.qty > 0
           ? `= ${fmtQty(c.qty, c.t.symbol)} contracts · ${maxNote}`
           : ''
@@ -6084,7 +7332,7 @@
     body.querySelector('.tr-be').style.display = c.t.beMode === 'off' ? 'none' : '';
     $('tr-sum').innerHTML =
       c.qty > 0 && c.qtys.length
-        ? `Risk <b>${fmtUsd(c.risk)}</b>${c.fees > 0 ? ` + ${fmtUsd(c.fees)} fees` : ''} · Reward <b>${fmtUsd(c.reward)}</b> · <b>${c.risk > 0 ? (c.reward / c.risk).toFixed(2) : '—'}R</b>`
+        ? `${c.held ? 'This add · ' : ''}Risk <b>${fmtUsd(c.risk)}</b>${c.fees > 0 ? ` + ${fmtUsd(c.fees)} fees` : ''} · Reward <b>${fmtUsd(c.reward)}</b> · <b>${c.risk > 0 ? (c.reward / c.risk).toFixed(2) : '—'}R</b>`
         : '';
     const fixHtml = c.fixes
       .map(
@@ -6122,24 +7370,240 @@
       (c.blocked ? 'Over what the account can open: use a fix above, or change the size or stop.' : '') ||
       (S.adjusting ? 'Adjusting stop & targets…' : '');
     const q = c.qty > 0 ? fmtQty(c.qty, c.t.symbol) : '';
-    $('tr-buy').textContent = `Buy ${q}`;
-    $('tr-sell').textContent = `Sell ${q}`;
-    $('tr-buy').disabled = $('tr-sell').disabled = !!c.error || !!c.blocked || !!S.placing || !!S.adjusting;
-    const row = (lbl, pr, o) => {
-      const tps = pr.targets.map((x, i) => `TP${i + 1} <b>${fmtPx(x, c.meta.tick)}</b>`).join(' · ');
-      const px = (n) => fmtPx(roundTick(n, c.meta.tick), c.meta.tick);
-      const ends =
-        (o && o.fail ? ` · fail <b class="tr-fail">${px(o.fail)}</b>` : '') +
-        (o && o.pass ? ` · pass <b class="tr-pass">${px(o.pass)}</b>` : '');
-      return `<div><span class="tr-pl">${lbl}</span> stop <b>${fmtPx(pr.stop, c.meta.tick)}</b> · ${tps}${ends}</div>`;
-    };
-    $('tr-preview').innerHTML = !c.error
-      ? row('Buy', c.long, c.sides.long) +
-        row('Sell', c.short, c.sides.short) +
-        (c.sides.long && (c.sides.long.fail || c.sides.long.pass)
-          ? '<div class="tr-note">Fail and pass: where your equity reaches the floor or the target, counting the opening fee. Estimates, like Vest\'s own.</div>'
-          : '')
-      : '';
+    const h = c.held,
+      busy = !!S.placing || !!S.adjusting || !!S.flattening;
+    $('tr-buy').textContent = h && h.side === 'long' ? `Add ${q}` : `Buy ${q}`;
+    $('tr-sell').textContent = h && h.side === 'short' ? `Add ${q}` : `Sell ${q}`;
+    $('tr-buy').hidden = !!h && h.side !== 'long';
+    $('tr-sell').hidden = !!h && h.side !== 'short';
+    $('tr-buy').disabled = $('tr-sell').disabled = !!c.error || !!c.blocked || busy;
+    $('tr-pos').hidden = !h;
+    // limits: a new trade only, so the limit row shows when flat; while picking, the pick replaces both rows
+    if (h && S.pick) stopPick(true);
+    const pk = S.pick;
+    $('tr-mgo').hidden = !!pk;
+    $('tr-lgo').hidden = !!h || !!pk;
+    $('tr-lbuy').disabled = $('tr-lsell').disabled = !!c.error || !!c.blocked || busy;
+    $('tr-pick').hidden = !pk;
+    if (pk) {
+      const lp = pk.price,
+        wrongSide = lp > 0 && c.price > 0 && (pk.side === 'long' ? lp >= c.price : lp <= c.price);
+      set(
+        'tr-picktxt',
+        wrongSide
+          ? `A ${pk.side === 'long' ? 'buy' : 'sell'} limit goes ${pk.side === 'long' ? 'below' : 'above'} the mark`
+          : pk.chart
+            ? "Click Vest's chart to set the price"
+            : 'Type the limit price',
+      );
+      $('tr-picktxt').className = wrongSide ? 'bad' : '';
+      $('tr-place').textContent =
+        lp > 0
+          ? `Place ${pk.side === 'long' ? 'Buy' : 'Sell'} LMT ${q} @ ${fmtPx(lp, c.meta.tick)}`
+          : `Place ${pk.side === 'long' ? 'Buy' : 'Sell'} LMT`;
+      $('tr-place').className = 'tr-place ' + pk.side;
+      $('tr-place').disabled = !(lp > 0) || wrongSide || !!c.error || !!c.blocked || busy;
+      drawPickLine(c.qty);
+    }
+    if (h) {
+      const tick = c.meta.tick,
+        dir = h.side === 'long' ? 1 : -1;
+      const pnl = c.price > 0 ? dir * h.qty * (c.price - h.openPrice) * c.meta.pointValue : null;
+      const entry = [...Object.values(S.posMap)].find((e) => e.symbol === h.symbol && e.master === S.master);
+      const accts = S.armed && entry ? 1 + Object.keys(entry.followers || {}).length : 1;
+      set('tr-pside', h.side === 'long' ? 'Long' : 'Short');
+      $('tr-pside').className = 'tr-side ' + h.side;
+      set('tr-pqty', `${fmtQty(h.qty, h.symbol)} ${c.meta.label}`);
+      set('tr-pavg', `avg ${fmtPx(h.openPrice, tick)} · ${accts} acct${accts === 1 ? '' : 's'}`);
+      set('tr-ppl', pnl === null ? '' : (pnl >= 0 ? '+' : '−') + fmtUsd(pnl));
+      $('tr-ppl').className = 'tr-ppl ' + (pnl === null ? '' : pnl >= 0 ? 'pos' : 'neg');
+      const be = breakevenPlan(h, c.price, tick);
+      $('tr-be').textContent = be.price > 0 ? `Breakeven ${fmtPx(be.price, tick)}` : 'Breakeven';
+      $('tr-be').disabled = busy || !!be.why;
+      $('tr-be').title = be.why || `Move the stop to ${fmtPx(be.price, tick)}, your average entry`;
+      $('tr-close').textContent = `Close ${fmtQty(h.qty, h.symbol)}`;
+      $('tr-close').disabled = busy;
+      // add chips: a click picks one, a second click goes back to the Size field
+      set('tr-addof', `of ${fmtQty(h.qty, h.symbol)} · or the Size above`);
+      const chipsHtml = (c.chips || [])
+        .map(
+          (x) =>
+            `<button class="tr-chip${S.addPick === x.key ? ' on' : ''}${x.why ? ' no' : ''}" data-add="${x.key}" ${busy || (x.why && S.addPick !== x.key) ? 'disabled' : ''}
+              title="${x.why ? esc(x.label + ': ' + x.why) : esc(`Add ${fmtQty(x.qty, h.symbol)}`)}"><b>${x.label}</b><span>${esc(x.why || fmtQty(x.qty, h.symbol))}</span></button>`,
+        )
+        .join('');
+      const box = $('tr-chips');
+      if (box.dataset.html !== chipsHtml) {
+        box.dataset.html = chipsHtml;
+        box.innerHTML = chipsHtml;
+        box.querySelectorAll('[data-add]').forEach(
+          (b) =>
+            (b.onclick = () => {
+              S.addPick = S.addPick === b.dataset.add ? null : b.dataset.add;
+              updateTrade();
+            }),
+        );
+      }
+      const addQ = c.qty > 0 ? c.qty : 0,
+        tot = h.qty + addQ;
+      const avgA = tot > 0 ? (h.qty * h.openPrice + addQ * c.price) / tot : 0;
+      const o = c.sides[h.side];
+      set(
+        'tr-addpv',
+        addQ > 0 && c.price > 0 && !c.error
+          ? `→ ${fmtQty(tot, h.symbol)} · avg ${fmtPx(avgA, tick)}${o ? ` · stop-out ${fmtUsd(o.loss)}` : ''} · stop and targets rebuild from the new average`
+          : '',
+      );
+    } else if (S.addPick) S.addPick = null; // flat again: chips reset
+    // The ladder: Buy prices on the right, Sell prices on the left, from the live mark (re-placed from the fill).
+    const ok = !c.error && c.price > 0;
+    const px = (n) => (ok && n > 0 ? fmtPx(roundTick(n, c.meta.tick), c.meta.tick) : '—');
+    const h2 = c.held,
+      lad = body.querySelector('.tr-lad');
+    const pk2 = !h2 && S.pick && S.pick.price > 0 ? S.pick : null;
+    lad.classList.toggle('one', !!h2 || !!pk2);
+    set('tr-lhs', h2 || pk2 ? '' : 'Sell at');
+    set('tr-lhb', h2 ? 'Price' : pk2 ? (pk2.side === 'long' ? 'Buy at' : 'Sell at') : 'Buy at');
+    $('tr-mkrow').hidden = !(h2 || pk2) || !ok;
+    if (pk2) {
+      // a limit: its stop and targets measured from the limit price (it fills there or better)
+      const lv = planPrices({
+        side: pk2.side,
+        entry: pk2.price,
+        stopPts: +c.t.stopPts,
+        targetPts: c.t.targets.map(Number),
+        tick: c.meta.tick,
+      });
+      c.t.targets.forEach((_, i) => set('lb-t' + i, px(lv.targets && lv.targets[i])));
+      set('lb-stop', px(lv.stop));
+      set('lb-entry', px(pk2.price));
+      set('tr-entry', c.qty > 0 ? `Limit · ${fmtQty(c.qty, c.t.symbol)}` : 'Limit');
+      set('tr-stopq', c.qty > 0 ? fmtQty(c.qty, c.t.symbol) : '');
+      const away = Math.abs(c.price - pk2.price);
+      set('tr-mk', `Mark · ${fmtNum(away, decimalsOf(c.meta.tick))} pts away`);
+      set('lb-mk', px(c.price));
+      $('tr-failrow').hidden = $('tr-passrow').hidden = true; // measured from the mark: not for a resting limit
+    } else if (h2) {
+      // in a trade: the levels an add would leave, rebuilt from the new average; Vest's chart shows the current ones
+      const addQ = c.qty > 0 ? c.qty : 0,
+        total = h2.qty + addQ,
+        avg = (h2.qty * h2.openPrice + addQ * c.price) / total;
+      const lv = planPrices({
+        side: h2.side,
+        entry: avg,
+        stopPts: +c.t.stopPts,
+        targetPts: c.t.targets.map(Number),
+        tick: c.meta.tick,
+      });
+      c.t.targets.forEach((_, i) => set('lb-t' + i, px(lv.targets && lv.targets[i])));
+      set('lb-stop', px(lv.stop));
+      set('lb-entry', px(avg));
+      set('tr-entry', addQ ? `Avg after add · ${fmtQty(total, c.t.symbol)}` : `Avg · ${fmtQty(total, c.t.symbol)}`);
+      set('tr-stopq', fmtQty(total, c.t.symbol));
+      // the rebuilt ladder covers the whole position: its sizes and dollars, not the add's
+      const all = splitQty(total, c.t.targets.length, c.t.scale, c.meta.step).qtys || [];
+      c.t.targets.forEach((p, i) => {
+        set('tq' + i, all[i] ? fmtQty(all[i], c.t.symbol) : '—');
+        set('tg' + i, all[i] ? '+' + fmtUsd(all[i] * (+p || 0) * c.meta.pointValue) : '');
+      });
+      set('tr-stopcalc', `−${fmtUsd(total * (+c.t.stopPts || 0) * c.meta.pointValue)}`);
+      const pts = (h2.side === 'long' ? 1 : -1) * (c.price - h2.openPrice);
+      set('tr-mk', `Mark · ${pts >= 0 ? '+' : '−'}${fmtNum(Math.abs(pts), decimalsOf(c.meta.tick))} pts`);
+      set('lb-mk', px(c.price));
+      const o = c.sides[h2.side];
+      set('lb-fail', px(o && o.fail));
+      set('lb-pass', px(o && o.pass));
+      $('tr-failrow').hidden = !ok || !(o && o.fail);
+      $('tr-passrow').hidden = !ok || !(o && o.pass);
+    } else {
+      c.t.targets.forEach((_, i) => {
+        set('lb-t' + i, px(c.long.targets && c.long.targets[i]));
+        set('ls-t' + i, px(c.short.targets && c.short.targets[i]));
+      });
+      set('lb-stop', px(c.long.stop));
+      set('ls-stop', px(c.short.stop));
+      set('lb-entry', px(c.price));
+      set('ls-entry', px(c.price));
+      set('tr-entry', c.qty > 0 ? `Entry · ${fmtQty(c.qty, c.t.symbol)}` : 'Entry');
+      set('tr-stopq', c.qty > 0 ? fmtQty(c.qty, c.t.symbol) : '');
+      const sl = c.sides.long,
+        ss = c.sides.short;
+      set('lb-fail', px(sl && sl.fail));
+      set('ls-fail', px(ss && ss.fail));
+      set('lb-pass', px(sl && sl.pass));
+      set('ls-pass', px(ss && ss.pass));
+      $('tr-failrow').hidden = !ok || !((sl && sl.fail) || (ss && ss.fail));
+      $('tr-passrow').hidden = !ok || !((sl && sl.pass) || (ss && ss.pass));
+    }
+    const note =
+      'Prices are from the mark now; stop and targets are re-placed your exact points from your fill. Adding to an ' +
+      'open trade rebuilds them from the new average.' +
+      (!$('tr-failrow').hidden
+        ? " Fail and pass: where your equity reaches the floor or the target, opening fee counted. Estimates, like Vest's own."
+        : '');
+    set('tr-preview', note);
+
+    // Margin and risk bars
+    const pct100 = (f) => Math.max(0, Math.min(100, f * 100)).toFixed(1) + '%';
+    const M = c.margin,
+      K = c.risk2,
+      mnow = $('tr-mnow'),
+      mpv = $('tr-mpv'),
+      rnow = $('tr-rnow'),
+      rpv = $('tr-rpv');
+    const heat = (f) => (f >= 1 ? ' hot' : f >= 0.8 ? ' warn' : '');
+    if (M) {
+      mnow.style.width = pct100(M.now);
+      mpv.style.width = pct100(M.after);
+      mpv.className = 'pv' + heat(M.after);
+      mnow.className = heat(M.now).trim();
+      const used = (f) => Math.round(f * 100) + '%';
+      $('tr-mtxt').innerHTML =
+        `<span>${c.qty > 0 ? `${used(M.now)} used → <b>${used(M.after)}</b>` : `${used(M.now)} used`}</span>` +
+        (M.left >= 0
+          ? `<span><b>${esc(fmtQty(M.left, c.t.symbol))}</b> ${c.qty > 0 ? 'more after this' : 'contracts available'}</span>`
+          : `<span class="hot">over by ${esc(fmtQty(-M.left, c.t.symbol))}</span>`);
+    } else {
+      mnow.style.width = mpv.style.width = '0%';
+      $('tr-mtxt').innerHTML = `<span>${S.master ? 'working out…' : 'pick a master (M)'}</span>`;
+    }
+    if (K.room > 0) {
+      const after = K.after === null ? K.now : K.after;
+      rnow.style.width = K.now === null ? '0%' : pct100(K.now / K.room);
+      rpv.style.width = after === null ? '0%' : pct100(after / K.room);
+      rpv.className = 'pv' + heat(after === null ? 0 : after / K.room);
+      rnow.className = heat(K.now === null ? 0 : K.now / K.room).trim();
+      const left = after === null ? null : K.room - after;
+      const usd = (n) => '$' + Math.round(Math.abs(n)).toLocaleString('en-US');
+      const lead =
+        K.now === null
+          ? '<span class="warn">open position has no stop</span>'
+          : K.now > 0
+            ? `<span>risk <b>${usd(K.now)}</b>${after !== null && after !== K.now ? ` → <b>${usd(after)}</b>` : ''} of ${usd(K.room)}</span>`
+            : `<span>${after ? `this trade <b>${usd(after)}</b>` : 'no risk'} of ${usd(K.room)}</span>`;
+      $('tr-rtxt').innerHTML =
+        lead +
+        (left === null
+          ? ''
+          : left > 0
+            ? `<span class="${heat(after / K.room).trim() || 'ok'}">${usd(left)} left</span>`
+            : `<span class="hot">past the floor</span>`);
+    } else {
+      rnow.style.width = rpv.style.width = '0%';
+      $('tr-rtxt').innerHTML = `<span>${S.master ? 'working out…' : ''}</span>`;
+    }
+    const by = [
+      M && c.limitedBy && `margin: ${accLabel(c.limitedBy)}`,
+      K.room > 0 && K.by && `risk: ${accLabel(K.by)}`,
+    ].filter(Boolean);
+    set(
+      'tr-tight',
+      by.length === 2 && c.limitedBy === K.by
+        ? `tightest: ${accLabel(K.by)}`
+        : by.length
+          ? 'tightest · ' + by.join(' · ')
+          : '',
+    );
     const plans = Object.values(S.plans);
     const plansHtml = plans.length
       ? `<div class="tr-lbl">Breakeven watch</div>` +
@@ -6266,7 +7730,7 @@
     const risk = `
         <div class="rules-h">Your risk</div>
         <ul class="rules-list">
-          <li>Vest Copier <b>places real orders on live accounts</b>, automatically, using your logged-in Vest session.</li>
+          <li>STRATUH Copier <b>places real orders on live accounts</b>, automatically, using your logged-in Vest session.</li>
           <li>Copies can be late, fail, fill at a different price or size, or be missed entirely, for example when Vest
             changes its site, rejects an order or is slow. <b>Watch your accounts</b> while it runs.</li>
           <li><b>You alone are responsible</b> for every order it sends and every trade on your accounts, including any
@@ -6281,12 +7745,12 @@
     body.innerHTML = first
       ? `
       <div class="rules">
-        <div class="rules-h">Before you use Vest Copier</div>
+        <div class="rules-h">Before you use STRATUH Copier</div>
         ${risk}
         <div class="rules-h">How it works</div>
         ${how}
         <label class="rules-accept"><input type="checkbox" id="rl-check">
-          I have read this. I use Vest Copier entirely at my own risk, and its author is not responsible for any loss.</label>
+          I have read this. I use STRATUH Copier entirely at my own risk, and its author is not responsible for any loss.</label>
         <div class="rules-btns"><button class="armbtn" id="rl-agree" disabled>Accept and continue</button></div>
       </div>`
       : `
@@ -6418,7 +7882,7 @@
     body.innerHTML = `
       <div class="rules support-tab">
         <div class="rules-h">Support</div>
-        <p class="sc-sub">Vest Copier v${VERSION} · ${link(`${REPO_URL}/blob/main/CHANGELOG.md`, "What's new")} ·
+        <p class="sc-sub">STRATUH Copier v${VERSION} · ${link(`${REPO_URL}/blob/main/CHANGELOG.md`, "What's new")} ·
           ${link(`${REPO_URL}/blob/main/docs/USER-GUIDE.md`, 'User guide')} ·
           ${link('https://xamped.github.io/Vest-Copier/tutorial/', 'Tutorial')}</p>
         <div class="sup-card">
@@ -6435,7 +7899,7 @@
         </div>
         <div class="sup-card">
           <div class="sup-h">Help and community</div>
-          <p class="sc-sub">Questions, setup help, or just talking trades with other users: join the Vest Copier Discord.</p>
+          <p class="sc-sub">Questions, setup help, or just talking trades with other users: join the Discord.</p>
           <a class="ghostbtn" href="${DISCORD_URL}" target="_blank" rel="noopener">Join the Discord</a>
         </div>
         <div class="sup-card">
@@ -6445,7 +7909,7 @@
         </div>
         <div class="sup-card">
           <div class="sup-h">Support the project</div>
-          <p class="sc-sub">Vest Copier is free. Code <b>${SUPPORT_CODE}</b> takes 5% off Vest purchases and helps keep it
+          <p class="sc-sub">STRATUH Copier is free. Code <b>${SUPPORT_CODE}</b> takes 5% off Vest purchases and helps keep it
             maintained. Settings → Support can enter it at checkout for you.</p>
           <button class="ghostbtn" id="sp-copy">Copy code ${SUPPORT_CODE}</button>
         </div>
@@ -6748,7 +8212,7 @@
         <div class="sum-list">
           ${rows
             .map((r) => {
-              const n = (r.label.match(/(\d+)\s*$/) || [, '--'])[1];
+              const n = (r.label.match(/(\d+)\s*$/) || ['', '--'])[1];
               const pnl = pnlOf(r),
                 k = keepOf(r);
               const keepLine =
@@ -6783,18 +8247,21 @@
         )
       : '';
     const toastHtml = _toast ? `<div class="toast">${esc(_toast)}</div>` : '';
-    el.innerHTML =
-      orphanHtml +
-      toastHtml +
-      S.log
-        .map(
-          (e) =>
-            `<div class="le ${e.level}"><span class="ts">${e.t.toLocaleTimeString([], { hour12: false })}</span><span>${esc(e.msg)}</span></div>`,
-        )
-        .join('');
+    // The orphan prompt and notices sit above the log, so they show even while it's folded.
+    const alerts = _root.querySelector('.alerts');
+    alerts.innerHTML = orphanHtml + toastHtml;
+    el.innerHTML = S.log
+      .map(
+        (e) =>
+          `<div class="le ${e.level}"><span class="ts">${e.t.toLocaleTimeString([], { hour12: false })}</span><span>${esc(e.msg)}</span></div>`,
+      )
+      .join('');
+    const last = _root.querySelector('.loglast');
+    last.textContent = S.log.length ? S.log[0].msg : '';
+    last.className = 'loglast ' + (S.log.length ? S.log[0].level : '');
     if (S.orphan) {
-      const fb = el.querySelector('#vc-flatten'),
-        kb = el.querySelector('#vc-keep');
+      const fb = alerts.querySelector('#vc-flatten'),
+        kb = alerts.querySelector('#vc-keep');
       if (fb) fb.onclick = () => flattenOrphans();
       if (kb) kb.onclick = () => keepOrphans();
     }
@@ -6852,7 +8319,8 @@
     if (ENCODING_PROBE.length === 1) return;
     logEvent(
       'warn',
-      'This copy of Vest Copier was garbled when it was copied (symbols look wrong). Reinstall it from ' + SCRIPT_URL,
+      'This copy of STRATUH Copier was garbled when it was copied (symbols look wrong). Reinstall it from ' +
+        SCRIPT_URL,
     );
     diag('encoding', { probeLength: ENCODING_PROBE.length });
   }
