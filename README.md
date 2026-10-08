@@ -28,18 +28,8 @@ steps), the [tutorial](https://xamped.github.io/Vest-Copier/tutorial/) or the
   </tr>
 </table>
 
-## A copy, start to finish
-
-Say Account 11 is your master and Accounts 12 and 14 follow it.
-
-1. You buy 1 NQ on Account 11 with a 20 point stop and two targets.
-2. About a third of a second later, 12 and 14 each buy 1 NQ with the same stop and targets.
-3. You move the stop to breakeven on 11. Their stops move to the same price.
-4. You add half a contract. They add half a contract.
-5. You close. They close, and the log tells you each account filled and how far apart the fills were.
-
-If 12 and 14 are smaller than 11, turn on Cap-to-fit and they trade a proportional size instead, with the same stop
-distance, so every account risks the same percent.
+Follower sizes copy 1:1 by default. Turn on Cap-to-fit if your followers are smaller than the master, and each one
+trades a size scaled to its own account.
 
 > [!WARNING]
 > These are live orders on real accounts. When the copier is armed, whatever you do on the master happens on every
