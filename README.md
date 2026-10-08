@@ -1,19 +1,32 @@
 # STRATUH Copier
 
-<a href="https://youtu.be/EMpVqls6D8o"><img src="docs/tutorial/img/video.jpg" alt="Setup video: copy trades on Vest, free, full setup" width="640"></a>
+[![version](https://img.shields.io/github/v/release/xAmped/Vest-Copier?style=flat-square&label=version&labelColor=0c0c0d&color=c8f542)](https://github.com/xAmped/Vest-Copier/releases/latest)
+[![downloads](https://img.shields.io/github/downloads/xAmped/Vest-Copier/total?style=flat-square&label=downloads&labelColor=0c0c0d&color=c8f542)](https://github.com/xAmped/Vest-Copier/releases)
+[![discord](https://img.shields.io/badge/discord-join-c8f542?style=flat-square&labelColor=0c0c0d)](https://discord.gg/Aa69y9KnM3)
+[![price](https://img.shields.io/badge/price-free-c8f542?style=flat-square&labelColor=0c0c0d)](LICENSE)
 
-**[Watch the 6-minute setup video on YouTube](https://youtu.be/EMpVqls6D8o)** (recorded before the new look; the
-steps are the same)
+Trade one Vest account and your other accounts take the same trade, live. It's a Tampermonkey userscript that runs
+inside the [Vest Markets](https://next.vestmarkets.com) page, part of STRATUH, my trading tools. It used to be called
+Vest Copier: same script, same install link, new look.
 
-Trade copier for prop accounts on [Vest Markets](https://next.vestmarkets.com). One account leads, the others mirror
-it. Runs as a Tampermonkey userscript inside the Vest page. Part of STRATUH, my trading tools. It used to be called
-Vest Copier; same script, same link, new look.
+[![Watch the 6-minute setup video](docs/tutorial/img/video.jpg)](https://youtu.be/EMpVqls6D8o)
 
-<p>
-  <img src="docs/tutorial/img/accounts.png" alt="Accounts tab with the master on top and two followers" width="340">
-  &nbsp;
-  <img src="docs/tutorial/img/trade.png" alt="Trade tab with margin and risk bars and a price ladder" width="340">
-</p>
+[![Install vest-copier.user.js](https://img.shields.io/badge/install-vest--copier.user.js-c8f542?style=for-the-badge&labelColor=0c0c0d)](https://github.com/xAmped/Vest-Copier/releases/latest/download/vest-copier.user.js)
+
+New here? Start with the [6-minute setup video](https://youtu.be/EMpVqls6D8o) (recorded before the new look, same
+steps), the [tutorial](https://xamped.github.io/Vest-Copier/tutorial/) or the
+[one-page quick start](docs/Vest-Copier-Quick-Start.pdf). Every button is in the [user guide](docs/USER-GUIDE.md).
+
+<table>
+  <tr>
+    <th>Accounts</th><th>Trade</th><th>In a trade</th>
+  </tr>
+  <tr valign="top">
+    <td><img src="docs/tutorial/img/accounts.png" alt="Accounts tab: the master on top and two followers, armed" width="250"><br><sub>Master on top, followers below.</sub></td>
+    <td><img src="docs/tutorial/img/trade.png" alt="Trade tab: margin and risk bars and the price ladder" width="250"><br><sub>Bars up top, one price ladder.</sub></td>
+    <td><img src="docs/tutorial/img/trade-in.png" alt="In a trade: Breakeven, Close and the add chips" width="250"><br><sub>Breakeven, Close and add.</sub></td>
+  </tr>
+</table>
 
 ## A copy, start to finish
 
@@ -53,28 +66,34 @@ You need a desktop browser (Chrome, Edge, Brave or Firefox). Five steps, about f
    want copying it, then press **ARM**. From now on, trade the lead account as usual. **DISARM** stops copying;
    positions stay as they are.
 
-Stuck? Watch the [6-minute setup video](https://youtu.be/EMpVqls6D8o) or ask in the
-[Discord](https://discord.gg/Aa69y9KnM3).
-
-The [tutorial](https://xamped.github.io/Vest-Copier/tutorial/) walks through setup with screenshots, the
-[quick-start PDF](docs/Vest-Copier-Quick-Start.pdf) fits it on one page, and the [user guide](docs/USER-GUIDE.md) goes
-through every button.
+> [!TIP]
+> Stuck? Watch the [setup video](https://youtu.be/EMpVqls6D8o) or ask in the [Discord](https://discord.gg/Aa69y9KnM3).
 
 ## The panel
 
 | Tab | What's there |
 |---|---|
-| Accounts | Your master on top, then the followers, with balance, floor and room left. Pick the master and followers here. |
-| Trade | An order ticket in points for the market Vest is showing. Two bars up top show how much of Vest's buying power you're using and what your stop would cost against the room to your floor. Stop, entry and targets sit in one price ladder, Sell prices on the left and Buy prices on the right. Size by contracts, by dollars at risk or at the max the account allows. Market orders, or limit orders priced with a click on Vest's chart. Once you're in, Breakeven, Close and add buttons (+25%, +50%, +100% or the most that fits) sit right above. |
-| P&L | Profit or loss per account and in total, what you'd keep after each funded account's profit split, and **Claim all profit**: one preview, one confirm, and every funded account's profit is claimed to your Primary Account. |
-| Settings | Fast mode, Auto-flatten, Cap-to-fit, update checks, and the AMPED code switch. |
-| Rules | What the copier will and won't do, and the risk notice. |
-| Support | Report a problem, share an idea, the Discord, links to the guides, and the AMPED code. |
+| **Accounts** | Your master on top, then the followers, with balance, floor and room left. Pick them here. |
+| **Trade** | An order ticket in points for the market Vest is showing (details below). |
+| **P&L** | Profit per account and in total, what you keep after each profit split, and **Claim all profit** in one preview and one confirm. |
+| **Settings** | Fast mode, Auto-flatten, Cap-to-fit, update checks, and the AMPED code switch. |
+| **Rules** | What the copier will and won't do, and the risk notice. |
+| **Support** | Report a problem, share an idea, the Discord and the guides. |
 
-At the bottom: **ARM / DISARM**, a red **Flatten All** that instantly closes everything on every account (no
-confirmation; the copier stays armed, so it doubles as a quick exit for scalping), and the activity log folded to its
-latest line (click it for the full log, **Diag** and **CSV**). The bottom right shows Vest's build, your version and
-the API budget.
+**On the Trade tab:**
+
+- **Margin and risk bars:** how much of Vest's buying power you're using, and what your stop would cost against the
+  room to your floor, before you click.
+- **One price ladder:** targets, entry, stop and fail price in a single table. Sell prices on the left, Buy prices on
+  the right, points in the middle.
+- **Sizing:** contracts, dollars at risk, or the max the account allows.
+- **Limit orders:** click Vest's chart for the price, then Place.
+- **In a trade:** Breakeven, Close, and add buttons (+25%, +50%, +100% or the most that fits). Adding never loosens
+  your stop.
+
+At the bottom of the panel: **ARM / DISARM**, a red **Flatten All** that closes everything on every account at once
+(no confirmation, and the copier stays armed, so it doubles as a quick exit), and the activity log folded to its latest
+line. The bottom right shows Vest's build, your version and the API budget.
 
 ## Things it won't do
 
