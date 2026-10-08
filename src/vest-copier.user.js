@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vest Copier
 // @namespace    vestcopier
-// @version      0.32.0
+// @version      0.32.1
 // @description  Copies a master Vest account's trades to your other Vest accounts, live, and adds a points-based order panel.
 // @author       xAmped
 // @license      STRATUH Copier License — free to use, no selling; see LICENSE
@@ -22,7 +22,7 @@
   if (window.__vestCopier) return;
   window.__vestCopier = true;
 
-  const VERSION = '0.32.0';
+  const VERSION = '0.32.1';
   const API = 'https://api-gateway.hz.vestmarkets.com';
   const _fetch = window.fetch.bind(window);
   // Console echo of the activity log, for troubleshooting: localStorage.setItem('vc-debug', '1') and reload.
@@ -3661,7 +3661,8 @@
       border-bottom: 1px dashed var(--line);
     }
     .row.master {
-      padding: 11px 10px;
+      gap: 8px;
+      padding: 10px 8px;
       border: 1px solid var(--line2);
       border-left: 2px solid var(--accent);
       background: var(--elev);
@@ -3716,9 +3717,10 @@
       font-family: var(--mono);
       line-height: 1.45;
     }
-    .sub > span {
-      display: block;
+    .meta .sub {
       white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .right {
       text-align: right;
@@ -5350,6 +5352,247 @@
       outline: 2px solid var(--accent);
       outline-offset: 1px;
     }
+    /* ── Trade tab, compact (v0.32.1) ── */
+    .tr-top {
+      align-items: center;
+    }
+    .tr-sym .chip {
+      font-size: 9px;
+      margin-left: 2px;
+    }
+    .tr-px {
+      font-size: 18px;
+    }
+    .tr-lims {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      padding: 7px 9px 8px;
+    }
+    .tr-lims[hidden],
+    .tr-pacts[hidden],
+    .tr-setup[hidden],
+    .tr-setuphdr[hidden],
+    .tr-poscard[hidden] {
+      display: none;
+    }
+    .tr-lims .tr-lb {
+      display: block;
+      margin: 0;
+      min-width: 0;
+    }
+    .tr-ln {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+      margin-bottom: 5px;
+      white-space: nowrap;
+    }
+    .tr-ln .tr-lt {
+      display: block;
+      margin: 0 0 0 auto;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-size: 9.5px;
+    }
+    .tr-lt b.warn {
+      color: var(--warn);
+    }
+    .tr-lt b.hot {
+      color: var(--danger);
+    }
+    .tr-tight,
+    .tr-sum {
+      display: none;
+    }
+    .tr-setup {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .tr-setuphdr {
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      background: none;
+      border: 1px dashed var(--line2);
+      padding: 7px 10px;
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--dim);
+      text-align: left;
+    }
+    .tr-setuphdr:hover {
+      border-color: var(--accent-line);
+      color: var(--text);
+    }
+    .tr-setuphdr .caret {
+      color: var(--faint);
+    }
+    .tr-setuptxt {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .tr-setuphdr .e {
+      color: var(--accent);
+    }
+    .tr-sizeq {
+      margin-left: auto;
+      font-family: var(--mono);
+      font-size: 10.5px;
+      color: var(--text);
+      white-space: nowrap;
+    }
+    .tr-ind:has(.tr-calc:empty):has(.tr-lim.quiet),
+    .tr-ind:has(.tr-calc:empty):has(.tr-lim:empty) {
+      display: none;
+    }
+    .tr-lim.quiet {
+      display: none;
+    }
+    .tr-be {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      margin-left: auto;
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--faint);
+      white-space: nowrap;
+    }
+    .tr-be .tr-in.sm {
+      width: 38px;
+      padding: 3px 5px;
+    }
+    #tr-lhm {
+      white-space: nowrap;
+    }
+    /* in a trade: the position card */
+    .tr-addwarn {
+      font-family: var(--mono);
+      font-size: 10px;
+      line-height: 1.45;
+      color: var(--warn);
+      border-left: 2px solid var(--warn);
+      padding: 2px 0 2px 8px;
+    }
+    .tr-addwarn.hot {
+      color: var(--danger);
+      border-left-color: var(--danger);
+    }
+    .tr-poscard {
+      border: 1px solid var(--line2);
+      border-left: 2px solid var(--accent);
+      background: var(--elev);
+      padding: 10px 11px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .tr-poscard .tr-posbar {
+      border: none;
+      background: none;
+      padding: 0;
+    }
+    .tr-poscard .tr-pq {
+      font-size: 14px;
+      font-family: var(--sans);
+    }
+    .tr-poscard .tr-ppl {
+      font-size: 19px;
+    }
+    .tr-pmeta {
+      display: flex;
+      justify-content: space-between;
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--faint);
+    }
+    .tr-lvls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 7px;
+    }
+    .tr-lv {
+      font-family: var(--mono);
+      font-size: 9.5px;
+      border: 1px solid var(--line2);
+      padding: 2px 5px;
+      white-space: nowrap;
+    }
+    .tr-lv b {
+      font-weight: 600;
+    }
+    .tr-lv i {
+      font-style: normal;
+      color: var(--faint);
+      margin-left: 4px;
+    }
+    .tr-lv.sl {
+      color: var(--danger);
+      border-color: var(--danger-line);
+    }
+    .tr-lv.tp {
+      color: var(--accent);
+      border-color: var(--accent-line);
+    }
+    .tr-lv.none {
+      color: var(--warn);
+    }
+    .tr-prisk {
+      margin-top: 8px;
+    }
+    .tr-pn {
+      display: flex;
+      justify-content: space-between;
+      font-family: var(--mono);
+      font-size: 9.5px;
+      color: var(--faint);
+      margin-bottom: 4px;
+    }
+    .tr-pn > span:first-child {
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+    .tr-pn b {
+      color: var(--text);
+    }
+    .tr-pn .ok {
+      color: var(--accent);
+    }
+    .tr-pn .warn {
+      color: var(--warn);
+    }
+    .tr-pacts {
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+    .tr-addrow {
+      display: grid;
+      grid-template-columns: 34px 1fr;
+      align-items: center;
+      gap: 6px;
+    }
+    .tr-addrow .tr-chips {
+      gap: 4px;
+    }
+    .tr-addpv {
+      display: flex;
+      justify-content: space-between;
+      border-left: none;
+      padding: 0;
+      font-size: 10px;
+    }
+    .tr-addpv b {
+      color: var(--text);
+    }
     .collapsed .reportbar,
     .collapsed .body,
     .collapsed .tabs,
@@ -5629,6 +5872,10 @@
     } else if (!S.groups.length) {
       body.innerHTML = `<div class="empty">No active accounts found.</div>`;
     } else {
+      // Whole dollars from $1,000 up (rounded down, so room is never overstated); cents below, where they matter.
+      const moneyShort = (n) =>
+        Math.abs(n) >= 1000 ? (n < 0 ? '−' : '') + '$' + Math.floor(Math.abs(n)).toLocaleString('en-US') : money(n);
+      const bare = (n) => moneyShort(n).replace('$', ''); // the sub line: "bal 25,620 · floor 24,000"
       // The master on top in its own block; then each account size, the master's first, with how many copy it.
       const row = (r, masterGroup) => {
         const td = r.canTrade === false ? 'red' : r.canTrade === true ? 'green' : 'gray';
@@ -5643,8 +5890,8 @@
         return `<div class="row ${isM ? 'master' : isF ? 'follower' : ''}">
               <div class="badge">${esc(acctNum(r.label))}</div>
               <div class="meta"><div class="name">${label} <span class="chip">${esc(r.chip)}</span> <span class="dot ${td}" title="${tdText}"></span></div>
-                <div class="sub"><span>bal ${money(r.equity)}</span><span>${r.dailyFloor > r.floor ? '<span title="Daily loss floor, higher than the drawdown floor today">daily floor</span>' : 'floor'} ${money(floorOf(r))}</span></div></div>
-              <div class="right" title="Room left before the floor"><div class="room">${money(r.room)}</div><div class="used">${pct(r.usedPct)} used</div>
+                <div class="sub" title="Balance ${money(r.equity)} · ${r.dailyFloor > r.floor ? 'daily ' : ''}floor ${money(floorOf(r))}">bal ${bare(r.equity)} · ${r.dailyFloor > r.floor ? '<span title="Daily loss floor, higher than the drawdown floor today">daily floor</span>' : 'floor'} ${bare(floorOf(r))}</div></div>
+              <div class="right" title="Room left before the floor: ${money(r.room)}"><div class="room">${moneyShort(r.room)}</div><div class="used">${pct(r.usedPct)} used</div>
                 <div class="bar"><i class="${bar}" style="width:${Math.round(r.usedPct * 100)}%"></i></div></div>
               <div class="sel">
                 <button class="selbtn m ${isM ? 'on' : ''}" data-m="${id}" title="Make ${label} the master" aria-label="Make ${label} the master"
@@ -5657,7 +5904,7 @@
       const groups = m ? [...S.groups].sort((a, b) => (b.key === m.groupKey) - (a.key === m.groupKey)) : S.groups;
       body.innerHTML =
         (m
-          ? `<div class="group"><div class="group-h"><span class="lime">Master</span><span class="gr">${money(m.size)} · ${esc(m.type)}</span></div>${row(m, true)}</div>`
+          ? `<div class="group"><div class="group-h"><span class="lime">Master</span><span class="gr">${moneyShort(m.size)} · ${esc(m.type)}</span></div>${row(m, true)}</div>`
           : '') +
         groups
           .map((g) => {
@@ -5673,8 +5920,8 @@
             const title = m
               ? masterGroup
                 ? 'Followers'
-                : `${money(g.size)} · ${esc(g.type)}`
-              : `${money(g.size)} · ${esc(g.type)}`;
+                : `${moneyShort(g.size)} · ${esc(g.type)}`
+              : `${moneyShort(g.size)} · ${esc(g.type)}`;
             return `<div class="group"><div class="group-h"><span>${title}</span><span class="gr">${right}</span></div>${rest
               .map((r) => row(r, masterGroup))
               .join('')}</div>`;
@@ -6056,63 +6303,67 @@
       <div class="trade">
         <div class="tr-top">
           <div class="tr-sym" id="tr-sym"></div>
-          <div class="tr-pxw"><div class="tr-px" id="tr-px">—</div><div class="tr-pxl">Mark</div></div>
+          <div class="tr-px" id="tr-px" title="Mark price">—</div>
         </div>
-        <div class="tr-acct" id="tr-acct"></div>
-        <div class="tr-lims" id="tr-lims" title="Margin: Vest's buying power (its 100%). Risk: what the stop would lose, fees included, against the room left before the floor.">
-          <div class="tr-lb"><span class="tr-lk">Margin</span><div class="tr-track"><i class="pv" id="tr-mpv"></i><i id="tr-mnow"></i></div>
-            <div class="tr-lt" id="tr-mtxt"></div></div>
-          <div class="tr-lb"><span class="tr-lk">Risk</span><div class="tr-track"><i class="pv" id="tr-rpv"></i><i id="tr-rnow"></i></div>
-            <div class="tr-lt" id="tr-rtxt"></div></div>
+        <div class="tr-poscard" id="tr-pos" hidden>
+          <div class="tr-posbar"><span class="tr-side" id="tr-pside"></span><span class="tr-pq" id="tr-pqty"></span><span class="tr-ppl" id="tr-ppl"></span></div>
+          <div class="tr-pmeta"><span id="tr-pavg"></span><span id="tr-ppts"></span></div>
+          <div class="tr-lvls" id="tr-lvls"></div>
+          <div class="tr-prisk" title="What the stop would lose from here, fees included, against the room left before the floor (tightest account)">
+            <div class="tr-pn"><span>Risk</span><span id="tr-prisk"></span></div><div class="tr-track"><i id="tr-prnow"></i></div></div>
+        </div>
+        <div class="tr-pacts" id="tr-pacts" hidden>
+          <div class="tr-go"><button class="tr-bebtn" id="tr-be">Breakeven</button><button class="tr-close" id="tr-close">Close</button></div>
+          <div class="tr-addrow"><span class="tr-k">Add</span><div class="tr-chips" id="tr-chips"></div></div>
+          <div class="tr-addpv" id="tr-addpv"></div>
+        </div>
+        <div class="tr-lims" id="tr-lims">
+          <div class="tr-lb"><div class="tr-ln"><span class="tr-lk">Margin</span><span class="tr-lt" id="tr-mtxt"></span></div>
+            <div class="tr-track"><i class="pv" id="tr-mpv"></i><i id="tr-mnow"></i></div></div>
+          <div class="tr-lb"><div class="tr-ln"><span class="tr-lk">Risk</span><span class="tr-lt" id="tr-rtxt"></span></div>
+            <div class="tr-track"><i class="pv" id="tr-rpv"></i><i id="tr-rnow"></i></div></div>
           <div class="tr-tight" id="tr-tight"></div>
         </div>
-        <div class="tr-f"><span class="tr-k">Size</span><div class="tr-row">${seg('sizeMode', [
-          ['qty', 'Qty'],
-          ['risk', 'Risk $'],
-          ['max', 'Max'],
-        ])}<input class="tr-in" id="tr-size" inputmode="decimal" aria-label="Size"></div></div>
-        <div class="tr-ind">
-          <div class="tr-calc" id="tr-sizecalc"></div>
-          <div class="tr-lim" id="tr-sizelim"></div>
+        <button class="tr-setuphdr" id="tr-setuphdr" hidden aria-expanded="false"><span class="caret">▸</span><span class="tr-setuptxt" id="tr-setuptxt"></span><span class="e">edit</span></button>
+        <div class="tr-setup" id="tr-setup">
+          <div class="tr-f"><span class="tr-k">Size</span><div class="tr-row">${seg('sizeMode', [
+            ['qty', 'Qty'],
+            ['risk', 'Risk $'],
+            ['max', 'Max'],
+          ])}<input class="tr-in" id="tr-size" inputmode="decimal" aria-label="Size"><span class="tr-sizeq" id="tr-sizeq"></span></div></div>
+          <div class="tr-ind">
+            <div class="tr-calc" id="tr-sizecalc"></div>
+            <div class="tr-lim" id="tr-sizelim"></div>
+          </div>
+          <div class="tr-f"><span class="tr-k">Targets</span><div class="tr-row">${seg('scale', [
+            ['start', 'Start'],
+            ['even', 'Even'],
+            ['end', 'End'],
+          ])}<button class="tr-add" id="tr-add" title="Add a target">+</button></div></div>
+          <div class="tr-lad" role="table" aria-label="Stop, entry and targets">
+            <div class="tr-lh"><span id="tr-lhs">Sell</span><span id="tr-lhm">pts · qty · $</span><span id="tr-lhb">Buy</span></div>
+            <div class="tr-lr tr-ps" id="tr-passrow"><span class="tr-sp" id="ls-pass"></span><span class="tr-mid">Pass</span><span class="tr-bp" id="lb-pass"></span></div>
+            <div id="tr-targets"></div>
+            <div class="tr-lr tr-mk" id="tr-mkrow" hidden><span class="tr-sp"></span><span class="tr-mid" id="tr-mk">Mark</span><span class="tr-bp" id="lb-mk"></span></div>
+            <div class="tr-lr tr-en"><span class="tr-sp" id="ls-entry"></span><span class="tr-mid" id="tr-entry">Entry</span><span class="tr-bp" id="lb-entry"></span></div>
+            <div class="tr-lr tr-slr"><span class="tr-sp" id="ls-stop"></span><span class="tr-mid"><span class="tr-n sl">STOP</span>
+              <input class="tr-in tr-pt" id="tr-stop" inputmode="decimal" aria-label="Stop, in points" value="${esc(t.stopPts)}">
+              <span class="tr-q" id="tr-stopq"></span><span class="tr-g dn" id="tr-stopcalc"></span><span class="tr-xs"></span></span><span class="tr-bp" id="lb-stop"></span></div>
+            <div class="tr-lr tr-fl" id="tr-failrow"><span class="tr-sp" id="ls-fail"></span><span class="tr-mid">Fail</span><span class="tr-bp" id="lb-fail"></span></div>
+          </div>
+          <div class="tr-lim" id="tr-stoplim"></div>
+          <div class="tr-f"><span class="tr-k">Auto BE</span><div class="tr-row">${seg('beMode', [
+            ['off', 'Off'],
+            ['tp1', 'After TP1'],
+            ['points', '+pts'],
+          ])}<span class="tr-be">
+            <span id="tr-betrigw">at <input class="tr-in sm" id="tr-betrig" inputmode="decimal" aria-label="Breakeven trigger, in points" value="${esc(t.beTrigger)}"></span>
+            lock <input class="tr-in sm" id="tr-beoff" inputmode="decimal" aria-label="Profit to lock, in points" title="Points of profit beyond the entry (0 = exact breakeven)" value="${esc(t.beOffset)}"></span></div></div>
+          <div class="tr-sum" id="tr-sum"></div>
         </div>
-        <div class="tr-f"><span class="tr-k">Targets</span><div class="tr-row">${seg('scale', [
-          ['start', 'Start'],
-          ['even', 'Even'],
-          ['end', 'End'],
-        ])}<button class="tr-add" id="tr-add">+ Add</button></div></div>
-        <div class="tr-lad" role="table" aria-label="Stop, entry and targets">
-          <div class="tr-lh"><span id="tr-lhs">Sell at</span><span>pts · qty · $</span><span id="tr-lhb">Buy at</span></div>
-          <div class="tr-lr tr-ps" id="tr-passrow"><span class="tr-sp" id="ls-pass"></span><span class="tr-mid">Pass</span><span class="tr-bp" id="lb-pass"></span></div>
-          <div id="tr-targets"></div>
-          <div class="tr-lr tr-mk" id="tr-mkrow" hidden><span class="tr-sp"></span><span class="tr-mid" id="tr-mk">Mark</span><span class="tr-bp" id="lb-mk"></span></div>
-          <div class="tr-lr tr-en"><span class="tr-sp" id="ls-entry"></span><span class="tr-mid" id="tr-entry">Entry</span><span class="tr-bp" id="lb-entry"></span></div>
-          <div class="tr-lr tr-slr"><span class="tr-sp" id="ls-stop"></span><span class="tr-mid"><span class="tr-n sl">STOP</span>
-            <input class="tr-in tr-pt" id="tr-stop" inputmode="decimal" aria-label="Stop, in points" value="${esc(t.stopPts)}">
-            <span class="tr-q" id="tr-stopq"></span><span class="tr-g dn" id="tr-stopcalc"></span><span class="tr-xs"></span></span><span class="tr-bp" id="lb-stop"></span></div>
-          <div class="tr-lr tr-fl" id="tr-failrow"><span class="tr-sp" id="ls-fail"></span><span class="tr-mid">Fail</span><span class="tr-bp" id="lb-fail"></span></div>
-        </div>
-        <div class="tr-lim" id="tr-stoplim"></div>
-        <div class="tr-f"><span class="tr-k">Auto BE</span><div class="tr-row">${seg('beMode', [
-          ['off', 'Off'],
-          ['tp1', 'After TP1'],
-          ['points', 'At +pts'],
-        ])}</div></div>
-        <div class="tr-row tr-be tr-ind">
-          <span id="tr-betrigw">at <input class="tr-in sm" id="tr-betrig" inputmode="decimal" aria-label="Breakeven trigger, in points" value="${esc(t.beTrigger)}"> pts ·</span>
-          lock <input class="tr-in sm" id="tr-beoff" inputmode="decimal" aria-label="Profit to lock, in points" value="${esc(t.beOffset)}"> pts profit
-        </div>
-        <div class="tr-sum" id="tr-sum"></div>
         <div class="tr-warn" id="tr-warn"></div>
         <div class="tr-action">
           <div class="tr-err" id="tr-err"></div>
-          <div class="tr-pos" id="tr-pos" hidden>
-            <div class="tr-posbar"><span class="tr-side" id="tr-pside"></span><span class="tr-pq" id="tr-pqty"></span>
-              <span class="tr-pa" id="tr-pavg"></span><span class="tr-ppl" id="tr-ppl"></span></div>
-            <div class="tr-go"><button class="tr-bebtn" id="tr-be">Breakeven</button><button class="tr-close" id="tr-close">Close</button></div>
-            <div class="tr-addh"><span>Add to position</span><span id="tr-addof"></span></div>
-            <div class="tr-chips" id="tr-chips"></div>
-            <div class="tr-addpv" id="tr-addpv"></div>
-          </div>
           <div class="tr-go" id="tr-mgo"><button class="tr-buy" id="tr-buy">Buy</button><button class="tr-sell" id="tr-sell">Sell</button></div>
           <div class="tr-go tr-lgo" id="tr-lgo">
             <button class="tr-lbuy" id="tr-lbuy" title="Buy limit: click Vest's chart for the price, or type it"><svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1v4M8 11v4M1 8h4M11 8h4" stroke="currentColor" stroke-width="1.6" fill="none"/><circle cx="8" cy="8" r="1.4" fill="currentColor"/></svg> Buy LMT</button>
@@ -6123,7 +6374,7 @@
               <button class="tr-place" id="tr-place">Place</button><button class="tr-pcancel" id="tr-pcancel">Cancel</button></div>
           </div>
         </div>
-        <div class="tr-preview" id="tr-preview"></div>
+        <div class="tr-preview" id="tr-preview" hidden></div>
         <div class="tr-plans" id="tr-plans"></div>
       </div>`;
     const wrap = body.querySelector('.trade');
@@ -6170,6 +6421,10 @@
     body.querySelector('#tr-buy').onclick = () => placeTrade('long');
     body.querySelector('#tr-sell').onclick = () => placeTrade('short');
     body.querySelector('#tr-be').onclick = () => breakevenNow();
+    body.querySelector('#tr-setuphdr').onclick = () => {
+      S.setupOpen = !S.setupOpen;
+      updateTrade();
+    };
     body.querySelector('#tr-lbuy').onclick = () => startPick('long');
     body.querySelector('#tr-lsell').onclick = () => startPick('short');
     body.querySelector('#tr-place').onclick = () => placePick();
@@ -7267,11 +7522,8 @@
       const el = $(id);
       if (el && el.textContent !== v) el.textContent = v;
     };
-    $('tr-sym').innerHTML = `${esc(c.meta.label)} <span class="chip">${esc(c.t.symbol)}</span>`;
-    $('tr-acct').textContent =
-      S.master && S.byId[S.master]
-        ? `Master ${accLabel(S.master)} · ${S.armed ? `armed, ${S.followers.size} follower${S.followers.size === 1 ? '' : 's'} copy` : 'not armed (master only)'}`
-        : 'No master selected';
+    const symHtml = `${esc(c.meta.label)}${c.lev ? ` <span class="chip" title="Leverage on ${esc(c.t.symbol)}">${c.lev}x</span>` : ''}`;
+    if ($('tr-sym').dataset.html !== symHtml) $('tr-sym').innerHTML = $('tr-sym').dataset.html = symHtml;
     $('tr-px').textContent = fmtPx(c.price, c.meta.tick);
     body
       .querySelectorAll('[data-seg]')
@@ -7283,19 +7535,24 @@
       c.maxQty === null
         ? ''
         : `Vest's 100% at ${c.lev}x${c.limitedBy && c.limitedBy !== S.master ? `, limited by ${accLabel(c.limitedBy)}` : ''}`;
-    $('tr-sizecalc').textContent = c.pick
-      ? `Add uses ${c.pick.label} (${fmtQty(c.qty, c.t.symbol)}): click it again for this size`
-      : c.t.sizeMode === 'max'
-        ? c.qty > 0
+    set(
+      'tr-sizecalc',
+      c.pick
+        ? `Add uses ${c.pick.label} (${fmtQty(c.qty, c.t.symbol)}): click it again for this size`
+        : c.t.sizeMode === 'max' && c.qty > 0
           ? `= ${fmtQty(c.qty, c.t.symbol)} contracts · ${maxNote}`
-          : ''
-        : c.t.sizeMode === 'risk'
-          ? c.qty > 0
-            ? `= ${fmtQty(c.qty, c.t.symbol)} contracts at a ${c.t.stopPts}-pt stop`
+          : '',
+    );
+    set(
+      'tr-sizeq',
+      c.qty > 0 && c.t.sizeMode !== 'max'
+        ? c.t.sizeMode === 'risk'
+          ? `= ${fmtQty(c.qty, c.t.symbol)} ct`
+          : +c.t.stopPts > 0
+            ? `${fmtUsd(c.risk)} at stop`
             : ''
-          : c.qty > 0 && +c.t.stopPts > 0
-            ? `risks ${fmtUsd(c.risk)} at the stop`
-            : '';
+        : '',
+    );
     $('tr-stopcalc').textContent = c.qty > 0 && +c.t.stopPts > 0 ? `−${fmtUsd(c.risk)}` : '';
     // The allowed range, live: how much can be risked and where the stop may go on this account right now
     const L = c.limits,
@@ -7318,9 +7575,24 @@
       stopBad = stopNow >= L.maxStop;
       stopLim = `Stop must be under ${L.maxStop} pts at ${fmtQty(c.qty, c.t.symbol)} contracts, or the account fails first`;
     }
-    $('tr-sizelim').textContent = sizeLim;
-    $('tr-stoplim').textContent = stopLim;
+    set('tr-sizelim', sizeLim);
+    set('tr-stoplim', stopLim);
     $('tr-stoplim').classList.toggle('bad', stopBad);
+    // these lines only show when the limit bites, or nearly does (within 20%)
+    const NEAR = 0.8;
+    const sizeNear =
+      !!c.blocked ||
+      (c.t.sizeMode === 'risk'
+        ? (L.maxRiskAtStop !== null && +c.t.risk > L.maxRiskAtStop * NEAR) ||
+          (L.maxRiskRoom !== null && +c.t.risk > L.maxRiskRoom * NEAR)
+        : c.t.sizeMode === 'qty' && c.maxQty !== null && c.qty > c.maxQty * NEAR);
+    const stopNear =
+      stopBad ||
+      (c.t.sizeMode === 'risk'
+        ? L.minStop !== null && stopNow < L.minStop / NEAR
+        : L.maxStop !== null && stopNow > L.maxStop * NEAR);
+    $('tr-sizelim').classList.toggle('quiet', !sizeNear);
+    $('tr-stoplim').classList.toggle('quiet', !stopNear);
     c.t.targets.forEach((p, i) => {
       const q = c.qtys[i],
         qe = $('tq' + i),
@@ -7330,20 +7602,51 @@
     });
     $('tr-betrigw').style.display = c.t.beMode === 'points' ? '' : 'none';
     body.querySelector('.tr-be').style.display = c.t.beMode === 'off' ? 'none' : '';
+    // in a trade the setup folds into one line (open it to change how an add rebuilds)
+    const held = !!c.held;
+    $('tr-setuphdr').hidden = !held;
+    $('tr-setup').hidden = held && !S.setupOpen;
+    $('tr-setuphdr').setAttribute('aria-expanded', String(held && !!S.setupOpen));
+    $('tr-setuphdr').querySelector('.caret').textContent = S.setupOpen ? '▾' : '▸';
+    $('tr-lims').hidden = held;
+    $('tr-pacts').hidden = !held;
+    if (held) {
+      const be = { off: 'BE off', tp1: 'BE after TP1', points: `BE at +${c.t.beTrigger}` }[c.t.beMode] || '';
+      set(
+        'tr-setuptxt',
+        `Setup · stop ${c.t.stopPts} · TP ${c.t.targets.join('/')} · ${c.t.scale[0].toUpperCase() + c.t.scale.slice(1)} · ${be}`,
+      );
+    }
     $('tr-sum').innerHTML =
       c.qty > 0 && c.qtys.length
         ? `${c.held ? 'This add · ' : ''}Risk <b>${fmtUsd(c.risk)}</b>${c.fees > 0 ? ` + ${fmtUsd(c.fees)} fees` : ''} · Reward <b>${fmtUsd(c.reward)}</b> · <b>${c.risk > 0 ? (c.reward / c.risk).toFixed(2) : '—'}R</b>`
         : '';
+    set(
+      'tr-lhm',
+      !c.held && c.qty > 0 && c.qtys.length && c.risk > 0
+        ? `risk ${fmtUsd(c.risk)} · ${(c.reward / c.risk).toFixed(2)}R`
+        : 'pts · qty · $',
+    );
+    $('tr-lhm').title = $('tr-sum').textContent;
     const fixHtml = c.fixes
       .map(
         (f, i) =>
           `<button class="tr-usemax" data-fix="${i}" data-act="${f.act === 'max' ? 'usemax' : 'fix-' + f.act}">${esc(f.label)}</button>`,
       )
       .join(' ');
-    const warnHtml =
-      (c.blocked
-        ? `<div class="tr-block">${esc(c.blocked)}${fixHtml ? `<div class="tr-fixes">${fixHtml}</div>` : ''}</div>`
-        : '') + c.warnings.map((w) => `<div>${esc(w.text)}</div>`).join('');
+    // In a trade these are about the next add, not the open position: one short line each, without the setup fixes.
+    const addQ = c.qty > 0 ? fmtQty(c.qty, c.t.symbol) : '';
+    const sideNow = c.held && c.sides[c.held.side];
+    const warnHtml = c.held
+      ? (c.blocked
+          ? `<div class="tr-addwarn hot">Add ${esc(addQ)}: more than ${esc(accLabel(c.limitedBy))} can open (max ${esc(fmtQty(c.maxQty, c.t.symbol))}). Pick a smaller add.</div>`
+          : '') +
+        (c.warnings.length && sideNow
+          ? `<div class="tr-addwarn">Add ${esc(addQ)}: a stop-out after it would lose about ${fmtUsd(sideNow.loss)} with fees, more than the ${fmtUsd(sideNow.room)} left to the floor.</div>`
+          : '')
+      : (c.blocked
+          ? `<div class="tr-block">${esc(c.blocked)}${fixHtml ? `<div class="tr-fixes">${fixHtml}</div>` : ''}</div>`
+          : '') + c.warnings.map((w) => `<div>${esc(w.text)}</div>`).join('');
     const warnBox = $('tr-warn');
     if (warnBox.dataset.html !== warnHtml) {
       // rewrite only on change, so a click on a fix isn't lost to a price tick
@@ -7367,7 +7670,7 @@
     }
     $('tr-err').textContent =
       c.error ||
-      (c.blocked ? 'Over what the account can open: use a fix above, or change the size or stop.' : '') ||
+      (c.blocked && !c.held ? 'Over what the account can open: use a fix above, or change the size or stop.' : '') ||
       (S.adjusting ? 'Adjusting stop & targets…' : '');
     const q = c.qty > 0 ? fmtQty(c.qty, c.t.symbol) : '';
     const h = c.held,
@@ -7414,7 +7717,38 @@
       set('tr-pside', h.side === 'long' ? 'Long' : 'Short');
       $('tr-pside').className = 'tr-side ' + h.side;
       set('tr-pqty', `${fmtQty(h.qty, h.symbol)} ${c.meta.label}`);
-      set('tr-pavg', `avg ${fmtPx(h.openPrice, tick)} · ${accts} acct${accts === 1 ? '' : 's'}`);
+      set('tr-pavg', `avg ${fmtPx(h.openPrice, tick)} · ${accts} account${accts === 1 ? '' : 's'}`);
+      const ptsNow = c.price > 0 ? dir * (c.price - h.openPrice) : null;
+      set(
+        'tr-ppts',
+        ptsNow === null ? '' : `${ptsNow >= 0 ? '+' : '−'}${fmtNum(Math.abs(ptsNow), decimalsOf(tick))} pts`,
+      );
+      // where the stop and targets sit on Vest now (the stop with what it makes or loses from the average)
+      const legs = (h.triggers || []).slice().sort((a, b) => dir * (a.price - b.price));
+      const sls = legs.filter((l) => l.kind === 'sl'),
+        tps = legs.filter((l) => l.kind === 'tp');
+      const lvHtml =
+        sls
+          .map((l) => {
+            const v = dir * (l.price - h.openPrice) * h.qty * c.meta.pointValue;
+            return `<span class="tr-lv sl">SL <b>${fmtPx(l.price, tick)}</b><i>${v >= 0 ? '+' : '−'}${fmtUsd(v)}</i></span>`;
+          })
+          .join('') +
+          tps.map((l, i) => `<span class="tr-lv tp">TP${i + 1} <b>${fmtPx(l.price, tick)}</b></span>`).join('') ||
+        '<span class="tr-lv none">No stop or targets on this position</span>';
+      const lvBox = $('tr-lvls');
+      if (lvBox.dataset.html !== lvHtml) lvBox.innerHTML = lvBox.dataset.html = lvHtml;
+      const K2 = c.risk2,
+        usd2 = (n) => '$' + Math.round(Math.abs(n)).toLocaleString('en-US');
+      const frac = K2.room > 0 && K2.now !== null ? K2.now / K2.room : 0;
+      $('tr-prnow').style.width = Math.max(0, Math.min(100, frac * 100)).toFixed(1) + '%';
+      $('tr-prnow').className = frac >= 1 ? 'hot' : frac >= 0.8 ? 'warn' : '';
+      $('tr-prisk').innerHTML =
+        K2.now === null
+          ? '<span class="warn">no stop on this position</span>'
+          : K2.room > 0
+            ? `<b>${usd2(K2.now)}</b> of ${usd2(K2.room)} · <span class="${frac >= 0.8 ? 'warn' : 'ok'}">${usd2(K2.room - K2.now)} left</span>`
+            : '';
       set('tr-ppl', pnl === null ? '' : (pnl >= 0 ? '+' : '−') + fmtUsd(pnl));
       $('tr-ppl').className = 'tr-ppl ' + (pnl === null ? '' : pnl >= 0 ? 'pos' : 'neg');
       const be = breakevenPlan(h, c.price, tick);
@@ -7424,7 +7758,7 @@
       $('tr-close').textContent = `Close ${fmtQty(h.qty, h.symbol)}`;
       $('tr-close').disabled = busy;
       // add chips: a click picks one, a second click goes back to the Size field
-      set('tr-addof', `of ${fmtQty(h.qty, h.symbol)} · or the Size above`);
+      // (chips are sized from the open position; a picked chip again goes back to the Size field)
       const chipsHtml = (c.chips || [])
         .map(
           (x) =>
@@ -7448,12 +7782,13 @@
         tot = h.qty + addQ;
       const avgA = tot > 0 ? (h.qty * h.openPrice + addQ * c.price) / tot : 0;
       const o = c.sides[h.side];
-      set(
-        'tr-addpv',
+      const pvHtml =
         addQ > 0 && c.price > 0 && !c.error
-          ? `→ ${fmtQty(tot, h.symbol)} · avg ${fmtPx(avgA, tick)}${o ? ` · stop-out ${fmtUsd(o.loss)}` : ''} · stop and targets rebuild from the new average`
-          : '',
-      );
+          ? `<span>→ <b>${fmtQty(tot, h.symbol)}</b> · avg <b>${fmtPx(avgA, tick)}</b></span>${o ? `<span>stop-out <b>${fmtUsd(o.loss)}</b></span>` : ''}`
+          : '';
+      if ($('tr-addpv').dataset.html !== pvHtml) $('tr-addpv').innerHTML = $('tr-addpv').dataset.html = pvHtml;
+      $('tr-addpv').title =
+        'After this add: new size and average. The stop and targets rebuild from the new average (a tighter stop is kept).';
     } else if (S.addPick) S.addPick = null; // flat again: chips reset
     // The ladder: Buy prices on the right, Sell prices on the left, from the live mark (re-placed from the fill).
     const ok = !c.error && c.price > 0;
@@ -7542,6 +7877,7 @@
         ? " Fail and pass: where your equity reaches the floor or the target, opening fee counted. Estimates, like Vest's own."
         : '');
     set('tr-preview', note);
+    body.querySelector('.tr-lad').title = note;
 
     // Margin and risk bars
     const pct100 = (f) => Math.max(0, Math.min(100, f * 100)).toFixed(1) + '%';
@@ -7558,11 +7894,14 @@
       mpv.className = 'pv' + heat(M.after);
       mnow.className = heat(M.now).trim();
       const used = (f) => Math.round(f * 100) + '%';
+      // contracts left, to sensible precision (25.5, 3.75, 0.43)
+      const short = (n) =>
+        String(+(Math.floor(n * (n >= 100 ? 1 : n >= 10 ? 10 : 100)) / (n >= 100 ? 1 : n >= 10 ? 10 : 100)));
       $('tr-mtxt').innerHTML =
-        `<span>${c.qty > 0 ? `${used(M.now)} used → <b>${used(M.after)}</b>` : `${used(M.now)} used`}</span>` +
-        (M.left >= 0
-          ? `<span><b>${esc(fmtQty(M.left, c.t.symbol))}</b> ${c.qty > 0 ? 'more after this' : 'contracts available'}</span>`
-          : `<span class="hot">over by ${esc(fmtQty(-M.left, c.t.symbol))}</span>`);
+        M.left >= 0
+          ? `<b>${used(c.qty > 0 ? M.after : M.now)}</b> · ${short(M.left)} left`
+          : `<span class="hot">over by ${esc(fmtQty(-M.left, c.t.symbol))}</span>`;
+      $('tr-mtxt').title = c.qty > 0 ? `${used(M.now)} used now, ${used(M.after)} with this order` : '';
     } else {
       mnow.style.width = mpv.style.width = '0%';
       $('tr-mtxt').innerHTML = `<span>${S.master ? 'working out…' : 'pick a master (M)'}</span>`;
@@ -7575,19 +7914,13 @@
       rnow.className = heat(K.now === null ? 0 : K.now / K.room).trim();
       const left = after === null ? null : K.room - after;
       const usd = (n) => '$' + Math.round(Math.abs(n)).toLocaleString('en-US');
-      const lead =
-        K.now === null
-          ? '<span class="warn">open position has no stop</span>'
-          : K.now > 0
-            ? `<span>risk <b>${usd(K.now)}</b>${after !== null && after !== K.now ? ` → <b>${usd(after)}</b>` : ''} of ${usd(K.room)}</span>`
-            : `<span>${after ? `this trade <b>${usd(after)}</b>` : 'no risk'} of ${usd(K.room)}</span>`;
       $('tr-rtxt').innerHTML =
-        lead +
-        (left === null
-          ? ''
-          : left > 0
-            ? `<span class="${heat(after / K.room).trim() || 'ok'}">${usd(left)} left</span>`
-            : `<span class="hot">past the floor</span>`);
+        K.now === null
+          ? '<span class="warn">no stop</span>'
+          : left !== null && left <= 0
+            ? `<b>${usd(after)}</b> · <span class="hot">past the floor</span>`
+            : `<b class="${heat(after / K.room).trim()}">${usd(after || 0)}</b> of ${usd(K.room)}`;
+      $('tr-rtxt').title = left !== null && left > 0 ? `${usd(left)} left before the floor after this order` : '';
     } else {
       rnow.style.width = rpv.style.width = '0%';
       $('tr-rtxt').innerHTML = `<span>${S.master ? 'working out…' : ''}</span>`;
@@ -7596,14 +7929,17 @@
       M && c.limitedBy && `margin: ${accLabel(c.limitedBy)}`,
       K.room > 0 && K.by && `risk: ${accLabel(K.by)}`,
     ].filter(Boolean);
-    set(
-      'tr-tight',
+    const tight =
       by.length === 2 && c.limitedBy === K.by
         ? `tightest: ${accLabel(K.by)}`
         : by.length
           ? 'tightest · ' + by.join(' · ')
-          : '',
-    );
+          : '';
+    set('tr-tight', tight);
+    $('tr-lims').title =
+      "Margin: how much of Vest's buying power (its 100%) this order uses, and what's left. Risk: what the stop would lose, " +
+      'fees included, against the room left before the floor.' +
+      (tight ? ` (${tight})` : '');
     const plans = Object.values(S.plans);
     const plansHtml = plans.length
       ? `<div class="tr-lbl">Breakeven watch</div>` +

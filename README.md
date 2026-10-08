@@ -9,7 +9,7 @@ Trade one Vest account and your other accounts take the same trade, live. It's a
 inside the [Vest Markets](https://next.vestmarkets.com) page, part of STRATUH, my trading tools. It used to be called
 Vest Copier: same script, same install link, new look.
 
-[![Watch the 6-minute setup video](docs/tutorial/img/video.jpg)](https://youtu.be/EMpVqls6D8o)
+[![Watch the 6-minute setup video](docs/tutorial/img/banner.jpg)](https://youtu.be/EMpVqls6D8o)
 
 [![Install vest-copier.user.js](https://img.shields.io/badge/install-vest--copier.user.js-c8f542?style=for-the-badge&labelColor=0c0c0d)](https://github.com/xAmped/Vest-Copier/releases/latest/download/vest-copier.user.js)
 

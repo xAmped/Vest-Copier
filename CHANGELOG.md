@@ -2,6 +2,12 @@
 
 Newest first. To update, click **Install** on the green bar that appears in the panel whenever there's a newer version.
 
+## v0.32.1
+- **A tidier Trade tab.** In a trade, your position is the screen: P&L, where your stop and targets actually sit, the risk left before your floor, then Breakeven, Close and Add. The order setup folds into one line ("Setup · stop 20 · TP 20/40/60 …"); open it to change how an add rebuilds.
+- **Flat, the setup is shorter:** the margin and risk bars share one line, the size result sits beside the size box, risk and R:R sit in the ladder's header, and the allowed-range notes only appear when a limit actually bites. The longer explanations moved into tooltips.
+- **Accounts:** balance and floor on one line, in whole dollars from $1,000 up.
+- **Clearer warnings in a trade:** they're about the next add, not your open position, so they now say so in one short line ("Add 0.5: more than Account 53 can open"), without the setup's fix buttons.
+
 ## v0.32.0
 - **New look: STRATUH Copier.** The copier joins STRATUH, the trading tools by xAmped, and the panel takes its style: square corners, hairline dividers, lime for what's live (the master, ARMED, profit, Buy) and red only for what closes trades. It's the same script and install link, and your settings carry over.
 - **Accounts:** your master sits on top in its own block, with the followers listed under it and how many are copying.

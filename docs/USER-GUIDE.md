@@ -134,8 +134,9 @@ copy every order like any other master order.
 
 - **Margin:** how much of Vest's buying power (its 100%) your position uses, and how many contracts are left.
 - **Risk:** what your stop would lose, fees included, against the room left before your floor.
-- The striped part previews the order you're about to send. A bar turns amber near the limit and red past it. Both
-  use the **tightest account**: when the copier is armed in strict 1:1, the master or a follower, whichever has less.
+- They share one line above the setup. The striped part previews the order you're about to send; a bar turns amber
+  near the limit and red past it. Both use the **tightest account** (hover them to see which): when the copier is armed
+  in strict 1:1, the master or a follower, whichever has less.
 
 **Setup.**
 
@@ -150,7 +151,7 @@ copy every order like any other master order.
   On an evaluation there's a **pass** row too (where it reaches the target). The middle column holds each level's
   points (type them there), size and dollars; **Sell** prices are on the left and **Buy** prices on the right. Fail and
   pass count the opening fee and the account's current equity, like Vest's own estimates.
-- **Allowed range** (live): size = risk ÷ stop, the size can't go over what the account can open, and a stop-out can't
+- **Allowed range** (shown when a limit bites, or nearly does): size = risk ÷ stop, the size can't go over what the account can open, and a stop-out can't
   take you past your floor. In *Risk $* mode the panel shows how much you can risk at your stop and in total ("Can
   risk up to $159 at 20 pts · $278 max before the floor") and the smallest stop for your risk ("Stop must be at least
   25 pts to risk $200"); in *Qty* mode, how many contracts fit and the widest stop before the account fails.
@@ -177,8 +178,11 @@ copy every order like any other master order.
 - **Fits your screen:** on the Trade tab the panel grows to the bottom of the window, and the buttons stay pinned in
   view while you scroll the form.
 
-**In a trade.** Your position sits right above the buttons: side, size, average entry, how many accounts are in it,
-and live P&L.
+**In a trade.** The position becomes the screen: a card with side, size, live P&L, average entry and how many accounts
+are in it, chips showing where your stop and targets sit on Vest (the stop with what it makes or loses from your
+average), and a risk bar for what's left before your floor. The setup folds into one line ("Setup · stop 20 · TP
+20/40/60 …"); click it to change how an add rebuilds. Warnings then speak about the next add in one short line ("Add
+0.5: more than Account 53 can open"), since your open position is already placed.
 
 - **Breakeven** moves the stop to your **average entry** (an average between ticks rounds toward profit to the nearest
   tick, so it never locks a loss). It's offered once price is 4 ticks clear of the entry, since Vest refuses a stop
