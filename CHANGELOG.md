@@ -2,6 +2,9 @@
 
 Newest first. To update, click **Install** on the green bar that appears in the panel whenever there's a newer version.
 
+## v0.32.2
+- **Fix: the P&L tab kept your master's open profit frozen** after you'd opened the Trade tab, until the next balance read. It moves with every price tick again, like the followers.
+
 ## v0.32.1
 - **A tidier Trade tab.** In a trade, your position is the screen: P&L, where your stop and targets actually sit, the risk left before your floor, then Breakeven, Close and Add. The order setup folds into one line ("Setup · stop 20 · TP 20/40/60 …"); open it to change how an add rebuilds.
 - **Flat, the setup is shorter:** the margin and risk bars share one line, the size result sits beside the size box, risk and R:R sit in the ladder's header, and the allowed-range notes only appear when a limit actually bites. The longer explanations moved into tooltips.

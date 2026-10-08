@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vest Copier
 // @namespace    vestcopier
-// @version      0.32.1
+// @version      0.32.2
 // @description  Copies a master Vest account's trades to your other Vest accounts, live, and adds a points-based order panel.
 // @author       xAmped
 // @license      STRATUH Copier License — free to use, no selling; see LICENSE
@@ -22,7 +22,7 @@
   if (window.__vestCopier) return;
   window.__vestCopier = true;
 
-  const VERSION = '0.32.1';
+  const VERSION = '0.32.2';
   const API = 'https://api-gateway.hz.vestmarkets.com';
   const _fetch = window.fetch.bind(window);
   // Console echo of the activity log, for troubleshooting: localStorage.setItem('vc-debug', '1') and reload.
@@ -6018,6 +6018,12 @@
     try {
       const [levs, st] = await Promise.all([fetchLeverages(), readOpenState(master)]);
       if (levs) S.levs = levs;
+      // keep what the live P&L ticks from (cash and the last marks), as refreshBalances sets it: without cash the P&L
+      // tab stopped moving the master's open profit until the next balance read
+      const prev = S.acctState[master],
+        r = S.byId[master];
+      if (r && r.free >= 0) st.cash = r.free + st.positions.reduce((a, p) => a + p.collateral, 0) + st.ordersCollateral;
+      st.marks = (prev && prev.marks) || {};
       S.acctState[master] = st;
     } catch {
       /* best effort: nothing to do if this fails */
