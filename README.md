@@ -28,6 +28,8 @@ steps), the [tutorial](https://xamped.github.io/Vest-Copier/tutorial/) or the
   </tr>
 </table>
 
+Balances, P&L and fills update live, straight from Vest's own feed, and an account that fails drops out by itself.
+
 Follower sizes copy 1:1 by default. Turn on Cap-to-fit if your followers are smaller than the master, and each one
 trades a size scaled to its own account.
 
@@ -50,8 +52,8 @@ You need a desktop browser (Chrome, Edge, Brave or Firefox). Five steps, about f
 3. **Install the copier:** open
    **[vest-copier.user.js](https://github.com/xAmped/Vest-Copier/releases/latest/download/vest-copier.user.js)**.
    Tampermonkey shows an install page. Click **Install**.
-4. **Open Vest:** log in at [next.vestmarkets.com](https://next.vestmarkets.com). The STRATUH Copier panel opens in
-   the top right. Read the risk notice and accept it.
+4. **Open Vest:** log in at [next.vestmarkets.com](https://next.vestmarkets.com). The STRATUH Copier panel opens on
+   Vest's chart, on the left. Read the risk notice and accept it.
 5. **Pick your accounts and arm:** on **Accounts**, press **M** on your lead account and **FLW** on each account you
    want copying it, then press **ARM**. From now on, trade the lead account as usual. **DISARM** stops copying;
    positions stay as they are.
@@ -78,10 +80,10 @@ You need a desktop browser (Chrome, Edge, Brave or Firefox). Five steps, about f
   the right, points in the middle.
 - **Sizing:** contracts, dollars at risk, or the max the account allows.
 - **Limit orders:** click Vest's chart for the price, then Place.
-- **In a trade:** Breakeven, Close, and add buttons (+25%, +50%, +100% or the most that fits). Adding never loosens
-  your stop.
+- **In a trade:** Breakeven, Close, and add buttons (+25%, +50%, +100% or the most that fits). Adding keeps any stop
+  or target you moved yourself.
 
-At the bottom of the panel: **ARM / DISARM**, a red **Flatten All** that closes everything on every account at once
+Along the bottom of the panel: **ARM / DISARM**, a red **Flatten All** that closes everything on every account at once
 (no confirmation, and the copier stays armed, so it doubles as a quick exit), and the activity log folded to its latest
 line. The bottom right shows Vest's build, your version and the API budget.
 
@@ -90,10 +92,10 @@ line. The bottom right shows Vest's build, your version and the API budget.
 - It won't copy a trade you placed while it was disarmed, and it won't open a follower into a trade that's already
   running. (If master and followers already hold the same position, arming takes it over.)
 - It won't copy an order Vest rejected on the master.
-- It won't copy closes Vest makes by itself, such as a drawdown breach on the master. Those followers stay open until
-  you close them or press Flatten All.
-- It won't loosen your stop when you add (the targets rebuild from the new average, a tighter stop stays put), and it
-  won't place a stop or target past the price.
+- It won't copy closes Vest makes by itself, such as a stop filling or a drawdown breach on the master. The log tells
+  you what Vest did, and a follower still in the trade a few seconds later gets a Flatten / Keep prompt.
+- It won't undo your own changes when you add: a stop or target you moved (closer, further, or to breakeven) stays
+  where you put it, the rest rebuild from the new average, and it won't place a stop or target past the price.
 - It won't let you change the master, followers or Cap-to-fit while armed, or arm in a second Vest tab while one is
   already armed. Disarm first.
 - It won't arm right after Vest changes its website until you've run the quick read-only check (click the status in

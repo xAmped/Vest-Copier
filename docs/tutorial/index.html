@@ -149,7 +149,7 @@ dd { margin: 0; font-size: 15.5px; }
   <p class="lede">Trade one Vest account and have the same trade placed on your other accounts, live, from inside the Vest page. It also adds a Trade tab where you set your stop and targets in points. Formerly Vest Copier: same script, same link, new look.</p>
   <div class="video"><iframe src="https://www.youtube-nocookie.com/embed/EMpVqls6D8o" title="STRATUH Copier setup video" loading="lazy" allow="accelerometer; encrypted-media; gyroscope; picture-in-picture; fullscreen" allowfullscreen></iframe></div>
   <p class="video-link">Prefer YouTube? <a href="https://youtu.be/EMpVqls6D8o">Watch the setup video there</a> (6 minutes, recorded before the new look; the steps are the same).</p>
-  <div class="meta"><span class="pill">v0.33.0</span><span class="pill">next.vestmarkets.com</span><span class="pill">10-minute setup</span><a class="pill" href="https://github.com/xAmped/Vest-Copier">github.com/xAmped/Vest-Copier</a></div>
+  <div class="meta"><span class="pill">v0.34.0</span><span class="pill">next.vestmarkets.com</span><span class="pill">10-minute setup</span><a class="pill" href="https://github.com/xAmped/Vest-Copier">github.com/xAmped/Vest-Copier</a></div>
 </header>
 
 <div class="wrap">
@@ -178,7 +178,7 @@ dd { margin: 0; font-size: 15.5px; }
         <li><div>Add the <b>Tampermonkey</b> extension from your browser's store: <a href="https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo">Chrome / Brave</a>, <a href="https://microsoftedge.microsoft.com/addons/detail/tampermonkey/iikmkjmpaadaobahmlepeloendndfphd">Edge</a> or <a href="https://addons.mozilla.org/firefox/addon/tampermonkey/">Firefox</a>. Click <b>Add</b> on the store page.<span class="why">Use these store pages, not download buttons on other sites: some of those are ads for unrelated software.</span></div></li>
         <li><div><b>Chrome, Edge, Brave:</b> go to <code>chrome://extensions</code>, open Tampermonkey's <b>Details</b> page and switch <b>Allow User Scripts</b> on.<span class="why">Without this, Tampermonkey installs the script but never runs it. Older browser versions call it Developer mode (top-right of the extensions page). Firefox doesn't need it.</span></div></li>
         <li><div>Open the install link: <a href="https://github.com/xAmped/Vest-Copier/releases/latest/download/vest-copier.user.js">vest-copier.user.js on GitHub</a>. Tampermonkey shows an install page; click <b>Install</b>. From then on it keeps itself up to date.<span class="why">No link? Click the Tampermonkey icon, <b>Create a new script</b>, delete the template, paste the entire contents of <code>vest-copier.user.js</code> and press <b>Ctrl+S</b>. Paste the text itself: a .txt file opened in the browser isn't installed.</span></div></li>
-        <li><div>Open or refresh <b>next.vestmarkets.com</b> and log in. The <b>STRATUH Copier</b> panel appears in the top-right. Drag its header to move it and its bottom-right corner to resize it.</div></li>
+        <li><div>Open or refresh <b>next.vestmarkets.com</b> and log in. The <b>STRATUH Copier</b> panel appears on Vest's chart, on the left, and stays inside the chart. Drag its header to move it and its bottom-right corner to resize it. The pin lets it float anywhere; minimised, it's a small pill you click to open.</div></li>
       </ol>
       <div class="callout tip"><p><b>Updating:</b> when there's a newer version, a bar under the panel's tabs shows <b>Install</b>. Click it, click <b>Update</b> on Tampermonkey's page, then come back to the Vest tab: it reloads by itself. Do it while you're flat. Your settings are kept.</p></div>
     </section>
@@ -238,7 +238,7 @@ dd { margin: 0; font-size: 15.5px; }
         </div>
       </div>
       <h3>In a trade</h3>
-      <p>The position becomes the screen: live P&amp;L, chips for where your stop and targets sit, and the risk left before your floor, with the setup folded into one line you can open. <b>Breakeven</b> moves the stop to your average entry once price is clear of it. <b>Close</b> closes the master, and followers close with it when armed. The button for your direction becomes <b>Add</b>, with chips for <b>+25%</b>, <b>+50%</b>, <b>+100%</b> of your position or <b>MAX</b>, the most that fits your margin and keeps a stop-out above the floor. An add rebuilds the targets from the <b>new average entry</b>, but never loosens your stop: one already at breakeven stays there.</p>
+      <p>The position becomes the screen: live P&amp;L, chips for where your stop and targets sit, and the risk left before your floor, with the setup folded into one line you can open. <b>Breakeven</b> moves the stop to your average entry once price is clear of it. <b>Close</b> closes the master, and followers close with it when armed. The button for your direction becomes <b>Add</b>, with chips for <b>+25%</b>, <b>+50%</b>, <b>+100%</b> of your position or <b>MAX</b>, the most that fits your margin and keeps a stop-out above the floor. An add rebuilds the stop and targets from the <b>new average entry</b>, except the ones you moved yourself (to breakeven, closer or further): those stay where you put them.</p>
       <div class="callout warn"><p><b>Auto BE runs in your browser.</b> Keep the Vest tab open for it to move your stop. It survives a page refresh and stops watching once the trade closes.</p></div>
     </section>
 
@@ -263,10 +263,11 @@ dd { margin: 0; font-size: 15.5px; }
             <tr><td>Add to position</td><td><span class="yes">Copied,</span> scaled to the follower's size.</td></tr>
             <tr><td>Partial close / close</td><td><span class="yes">Copied,</span> in proportion.</td></tr>
             <tr><td>Move, add or remove a stop or target</td><td><span class="yes">Copied</span> to the matching order.</td></tr>
-            <tr><td>Stop or target fills</td><td>Each account's own stop and targets fill on Vest at the same prices.</td></tr>
+            <tr><td>Stop or target fills</td><td>Each account's own stop and targets fill on Vest at the same prices. The log says which filled, on which accounts.</td></tr>
             <tr><td>Anything while disarmed</td><td><span class="no">Not copied.</span></td></tr>
             <tr><td>Orders Vest refuses on the master</td><td><span class="no">Not copied.</span></td></tr>
-            <tr><td>Vest closing the master for you</td><td><span class="no">Not copied.</span> A drawdown breach or liquidation isn't an order you placed, so followers stay open. Close them yourself or use Flatten All.</td></tr>
+            <tr><td>Vest closing the master for you</td><td><span class="no">Not copied.</span> A breach or liquidation isn't an order you placed. A follower still in the trade a few seconds later is offered as Flatten / Keep.</td></tr>
+            <tr><td>An account fails</td><td>It drops out at once. A follower is removed and the others keep copying; if it's the master, the copier disarms.</td></tr>
             <tr><td>Trades placed on a follower</td><td>Ignored. Only the master is watched.</td></tr>
           </tbody>
         </table>

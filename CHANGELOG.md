@@ -2,6 +2,36 @@
 
 Newest first. To update, click **Install** on the green bar that appears in the panel whenever there's a newer version.
 
+## v0.34.0
+Live from Vest: the panel now listens to the same live feed Vest's own page uses, so balances, P&L, fills and failed accounts update as they happen instead of every 20 seconds.
+
+- **Live accounts:**
+  - **Balances, room to the floor and P&L update the moment anything fills,** on every account, not just the one Vest is showing.
+  - **An account that fails drops out at once** (no more clicking reload): a follower is removed and the copier keeps copying to the others; if the master fails, the copier disarms. The log gives Vest's reason ("equity $489.29 reached its drawdown floor of $490.00").
+  - **New accounts appear by themselves,** and the "can trade" dot stays current.
+  - **Fills are confirmed in about a tenth of a second** instead of one to three, and an order Vest refused after accepting it is reported straight away.
+- **When Vest closes a trade itself:**
+  - **The log says what happened:** "Stop filled (NQ): Account 07 −$20.50, Account 08 −$20.50", a target filling, or a breach.
+  - **A follower still in a trade the master is out of** (Vest stopped the master but not the follower) is offered as Flatten / Keep after a few seconds, or closed by itself with Auto-flatten on.
+  - **A follower stopped out on its own** leaves the trade, so the master's later close isn't sent to it.
+- **Prices:**
+  - **The price is Vest's own reference:** the middle of the order book's best bid and ask (what Vest measures P&L, fail prices and targets on), then the last trade, then the mark. Hover the price on the Trade tab to see all three. The ladder's live row is now called **Price**.
+  - **Breakeven checks the real bid (or ask)**, which is what Vest triggers stops on, so it turns on as soon as it safely can.
+  - **The Trade tab redraws smoothly** with fast prices.
+- **The panel lives on the chart:**
+  - **Docked on Vest's chart by default,** on the left just right of the drawing tools, and kept inside the chart whatever you resize (the window, Vest's order book or its positions list). No more moving it back after a layout change. Its spot is remembered relative to the chart.
+  - **Hide marks on bars (Settings, on by default):** Vest's buy and sell marks on the chart are hidden each time it loads, the same as the chart's right-click option, which Vest forgets on every refresh. Show them again from that menu any time.
+  - **The pin** in the header floats it anywhere in the window instead; click again to dock it back.
+  - **Minimised, it's a small pill** with the logo and the state: click to open, press and move to drag. A red dot means something needs you (followers waiting on Flatten / Keep, or the live feed lost while armed); amber means Vest updated its site.
+- **Fixes and polish:**
+  - **Balances are read the way Vest's own page reads them.** Accounts with a long history of failed accounts could have a live account's balance go missing ("couldn't read its balance", P&L stuck at the starting balance).
+  - **A balance that can't be read shows "—"**, never the starting balance as a believable $0.00.
+  - **Adding to a trade keeps your own changes:** a stop or target you moved (to breakeven, closer or further away) stays where you put it; only the levels the panel placed are rebuilt from the new average.
+  - **In a trade, the add warnings sit on one fixed line** under the add buttons, so the Add button no longer jumps up and down as your P&L swings.
+  - **Armed, with Vest's screen on another account:** the panel warns that orders placed there aren't copied.
+  - **Claim all profit goes one account a second** (was two).
+  - **Fewer requests to Vest:** with the live feed up, the full re-read runs once a minute as a backstop.
+
 ## v0.33.0
 A safety release: a full review of the copier, with every fix covered by a new test.
 
@@ -117,7 +147,7 @@ A safety release: a full review of the copier, with every fix covered by a new t
 - **Fixed:** report files now replace every account id with its name, including accounts that have since closed. Before, ids of closed accounts were left in.
 
 ## v0.25.0
-- **Report a problem from the panel.** Click **Problem? Report it** at the bottom of the panel, describe what happened, and click **Save report & open issue**. The copier saves one report file (activity log, diagnostics, settings, version and account balances, with account ids replaced by names) and opens a GitHub issue with your description filled in. Drag the file in and submit.
+- **Report a problem from the panel.** Click **Problem? Report it** at the foot of the panel, describe what happened, and click **Save report & open issue**. The copier saves one report file (activity log, diagnostics, settings, version and account balances, with account ids replaced by names) and opens a GitHub issue with your description filled in. Drag the file in and submit.
 
 ## v0.24.3
 - Internal update. Nothing changes in how the copier trades.

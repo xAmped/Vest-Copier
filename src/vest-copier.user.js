@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vest Copier
 // @namespace    vestcopier
-// @version      0.33.0
+// @version      0.34.0
 // @description  Copies a master Vest account's trades to your other Vest accounts, live, and adds a points-based order panel.
 // @author       xAmped
 // @license      STRATUH Copier License — free to use, no selling; see LICENSE
@@ -22,7 +22,7 @@
   if (window.__vestCopier) return;
   window.__vestCopier = true;
 
-  const VERSION = '0.33.0';
+  const VERSION = '0.34.0';
   const API = 'https://api-gateway.hz.vestmarkets.com';
   const _fetch = window.fetch.bind(window);
   // Console echo of the activity log, for troubleshooting: localStorage.setItem('vc-debug', '1') and reload.
@@ -54,7 +54,15 @@
   const RESYNC_AFTER_REDUCE_MS = 2000; // re-read sizes after a reduce
   const EXIT_RETRY_MS = 400; // one retry of a follower close/reduce on 429/5xx
   const BALANCE_AFTER_TRADE_MS = 1500;
-  const BALANCE_POLL_MS = 20000;
+  const BALANCE_POLL_MS = 20000; // full re-read of every account while Vest's live feed is down
+  const FEED_BACKSTOP_MS = 60000; // ...and while it is up: the feed carries every change, this catches anything missed
+  const FEED_QUIET_MS = 75000; // Vest pings its feed every 30 s: this long without a message means it's down
+  const FEED_FILL_WAIT_MS = 1500; // a fill check waits this long for the live feed before asking Vest's fill history
+  const VEST_CLOSE_GRACE_MS = 2500; // after Vest closes the master, a follower still open this long is an orphan
+  const OUR_EXIT_MS = 15000; // a close or reduce sent from this tab this recently explains a position closing
+  const BALANCES_LIMIT = 500; // accounts per balances read, as Vest's own page asks (failed accounts are left out)
+  const TRADE_DRAW_MS = 100; // the Trade tab redraws at most this often on price ticks
+  const LIVE_RENDER_MS = 400; // the Accounts and P&L lists redraw at most this often on live numbers
   const FLATTEN_WAIT_MS = 5000,
     FLATTEN_RECHECK_MS = 1500;
   const TOKEN_REFRESH_MARGIN_MS = 60000; // mint a new account token this long before the old one expires
@@ -248,14 +256,39 @@
       return;
     }
     if (!(status >= 200 && status < 300)) {
-      logEvent('info', `MASTER ${action} refused by Vest (HTTP ${status || 'no response'}) — not copied.`);
+      // Vest's own reason ({ code, msg } or { message }), and where the market was, so the diag shows why
+      const why = String(res.msg || res.message || res.error || (typeof resBody === 'string' ? resBody : '') || '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 200);
+      const sym =
+        req.symbol ||
+        (S.posMap[req.positionId] && S.posMap[req.positionId].symbol) ||
+        ((S.acctState[S.master] && S.acctState[S.master].positions.find((p) => p.id === req.positionId)) || {})
+          .symbol ||
+        S.trade.symbol;
+      const pr = S.price[sym] || {};
+      logEvent(
+        'info',
+        `MASTER ${action} refused by Vest (HTTP ${status || 'no response'}${why ? ': ' + why : ''}) — not copied.`,
+      );
       diag('master_refused', {
         action,
         method,
         status,
+        reason: why || null,
+        code: res.code != null ? res.code : null,
         positionId: req.positionId || null,
+        symbol: sym,
         triggerPrice: req.triggerPrice,
         qty: req.quantity,
+        market: {
+          price: priceOf(sym),
+          bid: recentAt(pr.bookAt) ? pr.bid : null,
+          ask: recentAt(pr.bookAt) ? pr.ask : null,
+          last: recentAt(pr.lastAt) ? pr.last : null,
+          mark: recentAt(pr.at) ? pr.px : null,
+        },
       });
       return;
     }
@@ -282,6 +315,7 @@
     }
     try {
       offerUser(auth);
+      if (method !== 'GET') notePageRequest(url, method, body);
     } catch {
       /* best effort: nothing to do if this fails */
     }
@@ -323,6 +357,7 @@
       let pending = null;
       try {
         pending = vc.method === 'POST' ? maybeFastOpen(vc.url, b, vc.auth) : null;
+        if (vc.method !== 'GET') notePageRequest(vc.url, vc.method, b);
       } catch {
         /* best effort: nothing to do if this fails */
       }
@@ -359,6 +394,340 @@
         }
       }, 300);
     });
+
+  // What the page sends that the copier needs to know before Vest answers: a close or reduce (so the position closing on
+  // the live feed isn't mistaken for one Vest made), the account Vest's screen switches to, and a leverage change.
+  const _exits = {}; // positionId -> when this tab last sent a close or reduce for it
+  const noteExit = (positionId) => positionId && (_exits[positionId] = Date.now());
+  const ourExit = (positionId) => Date.now() - (_exits[positionId] || 0) < OUR_EXIT_MS;
+  function notePageRequest(url, method, body) {
+    const action = orderAction(url);
+    if (action === 'close' || action === 'reduce') {
+      const req = parseJson(body, null);
+      if (req) noteExit(req.positionId);
+    } else if (method === 'PATCH' && /\/v3\/user-state\/preferences/.test(url)) {
+      const req = parseJson(body, null);
+      if (req && req.lastUsedAccountId) setScreen(req.lastUsedAccountId);
+    } else if (/\/v3\/user-state\/accounts\/[^/]+\/leverages\//.test(url))
+      setTimeout(() => S.tradeOpen && refreshTradeState(), BALANCE_AFTER_TRADE_MS);
+  }
+
+  // ───────────────────────── Vest's live account feed (read-only) ─────────────────────────
+  // Vest's page keeps a private socket open that pushes every change on every one of the user's accounts within about
+  // 50 ms: orders placed and filled, positions opened, added to, reduced and closed, stops and targets, the new balance
+  // (`account_state`); an account failing or changing its limits (`capital_account`); an order Vest refused after
+  // accepting it (`command_events`); and profit claims (`profit_withdrawal`). The copier never opens it or sends on it:
+  // it finds Vest's own socket the moment Vest creates it (the constructor is wrapped at document-start; Vest never
+  // sends a subscription, only a ping every 30 s), or failing that on that first ping, and listens. Balances, positions,
+  // fills and failed accounts then update as they happen; the polled reads become a backstop.
+  const _feed = { ws: null, last: 0, attached: 0 };
+  const _feedAt = {}; // accountId -> when its last feed event landed (a slower REST read must not overwrite it)
+  const _seq = {}; // accountId -> the last account_seq applied (Vest drops older and repeated events the same way)
+  const feedLive = () => !!_feed.ws && _feed.ws.readyState === 1 && Date.now() - _feed.last < FEED_QUIET_MS;
+  if (typeof WebSocket === 'function' && typeof Proxy === 'function')
+    try {
+      // a Proxy keeps everything else about WebSocket as it was (prototype, constants, instanceof, subclasses)
+      window.WebSocket = new Proxy(WebSocket, {
+        construct(target, args, newTarget) {
+          const ws = Reflect.construct(target, args, newTarget);
+          try {
+            if (/\/ws\/private/.test(String(args[0] || ''))) attachFeed(ws);
+          } catch {
+            /* best effort: nothing to do if this fails */
+          }
+          return ws;
+        },
+      });
+    } catch {
+      /* best effort: the ping below still finds it */
+    }
+  if (typeof WebSocket === 'function' && WebSocket.prototype && WebSocket.prototype.send) {
+    const _wsSend = WebSocket.prototype.send;
+    WebSocket.prototype.send = function () {
+      try {
+        if (this !== _feed.ws && /\/ws\/private/.test(this.url || '')) attachFeed(this);
+      } catch {
+        /* best effort: nothing to do if this fails */
+      }
+      return _wsSend.apply(this, arguments);
+    };
+  }
+  function attachFeed(ws) {
+    const again = _feed.attached > 0; // Vest reconnected: anything said while it was down is read in full once
+    _feed.ws = ws;
+    _feed.last = Date.now();
+    _feed.attached++;
+    ws.addEventListener('message', (e) => {
+      if (ws !== _feed.ws) return;
+      _feed.last = Date.now();
+      onFeedMessage(e.data);
+    });
+    ws.addEventListener('close', () => {
+      if (ws !== _feed.ws) return;
+      _feed.ws = null;
+      diag('feed', { outcome: 'closed' });
+    });
+    diag('feed', { outcome: again ? 'reattached' : 'attached' });
+    if (again) refreshBalances();
+  }
+  function onFeedMessage(raw) {
+    if (typeof raw !== 'string' || raw.charCodeAt(0) !== 123) return; // '{'
+    const m = parseJson(raw, null);
+    if (!m || typeof m.channel !== 'string' || !m.data || typeof m.data !== 'object') return;
+    try {
+      if (m.channel === 'account_state') onAccountState(m.data);
+      else if (m.channel === 'capital_account') onCapitalAccount(m.data);
+      else if (m.channel === 'command_events') onCommandEvent(m.data);
+      else if (m.channel === 'profit_withdrawal') onClaimEvent(m.data);
+    } catch (e) {
+      diag('feed', { outcome: 'error', channel: m.channel, error: e.message });
+    }
+  }
+
+  // Fills, as the feed reports them: orderId -> { price, at } once filled, or { missing, why } when Vest says it didn't
+  // execute (a refused command, or an order cancelled with nothing filled). A fill check waits on this first.
+  S.feedFills = {};
+  const _fillWaiters = {};
+  function setFeedFill(orderId, v) {
+    const had = S.feedFills[orderId];
+    if (had && !had.missing) return; // a fill is final
+    S.feedFills[orderId] = { ...v, seen: Date.now() };
+    for (const done of _fillWaiters[orderId] || []) done(S.feedFills[orderId]);
+    delete _fillWaiters[orderId];
+    const ids = Object.keys(S.feedFills);
+    if (ids.length > 2000) ids.slice(0, 1000).forEach((k) => delete S.feedFills[k]);
+  }
+  function feedFill(orderId, ms) {
+    const have = orderId && S.feedFills[orderId];
+    if (have || !orderId || !(ms > 0) || !feedLive()) return Promise.resolve(have || undefined);
+    return new Promise((resolve) => {
+      const done = (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      };
+      const timer = setTimeout(() => {
+        _fillWaiters[orderId] = (_fillWaiters[orderId] || []).filter((x) => x !== done);
+        resolve(undefined);
+      }, ms);
+      (_fillWaiters[orderId] = _fillWaiters[orderId] || []).push(done);
+    });
+  }
+
+  function onAccountState(d) {
+    const id = d.account_id;
+    if (!id) return;
+    const seq = parseInt(d.account_seq, 10);
+    if (seq >= 0) {
+      if (_seq[id] != null && seq <= _seq[id]) return;
+      _seq[id] = seq;
+    }
+    for (const o of d.orders || []) {
+      const done = num(o.executed_quantity) > 0;
+      if (done && num(o.execution_price) > 0 && (o.status === 'filled' || /FILLED$/.test(o.event_type || '')))
+        setFeedFill(o.order_id, { price: num(o.execution_price), at: o.execution_time });
+      else if (!done && (o.status === 'rejected' || o.status === 'cancelled'))
+        setFeedFill(o.order_id, { missing: true, why: o.status });
+    }
+    if (!S.byId[id]) return; // not an account the copier lists (the Primary Account, say)
+    _feedAt[id] = Date.now();
+    const ch = applyFeedState(id, d);
+    onFeedPositions(id, d, ch);
+    revalue(id);
+    liveRender();
+    drawTradeSoon();
+  }
+  // An account's positions, stops, targets and cash from one feed event, the way a REST read would leave them.
+  function applyFeedState(id, d) {
+    const r = S.byId[id];
+    const st = (S.acctState[id] = S.acctState[id] || { positions: [], ordersCollateral: 0, marks: {}, at: 0 });
+    const ch = { closed: [], reduced: [], opened: [] };
+    for (const p of d.positions || []) {
+      const pid = p.position_id;
+      if (!pid) continue;
+      const i = st.positions.findIndex((x) => x.id === pid);
+      const prev = i >= 0 ? st.positions[i] : null,
+        qty = num(p.quantity);
+      if (p.status === 'closed' || /CLOSED$/.test(p.event_type || '')) {
+        if (prev) st.positions.splice(i, 1);
+        ch.closed.push(p);
+      } else if (p.status === 'opened' && qty > 0) {
+        const next = {
+          id: pid,
+          symbol: p.symbol,
+          side: p.side,
+          qty,
+          openPrice: num(p.open_price),
+          collateral: num(p.collateral) || 0,
+          triggers: prev ? prev.triggers : [],
+        };
+        if (prev) st.positions[i] = next;
+        else st.positions.push(next);
+        if (!prev) ch.opened.push(p);
+        else if (qty < prev.qty) ch.reduced.push(p);
+      }
+    }
+    for (const it of d.order_intents || []) {
+      const pos = st.positions.find((x) => x.id === it.position_id),
+        kind = it.kind === 'stop_loss' ? 'sl' : it.kind === 'take_profit' ? 'tp' : null;
+      if (!pos || !kind) continue;
+      pos.triggers = pos.triggers.filter((t) => t.id !== it.id);
+      if (it.state === 'active') pos.triggers.push({ id: it.id, kind, price: num(it.trigger_price) });
+    }
+    if (d.orders_collateral != null && num(d.orders_collateral) >= 0) st.ordersCollateral = num(d.orders_collateral);
+    const fb = d.final_balance;
+    if (fb && num(fb.amount) >= 0) {
+      const v = parseInt(fb.balance_version, 10);
+      if (!(v < (r.balVer || 0))) {
+        r.free = num(fb.amount);
+        if (v >= 0) r.balVer = v;
+      }
+    }
+    if (r.free >= 0) st.cash = r.free + st.positions.reduce((a, p) => a + p.collateral, 0) + (st.ordersCollateral || 0);
+    st.at = Date.now();
+    for (const p of ch.opened) watchPrice(p.symbol); // its open P&L follows the price from now on
+    return ch;
+  }
+
+  // Positions Vest closed or reduced by itself: a stop or target filling, a failed account, or a close from somewhere
+  // other than this tab. The trade's bookkeeping follows, the log says what happened, and when the master is out of a
+  // copied trade, followers still in it after a moment are offered to flatten (they normally close on their own stops).
+  S.failing = {}; // accountId -> when Vest reported it failed (its forced close follows)
+  function onFeedPositions(id, d, ch) {
+    const legHit = {};
+    for (const it of d.order_intents || [])
+      if (/TRIGGERED|COMPLETED/.test(it.event || '') && it.position_id)
+        legHit[it.position_id] = it.kind === 'stop_loss' ? 'sl' : 'tp';
+    const cause = (pid) =>
+      ourExit(pid) ? 'ours' : legHit[pid] || (Date.now() - (S.failing[id] || 0) < 60000 ? 'breach' : 'vest');
+    for (const p of [...ch.closed, ...ch.reduced]) {
+      const pid = p.position_id,
+        closed = ch.closed.includes(p),
+        why = cause(pid);
+      if (closed && S.plans[pid]) endPlan(S.plans[pid], 'Breakeven: trade closed — stopped watching.');
+      if (why === 'ours') continue; // this tab sent it: the copier already copied it
+      noteVestClose({ id, symbol: p.symbol, why, closed, pnl: num(p.pnl), qty: num(p.quantity) });
+      const entry = S.posMap[pid];
+      if (entry && closed) masterClosedByVest(pid, entry, why);
+      else if (entry) entry.qty = fmtQty(num(p.quantity), entry.symbol); // a sized target filled: the copy keeps its share
+      for (const e of Object.values(S.posMap)) {
+        const fp = e.followers[id];
+        if (!fp || fp.positionId !== pid) continue;
+        if (closed)
+          delete e.followers[id]; // out of the trade: nothing left to copy to it
+        else fp.qty = fmtQty(num(p.quantity), e.symbol);
+      }
+    }
+  }
+  function masterClosedByVest(pid, entry, why) {
+    delete S.posMap[pid];
+    const followers = Object.entries(entry.followers);
+    if (!followers.length) return;
+    setTimeout(async () => {
+      const left = [];
+      for (const [f, fp] of followers) {
+        let open;
+        if (feedLive() && S.acctState[f]) open = S.acctState[f].positions.some((x) => x.id === fp.positionId);
+        else open = !!(await tryOpenPosition(f, entry.symbol, fp.positionId));
+        if (open) left.push({ accountId: f, positionId: fp.positionId });
+      }
+      const what = {
+        sl: "the master's stop filled",
+        tp: "the master's target filled",
+        breach: 'Vest closed the master (the account failed)',
+        vest: "the master's position was closed outside this tab",
+      }[why];
+      if (left.length) raiseOrphans(entry.symbol, left, what, entry.master);
+    }, VEST_CLOSE_GRACE_MS);
+  }
+  // One log line per kind of close, for every account it happened on at about the same moment.
+  let _vestCloses = [],
+    _vestCloseTimer = null;
+  function noteVestClose(n) {
+    _vestCloses.push(n);
+    diag('vest_close', { ...who(n.id), symbol: n.symbol, cause: n.why, closed: n.closed, pnl: n.pnl, qty: n.qty });
+    if (!_vestCloseTimer) _vestCloseTimer = setTimeout(flushVestCloses, 600);
+  }
+  function flushVestCloses() {
+    _vestCloseTimer = null;
+    const notes = _vestCloses;
+    _vestCloses = [];
+    const groups = {};
+    for (const n of notes)
+      (groups[n.why + (n.closed ? '' : '+part')] = groups[n.why + (n.closed ? '' : '+part')] || []).push(n);
+    for (const [k, list] of Object.entries(groups)) {
+      const [why, part] = k.split('+');
+      const what = {
+        sl: part ? 'Stop filled part of the position' : 'Stop filled',
+        tp: part ? 'Target filled' : 'Target filled, position closed',
+        breach: 'Closed by Vest (account failed)',
+        vest: part ? 'Reduced outside this tab' : 'Closed outside this tab',
+      }[why];
+      const usd = (v) => (v >= 0 ? '+' : '−') + money(Math.abs(v));
+      const each = list.map((n) => `${accLabel(n.id)}${n.pnl === 0 || isNaN(n.pnl) ? '' : ' ' + usd(n.pnl)}`);
+      logEvent(why === 'tp' ? 'ok' : 'warn', `${what} (${symLabel(list[0].symbol)}): ${each.join(', ')}.`);
+    }
+  }
+
+  // An account Vest closed (failed) or changed: its limits apply at once; a failed or new account updates the list.
+  function onCapitalAccount(d) {
+    const id = d.account_id,
+      r = id && S.byId[id];
+    if (!id) return;
+    if (r && d.status === 2) {
+      setLimits(r, d); // a daily reset moves the daily floor
+      revalue(id);
+      liveRender();
+      return;
+    }
+    if (r) S.failing[id] = Date.now();
+    if (r || d.status === 2) syncAccountsSoon();
+  }
+  // Vest accepted an order (HTTP 200) and then refused to run it: the fill check learns it at once, with Vest's code.
+  function onCommandEvent(d) {
+    if (String(d.status).toUpperCase() !== 'REJECTED' || !d.order_id) return;
+    setFeedFill(d.order_id, {
+      missing: true,
+      why: 'refused' + (d.error_code != null ? ` (code ${d.error_code})` : ''),
+    });
+    diag('order_refused', {
+      ...(d.account_id ? who(d.account_id) : {}),
+      orderId: d.order_id,
+      errorCode: d.error_code,
+      event: d.event_type,
+    });
+  }
+  function onClaimEvent(d) {
+    const st = String(d.status || '').toUpperCase(),
+      amt = num(d.trader_amount != null ? d.trader_amount : d.amount),
+      from = d.account_id && S.byId[d.account_id] ? ` from ${accLabel(d.account_id)}` : '';
+    diag('claim_event', { status: st, ...(d.account_id ? who(d.account_id) : {}), amount: isNaN(amt) ? null : amt });
+    if (st === 'EXECUTED') logEvent('ok', `Vest paid a profit claim${from}${amt > 0 ? `: ${money(amt)}` : ''}.`);
+    else if (st === 'REFUNDED' || st === 'FAILED')
+      logEvent(
+        'warn',
+        `Vest returned a profit claim${from}${amt > 0 ? ` (${money(amt)})` : ''}: it's back on the account.`,
+      );
+  }
+
+  // The account Vest's own screen is on (its order ticket trades it): from Vest's saved choice at load, then from each
+  // switch. Armed, the panel warns when it isn't the master, since orders placed there aren't copied.
+  S.screen = null;
+  function setScreen(id) {
+    if (S.screen === id) return;
+    S.screen = id;
+    renderLog();
+  }
+  function readScreen() {
+    try {
+      const uid = userToken && decodeJwt(userToken).userId;
+      const id =
+        uid &&
+        (sessionStorage.getItem('vest-active-account:' + uid) || localStorage.getItem('vest-active-account:' + uid));
+      if (id && /^[\w-]{8,64}$/.test(id)) setScreen(id);
+    } catch {
+      /* best effort: nothing to do if this fails */
+    }
+  }
 
   // ───────────────────────── api ─────────────────────────
   // Vest REST call. Errors read "<path> -> <status>" (errCode() parses the status back out).
@@ -421,6 +790,7 @@
           const tok = r.apiKey || r.accessToken,
             cl = decodeJwt(tok);
           tokenOwner[tok] = id;
+          if (S.byId[id]) S.byId[id].canTrade = !!cl.canTrade; // a breached or closed account can't trade
           return (acctTokens[id] = { token: tok, exp: r.accessExpiresAtMs || cl.exp * 1000, canTrade: !!cl.canTrade });
         } finally {
           delete minting[id];
@@ -460,18 +830,35 @@
     }
   }
 
+  // Free cash of every account (and the Primary Account's id), asked for the way Vest's own page asks: active accounts
+  // only, up to BALANCES_LIMIT. Without `active`, every failed account a user ever had is listed too, and a user with many
+  // could have a live account fall off the page (seen: "couldn't read its balance", equity stuck at the start).
+  async function fetchBalances() {
+    const res = await api(`/v3/accounts?active=true&limit=${BALANCES_LIMIT}`);
+    const free = {},
+      ver = {};
+    let primary = null;
+    for (const a of (res && res.accounts) || []) {
+      free[a.account_id] = num(a.amount);
+      ver[a.account_id] = parseInt(a.balance_version, 10);
+      if (a.account_type === 1) primary = a.account_id;
+    }
+    return { free, ver, primary };
+  }
+
   async function buildRegistry() {
-    const [active, accounts, eq] = await Promise.all([
+    const [active, bals, eq] = await Promise.all([
       api('/v3/capital/accounts/active'),
-      api('/v3/accounts').catch(() => ({ accounts: [] })),
+      fetchBalances().catch(() => ({ free: {}, ver: {} })),
       fetchEquities(),
     ]);
-    const balById = Object.fromEntries((accounts.accounts || []).map((a) => [a.account_id, num(a.amount)]));
+    const balById = bals.free;
     const rows = (active.accounts || []).map((a) => {
       const initial = num(a.initial_capital),
         floor = num(a.max_drawdown_limit);
       const eqv = eq[a.id] && eq[a.id].equity;
-      const equity = eqv != null && !isNaN(eqv) ? eqv : (balById[a.id] ?? initial),
+      // unknown until a balance is read: shown as "—", never as the starting balance (a believable $0.00 P&L)
+      const equity = eqv != null && !isNaN(eqv) ? eqv : (balById[a.id] ?? NaN),
         maxDD = initial - floor;
       const r = {
         id: a.id,
@@ -482,6 +869,7 @@
         floor,
         equity,
         free: balById[a.id] ?? NaN,
+        balVer: bals.ver[a.id] >= 0 ? bals.ver[a.id] : 0,
         upnl: (eq[a.id] && eq[a.id].upnl) || 0,
         usedPct: maxDD > 0 ? Math.min(1, Math.max(0, (initial - equity) / maxDD)) : 0,
         leverage: num(a.max_leverage),
@@ -504,34 +892,69 @@
         }
       }),
     );
+    const before = S.byId;
     S.byId = Object.fromEntries(rows.map((r) => [r.id, r]));
-    // Reconcile selections against reality: an account that was closed/blown drops out of the active
-    // list, so clear any master/follower that no longer exists (and disarm) — never leave a dangling ref.
-    if (S.master && !S.byId[S.master]) {
-      S.master = null;
-      if (S.armed) {
-        disarm();
-        logEvent('warn', 'Master account is gone — disarmed.');
-      }
-    }
-    [...S.followers].forEach((f) => {
-      if (!S.byId[f]) {
-        S.followers.delete(f);
-        if (S.armed) {
-          disarm();
-          logEvent('warn', `A follower is gone — disarmed.`);
-        }
-      }
-    });
+    // An account that failed or closed is no longer in the active list: let go of it everywhere (a selected one too)
+    for (const id of Object.keys(before)) if (!S.byId[id]) forgetAccount(id, before[id].label);
+    if (S.master && !S.byId[S.master]) forgetAccount(S.master, null);
+    [...S.followers].forEach((f) => !S.byId[f] && forgetAccount(f, null));
+    regroup();
+    return S.groups;
+  }
+  function regroup() {
     const groups = {};
-    for (const r of rows)
+    for (const r of Object.values(S.byId))
       (groups[r.groupKey] = groups[r.groupKey] || { size: r.size, type: r.type, key: r.groupKey, rows: [] }).rows.push(
         r,
       );
     const gl = Object.values(groups);
     gl.forEach((g) => g.rows.sort((a, b) => a.order - b.order)); // lowest account number first
     S.groups = gl.sort((a, b) => b.size - a.size || a.type.localeCompare(b.type));
-    return S.groups;
+  }
+
+  // An account that is no longer active (failed, closed). A follower is dropped from the copy and the copier stays armed
+  // for the others; the master failing disarms, since there's nothing left to copy. Vest has already closed its
+  // positions, so it leaves every trade and the orphan list too.
+  function forgetAccount(id, label) {
+    const name = label || accLabel(id),
+      wasMaster = S.master === id,
+      wasFollower = S.followers.has(id);
+    delete S.byId[id];
+    delete S.acctState[id];
+    for (const e of Object.values(S.posMap)) delete e.followers[id];
+    if (S.orphan) {
+      const list = S.orphan.list.filter((o) => o.accountId !== id);
+      S.orphan = list.length ? { list } : null;
+    }
+    if (S.arming && (wasMaster || wasFollower)) _armEpoch++; // the arm in progress was for a selection that's gone
+    if (wasFollower) S.followers.delete(id);
+    if (wasMaster) S.master = null;
+    breachReason(id).then((why) => why && logEvent('warn', `${name}: ${why}.`));
+    if (!wasMaster && !wasFollower) return logEvent('info', `${name} is no longer active: removed from the list.`);
+    const role = wasMaster ? 'the master' : 'a follower';
+    if (S.armed && (wasMaster || !S.followers.size)) {
+      disarm();
+      logEvent('warn', `${name} (${role}) is no longer active — disarmed${wasMaster ? '' : ': no followers left'}.`);
+    } else
+      logEvent(
+        'warn',
+        `${name} (${role}) is no longer active — removed${S.armed ? '; still copying to the other followers' : ''}.`,
+      );
+    diag('account_gone', { account: id, label: name, role, armed: S.armed });
+  }
+  // Vest's own record of why an account failed, in words; null when it can't be read.
+  async function breachReason(id) {
+    try {
+      const b = await api(`/v3/capital/accounts/${encodeURIComponent(id)}/breach`);
+      const eq = num(b && b.equity),
+        dd = num(b.max_drawdown_limit),
+        daily = num(b.daily_loss_limit);
+      if (!(eq > 0) || !(dd > 0 || daily > 0)) return null;
+      const isDaily = daily > 0 && !(dd >= daily);
+      return `equity ${money(eq)} reached its ${isDaily ? 'daily loss floor' : 'drawdown floor'} of ${money(isDaily ? daily : dd)}`;
+    } catch {
+      return null;
+    }
   }
 
   const accLabel = (id) => (S.byId[id] && S.byId[id].label) || id.slice(0, 8);
@@ -612,24 +1035,32 @@
     _soonTimer = null;
   // A read soon after an order (any account, any page): positions and cash change on a fill, not with the price.
   function refreshSoon() {
+    if (feedLive()) return; // the live feed has already carried what the order changed
     clearTimeout(_soonTimer);
     _soonTimer = setTimeout(refreshBalances, BALANCE_AFTER_TRADE_MS);
   }
+  // A full read of every account: the active list (an account that failed or a new one), balances, positions and orders.
+  // With the live feed up it runs every FEED_BACKSTOP_MS, else every BALANCE_POLL_MS. An account the feed has spoken
+  // about since this read began keeps the feed's newer state.
+  let _lastFullRead = 0;
   async function refreshBalances() {
-    if (!userTokenOk() || !Object.keys(S.byId).length) return;
+    if (!userTokenOk()) return;
+    if (!Object.keys(S.byId).length) return loadFirstAccounts();
     if (_balBusy) {
       _balAgain = true; // one more read right after this one, so a fill during a read isn't missed
       return;
     }
     _balBusy = true;
+    const t0 = Date.now();
     try {
-      const [accounts, eq, active] = await Promise.all([
-        api('/v3/accounts').catch(() => ({ accounts: [] })),
+      const [bals, eq, active] = await Promise.all([
+        fetchBalances().catch(() => ({ free: {}, ver: {} })),
         fetchEquities(),
-        api('/v3/capital/accounts/active').catch(() => null), // the daily floor moves at each daily reset
+        api('/v3/capital/accounts/active').catch(() => null), // failed or new accounts; the daily floor moves daily
       ]);
-      const bal = Object.fromEntries((accounts.accounts || []).map((a) => [a.account_id, num(a.amount)]));
+      if (active && Array.isArray(active.accounts)) await syncAccountSet(active.accounts);
       for (const a of (active && active.accounts) || []) if (S.byId[a.id]) setLimits(S.byId[a.id], a);
+      const bal = bals.free;
       const ids = Object.keys(S.byId);
       const states = await Promise.all(ids.map((id) => readOpenState(id).catch(() => null)));
       const marks = await markPrices([
@@ -638,32 +1069,33 @@
       const live = {};
       ids.forEach((id, i) => {
         const st = states[i],
+          r = S.byId[id],
           free = bal[id];
-        if (!st || !(free >= 0)) return;
+        if (!r || (_feedAt[id] || 0) >= t0) return; // the feed said something newer meanwhile
+        if (free >= 0 && !(bals.ver[id] < (r.balVer || 0))) {
+          r.free = free;
+          if (bals.ver[id] >= 0) r.balVer = bals.ver[id];
+        }
+        if (!st || !(r.free >= 0)) return;
+        st.cash = r.free + st.positions.reduce((a, p) => a + p.collateral, 0) + st.ordersCollateral;
+        st.marks = marks;
         S.acctState[id] = st;
-        if (st.positions.some((p) => !(marks[p.symbol] > 0))) return; // a price is missing: use the series
-        const upnl = st.positions.reduce(
-          (a, p) => a + (p.side === 'long' ? 1 : -1) * p.qty * (marks[p.symbol] - p.openPrice),
-          0,
-        );
-        const cash = free + st.positions.reduce((a, p) => a + p.collateral, 0) + st.ordersCollateral;
-        Object.assign(st, { cash, marks });
-        live[id] = { equity: cash + upnl, upnl };
+        if (st.positions.some((p) => !(priceOf(p.symbol) || marks[p.symbol] > 0))) return; // a price is missing
+        live[id] = true;
       });
       for (const sym of heldSymbols()) watchPrice(sym); // open P&L then follows every price tick
       unwatchUnused();
       for (const id in S.byId) {
-        const r = S.byId[id];
-        if (bal[id] != null && !isNaN(bal[id])) r.free = bal[id];
-        const src = live[id] || eq[id];
+        if (live[id] && revalue(id)) continue;
+        if ((_feedAt[id] || 0) >= t0) continue;
+        const r = S.byId[id],
+          src = eq[id]; // the performance series: only when positions or a price couldn't be read
         if (src) r.upnl = src.upnl;
         const e = src && !isNaN(src.equity) ? src.equity : bal[id];
         if (e == null || isNaN(e)) continue;
-        r.equity = e;
-        const maxDD = r.size - r.floor;
-        r.room = r.equity - floorOf(r);
-        r.usedPct = maxDD > 0 ? Math.min(1, Math.max(0, (r.size - r.equity) / maxDD)) : 0;
+        setEquity(r, e);
       }
+      _lastFullRead = Date.now();
       if (S.tradeOpen) refreshTradeState();
       render();
     } catch {
@@ -675,6 +1107,69 @@
         setTimeout(refreshBalances, 0);
       }
     }
+  }
+  // No accounts yet (all failed, or none bought): look again, and load them as soon as Vest lists one.
+  async function loadFirstAccounts() {
+    if (!_root || S.arming) return;
+    try {
+      const r = await api('/v3/capital/accounts/active');
+      if (!((r && r.accounts) || []).length || Object.keys(S.byId).length) return;
+      await refresh();
+    } catch {
+      /* best effort: nothing to do if this fails */
+    }
+  }
+  // The active list changed: let go of accounts that failed or closed, and load new ones. True when anything changed.
+  async function syncAccountSet(list) {
+    const ids = new Set(list.map((a) => a.id));
+    const gone = Object.keys(S.byId).filter((id) => !ids.has(id)),
+      added = list.filter((a) => !S.byId[a.id]);
+    gone.forEach((id) => forgetAccount(id, null));
+    if (added.length) {
+      await buildRegistry();
+      const names = added.map((a) => accLabel(a.id));
+      logEvent('info', `New account${names.length > 1 ? 's' : ''} loaded: ${names.join(', ')}.`);
+    }
+    if (!gone.length && !added.length) return false;
+    regroup();
+    dropClaimReview(); // it named the accounts as they were
+    render();
+    return true;
+  }
+  // Vest reported an account failing or appearing: read the active list now, and once more shortly after in case the
+  // first read was a moment ahead of Vest's own update.
+  let _syncTimer = null;
+  function syncAccountsSoon() {
+    if (_syncTimer) return;
+    _syncTimer = setTimeout(() => {
+      _syncTimer = null;
+      refreshBalances();
+      setTimeout(refreshBalances, 3000);
+    }, 200);
+  }
+  // State this old is only trusted while the live feed is up (it would have told us about any change since).
+  const stateFresh = (st) => !!st && (feedLive() || Date.now() - st.at < LIVE_STALE_MS);
+  function setEquity(r, equity) {
+    r.equity = equity;
+    r.room = r.equity - floorOf(r);
+    const maxDD = r.size - r.floor;
+    r.usedPct = maxDD > 0 ? Math.min(1, Math.max(0, (r.size - r.equity) / maxDD)) : 0;
+  }
+  // An account's equity from its cash and open positions at the latest price (Vest's mid when its book is live). False
+  // when it can't be worked out (no state, or no price for one of its markets): the last figure stays.
+  function revalue(id) {
+    const st = S.acctState[id],
+      r = S.byId[id];
+    if (!r || !st || !(st.cash >= 0) || !stateFresh(st)) return false;
+    let upnl = 0;
+    for (const p of st.positions) {
+      const px = priceOf(p.symbol) || (st.marks && st.marks[p.symbol]);
+      if (!(px > 0)) return false;
+      upnl += (p.side === 'long' ? 1 : -1) * p.qty * (px - p.openPrice);
+    }
+    r.upnl = upnl;
+    setEquity(r, st.cash + upnl);
+    return true;
   }
 
   // ── Live P&L between reads. Cash and positions only change when something fills, so each price tick just re-prices the
@@ -695,48 +1190,36 @@
   function tickEquity(sym) {
     let changed = false;
     for (const id in S.acctState) {
-      const st = S.acctState[id],
-        r = S.byId[id];
-      if (!r || !st || !(st.cash >= 0) || !st.positions.some((p) => p.symbol === sym)) continue;
-      if (Date.now() - st.at > LIVE_STALE_MS) continue;
-      let upnl = 0,
-        priced = true;
-      for (const p of st.positions) {
-        const px = priceOf(p.symbol) || (st.marks && st.marks[p.symbol]);
-        if (!(px > 0)) {
-          priced = false; // no price for one of its markets: leave this account at its last read
-          break;
-        }
-        const dir = p.side === 'long' ? 1 : -1;
-        upnl += dir * p.qty * (px - p.openPrice);
-        if (
-          p.symbol === sym &&
-          !st.crossed &&
-          (p.triggers || []).some((t) => (t.kind === 'sl' ? dir * (px - t.price) <= 0 : dir * (px - t.price) >= 0))
-        ) {
-          st.crossed = true; // a stop or target is filling: one read soon, not one per tick
-          if (!(Date.now() - (_crossedAt[id] || 0) < CROSSED_COOLDOWN_MS)) {
-            _crossedAt[id] = Date.now();
-            refreshSoon();
+      const st = S.acctState[id];
+      if (!S.byId[id] || !st || !st.positions.some((p) => p.symbol === sym) || !stateFresh(st)) continue;
+      // Without the live feed: when the price crosses one of a position's own stops or targets, Vest is about to fill
+      // it, so read again soon (once, not on every tick).
+      const px = priceOf(sym);
+      if (!feedLive() && px > 0 && !st.crossed)
+        for (const p of st.positions) {
+          const dir = p.side === 'long' ? 1 : -1;
+          if (
+            p.symbol === sym &&
+            (p.triggers || []).some((t) => (t.kind === 'sl' ? dir * (px - t.price) <= 0 : dir * (px - t.price) >= 0))
+          ) {
+            st.crossed = true;
+            if (!(Date.now() - (_crossedAt[id] || 0) < CROSSED_COOLDOWN_MS)) {
+              _crossedAt[id] = Date.now();
+              refreshSoon();
+            }
+            break;
           }
         }
-      }
-      if (!priced) continue;
-      r.upnl = upnl;
-      r.equity = st.cash + upnl;
-      r.room = r.equity - floorOf(r);
-      const maxDD = r.size - r.floor;
-      r.usedPct = maxDD > 0 ? Math.min(1, Math.max(0, (r.size - r.equity) / maxDD)) : 0;
-      changed = true;
+      if (revalue(id)) changed = true;
     }
     if (changed) liveRender();
   }
-  // Redraw the Accounts or P&L list with the live numbers, at most once a second, and never between a press and its
+  // Redraw the Accounts or P&L list with the live numbers, at most every LIVE_RENDER_MS, and never between a press and its
   // release (the redraw would swallow the click). The Trade tab updates itself on every tick already.
   function liveRender() {
     const view = currentView();
     if (view !== 'accounts' && view !== 'summary') return;
-    const wait = 1000 - (Date.now() - _liveRenderAt);
+    const wait = LIVE_RENDER_MS - (Date.now() - _liveRenderAt);
     if (_pointerDown || wait > 0) {
       if (!_liveRenderTimer)
         _liveRenderTimer = setTimeout(() => ((_liveRenderTimer = null), liveRender()), Math.max(wait, 200));
@@ -747,7 +1230,10 @@
   }
   function startBalancePoll() {
     if (_balTimer) clearInterval(_balTimer);
-    _balTimer = setInterval(refreshBalances, BALANCE_POLL_MS);
+    _balTimer = setInterval(() => {
+      if (feedLive() && Date.now() - _lastFullRead < FEED_BACKSTOP_MS) return; // the feed is carrying every change
+      refreshBalances();
+    }, BALANCE_POLL_MS);
   }
 
   // Every account's saved per-symbol leverage, in one call (GET /v3/user-state, user token). null if it can't be read.
@@ -802,7 +1288,11 @@
   // Fill price/time for one order, matched by order id in /v3/executions.
   // Returns { price, at } when filled, null when Vest's history has no such fill, or undefined when the lookup itself
   // failed: a failed lookup must never be read as "did not fill".
-  async function fillInfo(accountId, symbol, orderId) {
+  // The live feed answers first (within FEED_FILL_WAIT_MS): a fill, or Vest saying it didn't run the order. Only then is
+  // Vest's fill history asked.
+  async function fillInfo(accountId, symbol, orderId, feedWait = FEED_FILL_WAIT_MS) {
+    const ff = await feedFill(orderId, feedWait);
+    if (ff) return ff.missing ? null : { price: ff.price, at: ff.at };
     try {
       const { token } = await mintAccountToken(accountId);
       const nowS = Math.floor(Date.now() / 1000),
@@ -830,12 +1320,12 @@
   const NO_FILL_WHY = 'Vest accepted the order but did not execute it (usually not enough margin for that size)';
   async function confirmFills(symbol, master, placed, entry, kind = 'entry') {
     if (!placed.length && !master.orderId) return;
-    await sleep(FILL_FIRST_LOOK_MS);
+    if (!feedLive()) await sleep(FILL_FIRST_LOOK_MS); // with the feed, each check waits on it instead
     // → { fill } when filled, { missing: true } when confirmed absent, {} when it couldn't be checked
     const tryFill = async (acct, oid) => {
       let failed = false;
       for (let i = 0; i < FILL_TRIES; i++) {
-        const f = await fillInfo(acct, symbol, oid);
+        const f = await fillInfo(acct, symbol, oid, i ? 0 : FEED_FILL_WAIT_MS); // the feed is waited on once
         if (f) return { fill: f };
         if (f === undefined) failed = true;
         if (i < FILL_TRIES - 1) await sleep(FILL_RETRY_MS);
@@ -1291,6 +1781,7 @@
   // it won't run the reduce twice.
   async function sendExit(f, path, body) {
     const key = idem()['Idempotency-Key'];
+    noteExit(body && body.positionId); // the feed will report it closing: this tab did that
     try {
       return await acctSend('POST', f, path, body, key);
     } catch (e) {
@@ -1800,9 +2291,8 @@
     S.orphan = { list: [...((S.orphan && S.orphan.list) || []), ...items] };
     if (S.autoFlatten && !masterIn) flattenOrphans(true);
     else {
-      // the Flatten / Keep prompt is hidden in a collapsed panel: open it
-      const btn = _root && _root.querySelector('.collapsed [data-act="collapse"]');
-      if (btn) btn.click();
+      // the Flatten / Keep prompt is hidden in a minimised panel: open it
+      if (_root && _root.querySelector('.panel.collapsed')) setOpen(true);
       render();
     }
   }
@@ -2086,9 +2576,12 @@
     };
 
   // ───────────────────────── live price (public market data, read-only) ─────────────────────────
-  // Vest's public socket streams `<SYMBOL>@ticker` with the mark price about every 750 ms. Stops and targets are computed
-  // from it and breakeven watches it. This is the copier's own read-only connection, open only while the Trade tab or a
-  // breakeven plan needs a price. A socket that goes quiet is closed and reopened, with backoff.
+  // Vest's public socket streams, per market: `@ticker` (mark and margin mark price, about every 750 ms), `@depth_<tick>`
+  // (the order book: best bid and ask on every change) and `@trades` (every trade as it prints). The price the copier uses
+  // is Vest's own reference: the book's mid (open P&L, fail prices and targets are all measured on it), else the last
+  // trade, else the mark. Stops trigger on the bid (longs) or ask (shorts), so breakeven is checked against those. This is
+  // the copier's own read-only connection, open only while something needs a price (the Trade tab, breakeven, an open
+  // position's P&L). A socket that goes quiet is closed and reopened, with backoff.
   const WS_URL = 'wss://ws.hz.vestmarkets.com/ws?version=1.0';
   const WS_CONNECTING = 0,
     WS_OPEN = 1;
@@ -2104,16 +2597,26 @@
     _wsRetry = WS_RETRY_MIN_MS,
     _wsLastMsg = 0,
     _feedWarned = false;
+  const recentAt = (at) => at > 0 && Date.now() - at < PRICE_STALE_MS;
   const priceOf = (sym) => {
     const p = S.price[sym];
-    return p && Date.now() - p.at < PRICE_STALE_MS ? p.px : null;
+    if (!p) return null;
+    if (recentAt(p.bookAt)) return (p.bid + p.ask) / 2;
+    if (recentAt(p.lastAt)) return p.last;
+    return recentAt(p.at) ? p.px : null;
+  };
+  // The price a stop on this side triggers on: the best bid for a long, the best ask for a short (null without a live book).
+  const stopRefOf = (sym, side) => {
+    const p = S.price[sym];
+    return p && recentAt(p.bookAt) ? (side === 'long' ? p.bid : p.ask) : null;
   };
   // The price Vest values a new market order's margin at (its ticker's margin mark price), else the mark price.
   const marginPriceOf = (sym) => {
     const px = priceOf(sym);
-    return px && S.price[sym].mpx > 0 ? S.price[sym].mpx : px;
+    return px && S.price[sym].mpx > 0 && recentAt(S.price[sym].at) ? S.price[sym].mpx : px;
   };
   function watchPrice(sym) {
+    if (_wsSyms.has(sym)) return;
     _wsSyms.add(sym);
     connectPrices();
     fetchPriceOnce(sym);
@@ -2196,14 +2699,35 @@
       _wsLastMsg = Date.now();
       _wsRetry = WS_RETRY_MIN_MS; // the backoff resets only once the feed actually delivers
       const m = parseJson(e.data, null);
-      if (!m || typeof m.channel !== 'string' || !m.channel.endsWith('@ticker')) return;
-      const px = parseFloat(m.data && m.data.markPrice);
-      if (!(px > 0)) return;
-      if (_feedWarned) {
-        _feedWarned = false;
-        logEvent('info', 'Live price feed back.');
+      if (!m || typeof m.channel !== 'string' || !m.data) return;
+      const [sym, kind = ''] = m.channel.split('@');
+      if (kind === 'ticker') {
+        const px = parseFloat(m.data.markPrice);
+        if (!(px > 0)) return;
+        if (_feedWarned) {
+          _feedWarned = false;
+          logEvent('info', 'Live price feed back.');
+        }
+        const p = (S.price[m.data.symbol || sym] = S.price[m.data.symbol || sym] || {});
+        const mpx = parseFloat(m.data.marginMarkPrice);
+        Object.assign(p, { px, mpx: mpx > 0 ? mpx : null, at: Date.now() });
+        onPrice(m.data.symbol || sym);
+      } else if (kind.startsWith('depth')) {
+        const b = (m.data.bids || [])[0],
+          a = (m.data.asks || [])[0];
+        const bid = b ? parseFloat(b[0]) : NaN,
+          ask = a ? parseFloat(a[0]) : NaN;
+        if (!(bid > 0 && ask >= bid)) return; // a one-sided or crossed book is no reference
+        Object.assign((S.price[sym] = S.price[sym] || {}), { bid, ask, bookAt: Date.now() });
+        onPrice(sym);
+      } else if (kind === 'trades') {
+        const list = Array.isArray(m.data) ? m.data : [m.data];
+        const t = list.reduce((x, y) => (y && (!x || +y.time >= +x.time) ? y : x), null);
+        const px = t ? parseFloat(t.price) : NaN;
+        if (!(px > 0)) return;
+        Object.assign((S.price[sym] = S.price[sym] || {}), { last: px, lastAt: Date.now() });
+        onPrice(sym);
       }
-      onPrice((m.data && m.data.symbol) || m.channel.split('@')[0], px, parseFloat(m.data.marginMarkPrice));
     };
     ws.onclose = () => {
       if (ws !== _ws) return;
@@ -2214,7 +2738,8 @@
   }
   function subscribePrices() {
     try {
-      _ws.send(JSON.stringify({ method: 'SUBSCRIBE', params: [..._wsSyms].map((s) => s + '@ticker'), id: Date.now() }));
+      const params = [..._wsSyms].flatMap((s) => [`${s}@ticker`, `${s}@depth_${depthTickOf(s)}`, `${s}@trades`]);
+      _ws.send(JSON.stringify({ method: 'SUBSCRIBE', params, id: Date.now() }));
     } catch {
       /* best effort: nothing to do if this fails */
     }
@@ -2224,8 +2749,12 @@
     try {
       const r = await (await _fetch(`${API}/v3/ticker/latest?symbols=${encodeURIComponent(sym)}`)).json();
       const t = (r.tickers || []).find((x) => x.symbol === sym);
-      const px = t ? parseFloat(t.markPrice) : NaN;
-      if (px > 0 && !priceOf(sym)) onPrice(sym, px, parseFloat(t.marginMarkPrice));
+      const px = t ? parseFloat(t.markPrice) : NaN,
+        mpx = t ? parseFloat(t.marginMarkPrice) : NaN;
+      if (px > 0 && !priceOf(sym)) {
+        Object.assign((S.price[sym] = S.price[sym] || {}), { px, mpx: mpx > 0 ? mpx : null, at: Date.now() });
+        onPrice(sym);
+      }
     } catch {
       /* best effort: nothing to do if this fails */
     }
@@ -2276,6 +2805,7 @@
       // pointValue: Vest's perps are linear (notional = price × quantity), so one point is $1 per contract
       SYMBOLS[sym] = {
         ...(SYMBOLS[sym] || {}),
+        depthTick: Array.isArray(x.tickSizes) && x.tickSizes.length ? String(x.tickSizes[0]) : String(x.minTickSize),
         tick,
         step: +step.toFixed(+x.sizeDecimals),
         label,
@@ -2383,8 +2913,11 @@
     }
     unwatchUnused();
   }
-  function onPrice(sym, px, mpx) {
-    S.price[sym] = { px, mpx: mpx > 0 ? mpx : null, at: Date.now() };
+  // The book's price grouping a depth subscription names (Vest's first tick size for the market, e.g. "0.25").
+  const depthTickOf = (sym) => (SYMBOLS[sym] && (SYMBOLS[sym].depthTick || String(SYMBOLS[sym].tick))) || '0.25';
+  function onPrice(sym) {
+    const px = priceOf(sym);
+    if (!(px > 0)) return;
     try {
       checkPlans(sym, px);
     } catch (e) {
@@ -2395,7 +2928,21 @@
     } catch {
       /* best effort: nothing to do if this fails */
     }
-    if (S.tradeOpen) updateTrade();
+    drawTradeSoon();
+  }
+  // The book and trades can move many times a second: the Trade tab redraws at most every TRADE_DRAW_MS.
+  let _tradeDrawAt = 0,
+    _tradeDrawTimer = null;
+  function drawTradeSoon() {
+    if (!S.tradeOpen || _tradeDrawTimer) return;
+    const wait = TRADE_DRAW_MS - (Date.now() - _tradeDrawAt);
+    const draw = () => {
+      _tradeDrawTimer = null;
+      _tradeDrawAt = Date.now();
+      updateTrade();
+    };
+    if (wait <= 0) draw();
+    else _tradeDrawTimer = setTimeout(draw, wait);
   }
 
   // ───────────────────────── arming ─────────────────────────
@@ -2788,10 +3335,18 @@
     S.autoFlatten = !!o.autoFlatten;
     S.capFit = !!o.capFit;
     S.checkUpdates = o.checkUpdates !== false; // on by default
+    S.hideMarks = o.hideMarks !== false; // on by default: Vest's buy/sell marks come back on every load otherwise
   }
   function saveOpts() {
-    diag('settings', { fast: S.fast, autoFlatten: S.autoFlatten, capFit: S.capFit, checkUpdates: S.checkUpdates });
-    store.set(OPTS_KEY, { fast: S.fast, autoFlatten: S.autoFlatten, capFit: S.capFit, checkUpdates: S.checkUpdates });
+    const o = {
+      fast: S.fast,
+      autoFlatten: S.autoFlatten,
+      capFit: S.capFit,
+      checkUpdates: S.checkUpdates,
+      hideMarks: S.hideMarks,
+    };
+    diag('settings', o);
+    store.set(OPTS_KEY, o);
   }
   function loadTrade() {
     const t = store.get(TRADE_KEY, null);
@@ -3484,7 +4039,7 @@
       );
     });
     await probe('Balances', async () => {
-      const r = await api('/v3/accounts');
+      const r = await api(`/v3/accounts?active=true&limit=${BALANCES_LIMIT}`);
       if (!Array.isArray(r.accounts) || !r.accounts.length) return ['warn', 'No balances returned to inspect'];
       return fields(r.accounts[0], ['account_id', 'amount'], 'Balance fields OK');
     });
@@ -3679,9 +4234,9 @@
     .hdr {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 6px;
       height: 46px;
-      padding: 0 8px 0 13px;
+      padding: 0 6px 0 12px;
       cursor: move;
       border-bottom: 1px solid var(--line2);
       flex: none;
@@ -3766,6 +4321,10 @@
       display: inline-flex;
       align-items: center;
       padding: 5px 6px;
+    }
+    .hdr .iconbtn {
+      padding: 5px 5px; /* the pin, reload and minimise fit beside ARMED · LIVE at the narrowest width */
+      flex: none;
     }
     .tabs {
       display: flex;
@@ -5377,9 +5936,6 @@
       padding: 2px 0 2px 7px;
       line-height: 1.45;
     }
-    .tr-addpv:empty {
-      display: none;
-    }
     .tr-bebtn,
     .tr-close {
       cursor: pointer;
@@ -5737,18 +6293,6 @@
       white-space: nowrap;
     }
     /* in a trade: the position card */
-    .tr-addwarn {
-      font-family: var(--mono);
-      font-size: 10px;
-      line-height: 1.45;
-      color: var(--warn);
-      border-left: 2px solid var(--warn);
-      padding: 2px 0 2px 8px;
-    }
-    .tr-addwarn.hot {
-      color: var(--danger);
-      border-left-color: var(--danger);
-    }
     .tr-poscard {
       border: 1px solid var(--line2);
       border-left: 2px solid var(--accent);
@@ -5850,9 +6394,23 @@
     .tr-addpv {
       display: flex;
       justify-content: space-between;
+      gap: 8px;
       border-left: none;
       padding: 0;
       font-size: 10px;
+      height: 15px;
+      white-space: nowrap;
+    }
+    .tr-addpv span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .tr-addpv .warn {
+      color: var(--warn);
+    }
+    .tr-addpv .hot {
+      color: var(--danger);
     }
     .tr-addpv b {
       color: var(--text);
@@ -5860,11 +6418,65 @@
     .collapsed .reportbar,
     .collapsed .body,
     .collapsed .tabs,
+    .collapsed .update,
     .collapsed .ctl,
     .collapsed .alerts,
     .collapsed .logwrap,
-    .collapsed .grip {
+    .collapsed .grip,
+    .collapsed .spacer,
+    .collapsed .opttag,
+    .collapsed .hdr .iconbtn {
       display: none;
+    }
+    .panel.narrow .hdr .title,
+    .panel.narrow .hdr .sep {
+      display: none;
+    }
+    /* minimised: the pill (click opens it, press and move drags it) */
+    .panel.collapsed {
+      width: auto;
+      max-height: none;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+    }
+    .collapsed .hdr {
+      height: 36px;
+      padding: 0 12px;
+      border-bottom: none;
+      cursor: pointer;
+    }
+    .collapsed .hdr:focus-visible {
+      outline: 1px solid var(--accent);
+      outline-offset: -1px;
+    }
+    .panel.collapsed.attn-red {
+      border-color: var(--danger-line);
+    }
+    .panel.collapsed.attn-amber {
+      border-color: var(--warn-line);
+    }
+    .attn {
+      display: none;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex: none;
+    }
+    .collapsed .attn.red {
+      display: block;
+      background: var(--danger);
+      box-shadow: 0 0 0 3px var(--danger-dim);
+    }
+    .collapsed .attn.amber {
+      display: block;
+      background: var(--warn);
+      box-shadow: 0 0 0 3px var(--warn-dim);
+    }
+    /* the pin: lime while docked on the chart, struck through while floating */
+    [data-act='dock'] .unpin {
+      display: none;
+    }
+    [data-act='dock']:not(.active) .unpin {
+      display: inline;
     }
   `;
 
@@ -5886,12 +6498,15 @@
       <div class="panel">
         <div class="hdr">
           <span class="brand" role="img" aria-label="STRATUH">${BRAND_SVG}</span><span class="sep"></span><span class="title">Copier</span>
-          <span class="armtag off" id="armtag">idle</span><span class="opttag" id="opttag"></span>
+          <span class="armtag off" id="armtag">idle</span><span class="opttag" id="opttag"></span><span class="attn" id="attn"></span>
           <span class="spacer"></span>
+          <button class="iconbtn ico" data-act="dock" title="Docked on the chart: click to float it anywhere" aria-label="Detach from the chart" aria-pressed="true">
+            <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l-1 6 4 3v2H6v-2l4-3-1-6zM12 14v7" fill="none" stroke="currentColor"
+              stroke-width="2" stroke-linejoin="round"/><path class="unpin" d="M4 4l16 16" fill="none" stroke="currentColor" stroke-width="2"/></svg></button>
           <button class="iconbtn ico" data-act="refresh" title="Reload accounts" aria-label="Reload accounts">
             <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 10-2.3 5.7M20 4v7h-7" fill="none" stroke="currentColor"
               stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-          <button class="iconbtn" data-act="collapse" title="Collapse" aria-label="Collapse" aria-expanded="true">–</button>
+          <button class="iconbtn" data-act="collapse" title="Minimise" aria-label="Minimise" aria-expanded="true">–</button>
         </div>
         <div class="tabs" role="tablist">
           <button class="tab" role="tab" data-tab="accounts">Accounts</button>
@@ -5925,20 +6540,17 @@
         <div class="grip" title="Drag to resize"></div>
       </div>`;
     const panel = root.querySelector('.panel');
-    const size = store.get(SIZE_KEY, null);
-    if (size) {
-      if (size.w) panel.style.width = size.w + 'px';
-      if (size.h) panel.style.maxHeight = size.h + 'px';
-    }
-
-    // Drag by the header. Pointer capture keeps the drag even when the cursor passes over the chart's iframe.
     const hdr = root.querySelector('.hdr');
+    panel.addEventListener('pointerdown', () => (_pointerDown = true), true);
+    window.addEventListener('pointerup', () => (_pointerDown = false), true);
+    // Move by the header (or the whole pill when minimised): a press that moves DRAG_PX or more drags, kept inside the
+    // chart when docked (else the window); a press that doesn't move on the pill opens it. Pointer capture keeps the drag
+    // even when the cursor passes over the chart's frame.
     let drag = null;
     hdr.addEventListener('pointerdown', (e) => {
-      if (e.target.closest('.iconbtn')) return;
+      if (e.button !== 0 || (e.target.closest('.iconbtn') && !panel.classList.contains('collapsed'))) return;
       const r = panel.getBoundingClientRect();
-      drag = { sx: e.clientX, sy: e.clientY, ox: r.left, oy: r.top };
-      Object.assign(panel.style, { right: 'auto', left: r.left + 'px', top: r.top + 'px' });
+      drag = { sx: e.clientX, sy: e.clientY, ox: r.left, oy: r.top, moved: false };
       try {
         hdr.setPointerCapture(e.pointerId);
       } catch {
@@ -5948,25 +6560,38 @@
     });
     hdr.addEventListener('pointermove', (e) => {
       if (!drag) return;
-      panel.style.left = drag.ox + e.clientX - drag.sx + 'px';
-      panel.style.top = drag.oy + e.clientY - drag.sy + 'px';
+      const dx = e.clientX - drag.sx,
+        dy = e.clientY - drag.sy;
+      if (!drag.moved && Math.hypot(dx, dy) < DRAG_PX) return;
+      drag.moved = _dragging = true;
+      const B = placeBounds(),
+        r = panel.getBoundingClientRect();
+      panel.style.left = clampPx(drag.ox + dx, B.l, B.r - r.width) + 'px';
+      panel.style.top = clampPx(drag.oy + dy, B.t, B.b - r.height) + 'px';
     });
-    const endDrag = () => {
-      if (drag && S.tradeOpen) fitPanel(); // moved: the Trade tab refits to the new spot
+    const endDrag = (e) => {
+      if (!drag) return;
+      const was = drag;
       drag = null;
+      _dragging = false;
+      if (was.moved) return rememberSpot();
+      if (e.type === 'pointerup' && panel.classList.contains('collapsed')) setOpen(true); // a click on the pill
     };
     hdr.addEventListener('pointerup', endDrag);
     hdr.addEventListener('pointercancel', endDrag);
+    hdr.addEventListener('keydown', (e) => {
+      if (panel.classList.contains('collapsed') && (e.key === 'Enter' || e.key === ' ')) {
+        e.preventDefault();
+        setOpen(true);
+      }
+    });
 
-    // Resize from the corner grip; the size is remembered.
-    const PANEL_MIN_W = 300,
-      PANEL_MAX_W = 700,
-      PANEL_MIN_H = 260;
+    // Resize from the corner grip, inside the same bounds; the size is remembered.
     const grip = root.querySelector('.grip');
     let rs = null;
     grip.addEventListener('pointerdown', (e) => {
       const r = panel.getBoundingClientRect();
-      rs = { w: r.width, h: r.height, sx: e.clientX, sy: e.clientY };
+      rs = { w: r.width, h: r.height, sx: e.clientX, sy: e.clientY, left: r.left, top: r.top };
       try {
         grip.setPointerCapture(e.pointerId);
       } catch {
@@ -5977,13 +6602,15 @@
     });
     grip.addEventListener('pointermove', (e) => {
       if (!rs) return;
-      panel.style.width = Math.max(PANEL_MIN_W, Math.min(PANEL_MAX_W, rs.w + e.clientX - rs.sx)) + 'px';
-      panel.style.maxHeight = Math.max(PANEL_MIN_H, Math.min(window.innerHeight - 20, rs.h + e.clientY - rs.sy)) + 'px';
+      const B = placeBounds();
+      panel.style.width = clampPx(rs.w + e.clientX - rs.sx, PANEL_MIN_W, Math.min(PANEL_MAX_W, B.r - rs.left)) + 'px';
+      panel.style.maxHeight = clampPx(rs.h + e.clientY - rs.sy, PANEL_MIN_H, B.b - rs.top) + 'px';
     });
     const endResize = () => {
       if (!rs) return;
       rs = null;
       store.set(SIZE_KEY, { w: panel.offsetWidth, h: parseInt(panel.style.maxHeight, 10) || 0 });
+      place();
     };
     grip.addEventListener('pointerup', endResize);
     grip.addEventListener('pointercancel', endResize);
@@ -5991,17 +6618,8 @@
     const on = (sel, fn) => {
       root.querySelector(sel).onclick = fn;
     };
-    panel.addEventListener('pointerdown', () => (_pointerDown = true), true);
-    window.addEventListener('pointerup', () => (_pointerDown = false), true);
-    on('[data-act="collapse"]', (e) => {
-      const collapsed = panel.classList.toggle('collapsed');
-      fitPanel();
-      const b = e.currentTarget;
-      b.textContent = collapsed ? '+' : '–';
-      b.title = collapsed ? 'Expand' : 'Collapse';
-      b.setAttribute('aria-label', b.title);
-      b.setAttribute('aria-expanded', String(!collapsed));
-    });
+    on('[data-act="collapse"]', () => setOpen(false));
+    on('[data-act="dock"]', () => toggleDock());
     on('[data-act="refresh"]', () => refresh());
     root.querySelectorAll('[data-tab]').forEach((b) => (b.onclick = () => setView(b.dataset.tab)));
     const health = root.querySelector('.health');
@@ -6090,19 +6708,212 @@
               : S.rulesOpen
                 ? 'rules'
                 : 'accounts';
-  // On the Trade tab the panel grows to the bottom of the window (from wherever it sits), so the whole order form fits
-  // without resizing by hand; elsewhere it keeps the size the user gave it. Never saved: leaving the tab restores it.
-  function fitPanel() {
+  // ── Placement. Docked (the default), the panel lives on Vest's chart: just right of the chart's drawing toolbar and
+  // below its top toolbar, kept inside the chart whatever resizes (the window, Vest's order book or positions area), its
+  // spot remembered relative to the chart. Detached (the pin), it floats anywhere in the window. Minimised, it's a pill:
+  // logo, COPIER and the state, with a dot when something needs you. On a page with no chart, it floats.
+  // On the Trade tab it grows to the bottom of its bounds, so the whole order form fits without resizing by hand.
+  const DOCK_KEY = 'vc-dock'; // { docked, open, at: {x,y} from the chart's corner, free: {x,y} in the window }
+  const PANEL_MIN_W = 300,
+    PANEL_MAX_W = 700,
+    PANEL_MIN_H = 260;
+  const HDR_FULL_W = 350; // narrower than this, the header leaves out the "COPIER" label
+  const DOCK_INSET = 6, // px kept between the panel and the chart's edges (and the window's)
+    DRAG_PX = 4, // a press on the pill that moves less than this is a click
+    CHART_MIN_W = 400, // a chart smaller than this isn't docked into (it couldn't hold the panel)
+    CHART_MIN_H = 300;
+  let _dragging = false,
+    _placeKey = '';
+  const clampPx = (v, lo, hi) => Math.max(lo, Math.min(hi, v)) || lo;
+  function loadDock() {
+    const d = store.get(DOCK_KEY, {}) || {};
+    const pt = (o) => (o && Number.isFinite(o.x) && Number.isFinite(o.y) ? { x: o.x, y: o.y } : null);
+    S.dock = { docked: d.docked !== false, open: d.open !== false, at: pt(d.at), free: pt(d.free) };
+  }
+  const saveDock = () => store.set(DOCK_KEY, S.dock);
+  // Vest's chart: the TradingView frame (found by its API, not by Vest's styling).
+  let _chartEl = null;
+  function chartFrame() {
+    if (_chartEl && _chartEl.isConnected) return _chartEl;
+    _chartEl = null;
+    for (const f of document.querySelectorAll('iframe'))
+      try {
+        if (f.contentWindow && f.contentWindow.tradingViewApi) return (_chartEl = f);
+      } catch {
+        /* another site's frame: not the chart */
+      }
+    return null;
+  }
+  // The chart's drawing area in the window (right of its drawing toolbar, below its top toolbar), or null.
+  function chartZone() {
+    const f = chartFrame();
+    if (!f) return null;
+    const r = f.getBoundingClientRect();
+    if (r.width < CHART_MIN_W || r.height < CHART_MIN_H) return null;
+    let left = 52,
+      top = 38; // TradingView's usual toolbar sizes, if they can't be measured
+    try {
+      const doc = f.contentDocument,
+        l = doc && doc.querySelector('.layout__area--left'),
+        t = doc && doc.querySelector('.layout__area--top');
+      if (l) left = l.getBoundingClientRect().width;
+      if (t) top = t.getBoundingClientRect().height;
+    } catch {
+      /* best effort: the usual sizes */
+    }
+    return { left: r.left + left, top: r.top + top, right: r.right, bottom: r.bottom };
+  }
+  // Where the panel may be: inside the chart when docked on a page with one, else inside the window.
+  function placeBounds() {
+    const z = S.dock && S.dock.docked ? chartZone() : null;
+    const box = z || { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight, window: true };
+    return {
+      l: box.left + DOCK_INSET,
+      t: box.top + DOCK_INSET,
+      r: box.right - DOCK_INSET,
+      b: box.bottom - DOCK_INSET,
+      zone: z,
+    };
+  }
+  function place() {
+    const panel = _root && _root.querySelector('.panel');
+    if (!panel || !S.dock || _dragging) return;
+    const B = placeBounds(),
+      d = S.dock,
+      open = !panel.classList.contains('collapsed');
+    panel.classList.toggle('v-trade', !!S.tradeOpen);
+    panel.classList.toggle('docked', !!B.zone);
+    const saved = store.get(SIZE_KEY, null) || {};
+    const w = open ? clampPx(saved.w || 368, PANEL_MIN_W, Math.min(PANEL_MAX_W, Math.max(PANEL_MIN_W, B.r - B.l))) : 0;
+    panel.style.width = open ? w + 'px' : '';
+    panel.classList.toggle('narrow', open && w < HDR_FULL_W); // the header drops "COPIER" so its buttons still fit
+    const width = open ? w : panel.offsetWidth;
+    // its spot: from the chart's corner when docked, else in the window (the first time: top right, as before)
+    const want = B.zone
+      ? { x: B.zone.left + (d.at ? d.at.x : DOCK_INSET), y: B.zone.top + (d.at ? d.at.y : DOCK_INSET) }
+      : d.free || { x: window.innerWidth - width - 16, y: 16 };
+    const x = clampPx(want.x, B.l, B.r - width);
+    let y;
+    if (!open) {
+      panel.style.maxHeight = '';
+      y = clampPx(want.y, B.t, B.b - panel.offsetHeight);
+    } else if (S.tradeOpen) {
+      y = clampPx(want.y, B.t, B.b - Math.min(320, B.b - B.t));
+      panel.style.maxHeight = Math.max(PANEL_MIN_H, B.b - y) + 'px';
+    } else {
+      panel.style.maxHeight = Math.max(PANEL_MIN_H, Math.min(saved.h || Infinity, B.b - B.t)) + 'px';
+      y = clampPx(want.y, B.t, B.b - panel.offsetHeight);
+    }
+    Object.assign(panel.style, { left: x + 'px', top: y + 'px', right: 'auto' });
+  }
+  // After a drag: remember the spot, from the chart's corner when docked on it, else in the window.
+  function rememberSpot() {
     const panel = _root && _root.querySelector('.panel');
     if (!panel) return;
-    panel.classList.toggle('v-trade', !!S.tradeOpen);
-    const saved = store.get(SIZE_KEY, null);
-    if (S.tradeOpen && !panel.classList.contains('collapsed')) {
-      const top = Math.max(0, panel.getBoundingClientRect().top);
-      panel.style.maxHeight = Math.max(320, window.innerHeight - top - 16) + 'px';
-    } else panel.style.maxHeight = saved && saved.h ? saved.h + 'px' : '';
+    const r = panel.getBoundingClientRect(),
+      z = S.dock.docked ? chartZone() : null;
+    if (z) S.dock.at = { x: Math.round(r.left - z.left), y: Math.round(r.top - z.top) };
+    else S.dock.free = { x: Math.round(r.left), y: Math.round(r.top) };
+    saveDock();
+    place();
   }
-  window.addEventListener('resize', () => S.tradeOpen && fitPanel());
+  function setOpen(open) {
+    const panel = _root && _root.querySelector('.panel');
+    if (!panel) return;
+    panel.classList.toggle('collapsed', !open);
+    S.dock.open = open;
+    saveDock();
+    const b = _root.querySelector('[data-act="collapse"]');
+    b.setAttribute('aria-expanded', String(open));
+    const hdr = _root.querySelector('.hdr');
+    if (open) {
+      hdr.removeAttribute('tabindex');
+      hdr.removeAttribute('role');
+    } else {
+      hdr.setAttribute('tabindex', '0'); // the pill opens from the keyboard too
+      hdr.setAttribute('role', 'button');
+    }
+    renderDock();
+    place();
+  }
+  // The pin: docked on the chart, or floating anywhere. Undocking leaves the panel where it is; docking puts it back at
+  // its spot on the chart.
+  function toggleDock() {
+    const panel = _root && _root.querySelector('.panel');
+    if (!panel) return;
+    const r = panel.getBoundingClientRect();
+    S.dock.docked = !S.dock.docked;
+    if (!S.dock.docked) S.dock.free = { x: Math.round(r.left), y: Math.round(r.top) };
+    saveDock();
+    renderDock();
+    place();
+  }
+  // The pin's state, and the pill's dot: red when followers wait on Flatten / Keep or, armed, Vest's live feed is lost;
+  // amber when Vest updated its site (run the site check).
+  const _bootAt = Date.now();
+  function renderDock() {
+    if (!_root || !S.dock) return;
+    const pin = _root.querySelector('[data-act="dock"]');
+    pin.classList.toggle('active', S.dock.docked);
+    pin.setAttribute('aria-pressed', String(S.dock.docked));
+    pin.title = S.dock.docked
+      ? 'Docked on the chart: click to float it anywhere'
+      : 'Floating: click to dock it on the chart';
+    pin.setAttribute('aria-label', S.dock.docked ? 'Detach from the chart' : 'Dock on the chart');
+    const red =
+      !!(S.orphan && S.orphan.list.length) || (S.armed && !feedLive() && Date.now() - _bootAt > FEED_QUIET_MS / 5);
+    const amber = !red && healthState().changed;
+    const panel = _root.querySelector('.panel'),
+      dot = _root.querySelector('#attn');
+    dot.className = 'attn' + (red ? ' red' : amber ? ' amber' : '');
+    dot.title = red
+      ? S.orphan
+        ? 'Followers are waiting on Flatten / Keep'
+        : "Vest's live feed is down"
+      : amber
+        ? 'Vest updated its site: run the site check'
+        : '';
+    panel.classList.toggle('attn-red', red);
+    panel.classList.toggle('attn-amber', amber);
+    const hdr = _root.querySelector('.hdr');
+    hdr.setAttribute(
+      'aria-label',
+      panel.classList.contains('collapsed')
+        ? `Open STRATUH Copier (${_root.querySelector('#armtag').textContent})`
+        : '',
+    );
+  }
+  // Keep the panel in place as the page changes: the window resizing at once, and Vest's own layout (the chart, the
+  // order book, the positions area, a page with no chart) checked a few times a second.
+  // Vest's buy/sell marks on the chart: TradingView's "Hide marks on bars" (its `hideAllMarks` action), which Vest's
+  // chart forgets on every load. With the setting on, it's switched on once per chart load; showing the marks again from
+  // the chart's menu is respected until the next load.
+  let _marksDone = null; // the chart frame the marks were handled for
+  function hideChartMarks(f) {
+    if (!S.hideMarks || !f || _marksDone === f) return;
+    try {
+      const chart = f.contentWindow.tradingViewApi.activeChart();
+      if (typeof chart.getCheckableActionState !== 'function') return;
+      const hidden = chart.getCheckableActionState('hideAllMarks');
+      if (hidden == null) return; // not ready yet: tried again on the next check
+      if (!hidden) chart.executeActionById('hideAllMarks');
+      _marksDone = f;
+    } catch {
+      /* the chart isn't ready yet: tried again on the next check */
+    }
+  }
+  window.addEventListener('resize', () => place());
+  setInterval(() => {
+    if (!_root || _dragging) return;
+    hideChartMarks(chartFrame());
+    const f = chartFrame(),
+      r = f && f.getBoundingClientRect();
+    const key = r ? [r.left, r.top, r.width, r.height].map(Math.round).join() : 'none';
+    if (key !== _placeKey) {
+      _placeKey = key;
+      place();
+    }
+  }, 400);
 
   function setView(v) {
     if (v !== 'trade') stopPick(true);
@@ -6218,7 +7029,8 @@
       b.setAttribute('aria-selected', String(b.dataset.tab === view));
     });
     renderLog();
-    fitPanel();
+    place();
+    renderDock();
   }
 
   function renderSiteCheck(body) {
@@ -6275,21 +7087,26 @@
   // pass prices and the warnings are worked out from them, the way Vest's own ticket does.
   S.acctState = {}; // accountId -> { positions: [{ symbol, side, qty, openPrice, collateral }], ordersCollateral, at }
   S.levs = null; // saved leverage by account and symbol (GET /v3/user-state)
-  const TRADE_STATE_FRESH_MS = 60000;
   let _tradeStateBusy = false;
   async function refreshTradeState() {
     const master = S.master;
     if (!master || _tradeStateBusy || !userTokenOk()) return;
     _tradeStateBusy = true;
+    const t0 = Date.now();
     try {
-      const [levs, st, accts] = await Promise.all([
+      const [levs, st, bals] = await Promise.all([
         fetchLeverages(),
         readOpenState(master),
-        api('/v3/accounts').catch(() => null), // free cash read with the positions, so the two match after a fill
+        fetchBalances().catch(() => null), // free cash read with the positions, so the two match after a fill
       ]);
       if (levs) S.levs = levs;
-      const a = ((accts && accts.accounts) || []).find((x) => x.account_id === master);
-      if (a && num(a.amount) >= 0 && S.byId[master]) S.byId[master].free = num(a.amount);
+      if ((_feedAt[master] || 0) >= t0) return; // the live feed already has newer positions and cash
+      const r0 = S.byId[master],
+        free = bals && bals.free[master];
+      if (r0 && free >= 0 && !(bals.ver[master] < (r0.balVer || 0))) {
+        r0.free = free;
+        if (bals.ver[master] >= 0) r0.balVer = bals.ver[master];
+      }
       // keep what the live P&L ticks from (cash and the last marks), as refreshBalances sets it: without cash the P&L
       // tab stopped moving the master's open profit until the next balance read
       const prev = S.acctState[master],
@@ -6311,8 +7128,7 @@
     const r = S.byId[id],
       st = S.acctState[id];
     if (!r) return { equity: NaN, upnl: 0 };
-    if (!st || Date.now() - st.at > TRADE_STATE_FRESH_MS || !(r.free >= 0) || !(px > 0))
-      return { equity: r.equity, upnl: r.upnl || 0 };
+    if (!stateFresh(st) || !(r.free >= 0) || !(px > 0)) return { equity: r.equity, upnl: r.upnl || 0 };
     const here = st.positions.filter((p) => p.symbol === sym);
     const upHere = here.reduce((a, p) => a + (p.side === 'long' ? 1 : -1) * p.qty * (px - p.openPrice), 0);
     const upnl = upHere + (st.positions.length > here.length ? (r.upnl || 0) - upHere : 0);
@@ -6329,8 +7145,7 @@
       fee = meta.takerFee || 0,
       master = S.master && S.byId[S.master] ? S.master : null;
     const st = master && S.acctState[master];
-    const held =
-      (st && Date.now() - st.at < TRADE_STATE_FRESH_MS && st.positions.find((p) => p.symbol === sym)) || null;
+    const held = (stateFresh(st) && st.positions.find((p) => p.symbol === sym)) || null;
     const live = master ? liveAccount(master, sym, price) : null;
 
     // Max size: Vest's 100% for the master and, in strict 1:1 while armed, for every follower too (they copy the same
@@ -6368,14 +7183,21 @@
     // Vest's buying power and a stop-out above the floor (the stop rebuilt from the new average, fees counted).
     // An add rebuilds the stop from the new average. A position deep in a loss can put that stop past the price (Vest would
     // refuse it, or stop the trade out at once): such an add is refused.
-    const addStop = (a) => {
+    // A stop the trader moved since the panel placed it stays (as does one tighter than the rebuilt one).
+    const heldSl = held && (held.triggers || []).find((x) => x.kind === 'sl');
+    const slMoved = !!heldSl && !panelLeg(held.id, heldSl, meta.tick);
+    const rebuiltStop = (a) => {
       const dir = held.side === 'long' ? 1 : -1;
       return (held.qty * held.openPrice + a * price) / (held.qty + a) - dir * +t.stopPts;
     };
+    const stopKept = (a) =>
+      !!heldSl && (slMoved || (held.side === 'long' ? 1 : -1) * (heldSl.price - rebuiltStop(a)) > meta.tick / 2);
+    const addStop = (a) => (stopKept(a) ? heldSl.price : rebuiltStop(a));
     const stopThrough = (a) =>
-      held.side === 'long'
+      !stopKept(a) &&
+      (held.side === 'long'
         ? addStop(a) >= price - BE_CLEAR_TICKS * meta.tick
-        : addStop(a) <= price + BE_CLEAR_TICKS * meta.tick;
+        : addStop(a) <= price + BE_CLEAR_TICKS * meta.tick);
     let chips = null,
       pick = null;
     if (held && price > 0 && +t.stopPts > 0) {
@@ -6467,7 +7289,7 @@
         side,
         qty: total,
         price,
-        stopPrice: avg - dir * (+t.stopPts || 0),
+        stopPrice: held ? addStop(qty) : avg - dir * (+t.stopPts || 0), // an add keeps a moved or tighter stop
         openFee,
         takerFee: fee,
       });
@@ -6559,6 +7381,7 @@
       t,
       meta,
       price,
+      addStopAt: held && price > 0 && +t.stopPts > 0 ? addStop(qty > 0 ? qty : 0) : null, // the stop an add leaves
       qty,
       qtys,
       long,
@@ -6593,7 +7416,7 @@
       <div class="trade">
         <div class="tr-top">
           <div class="tr-sym" id="tr-sym"></div>
-          <div class="tr-px" id="tr-px" title="Mark price">—</div>
+          <div class="tr-px" id="tr-px">—</div>
         </div>
         <div class="tr-poscard" id="tr-pos" hidden>
           <div class="tr-posbar"><span class="tr-side" id="tr-pside"></span><span class="tr-pq" id="tr-pqty"></span><span class="tr-ppl" id="tr-ppl"></span></div>
@@ -6634,7 +7457,7 @@
             <div class="tr-lh"><span id="tr-lhs">Sell</span><span id="tr-lhm">pts · qty · $</span><span id="tr-lhb">Buy</span></div>
             <div class="tr-lr tr-ps" id="tr-passrow"><span class="tr-sp" id="ls-pass"></span><span class="tr-mid">Pass</span><span class="tr-bp" id="lb-pass"></span></div>
             <div id="tr-targets"></div>
-            <div class="tr-lr tr-mk" id="tr-mkrow" hidden><span class="tr-sp"></span><span class="tr-mid" id="tr-mk">Mark</span><span class="tr-bp" id="lb-mk"></span></div>
+            <div class="tr-lr tr-mk" id="tr-mkrow" hidden><span class="tr-sp"></span><span class="tr-mid" id="tr-mk">Price</span><span class="tr-bp" id="lb-mk"></span></div>
             <div class="tr-lr tr-en"><span class="tr-sp" id="ls-entry"></span><span class="tr-mid" id="tr-entry">Entry</span><span class="tr-bp" id="lb-entry"></span></div>
             <div class="tr-lr tr-slr"><span class="tr-sp" id="ls-stop"></span><span class="tr-mid"><span class="tr-n sl">STOP</span>
               <input class="tr-in tr-pt" id="tr-stop" inputmode="decimal" aria-label="Stop, in points" value="${esc(t.stopPts)}">
@@ -6906,6 +7729,7 @@
       };
       const res = await send('POST', '/v3/positions/open', master, body);
       if (!res.positionId) throw new Error('Vest returned no position');
+      notePanelLegs(res.positionId, legsOf(body, res));
       const tps = takeProfits
         .map((l, i) => `TP${i + 1} ${l.triggerPrice}${l.quantity ? ' × ' + l.quantity : ''}`)
         .join(' · ');
@@ -6986,7 +7810,7 @@
   async function orderFill(accountId, sym, orderId, ref) {
     for (let i = 0; orderId && i < 4; i++) {
       if (i) await sleep(POLL_MS);
-      const f = await fillInfo(accountId, sym, orderId);
+      const f = await fillInfo(accountId, sym, orderId, i ? 0 : FEED_FILL_WAIT_MS);
       if (f && nearMarket(f.price, ref)) return f.price;
     }
     return null;
@@ -7010,6 +7834,33 @@
   // position — the stop and targets re-placed from the new average entry at the panel's points, with the full size split
   // across the targets by the chosen scale. The add and every leg change go through the hooked fetch, so an armed
   // copier adds to each follower (scaled) and moves/resizes their legs to match.
+  // ── Levels the panel placed itself (at entry, re-anchored, or rebuilt by an add), per position, kept across reloads.
+  // An add rebuilds only a stop or target still exactly where the panel last put it: one the trader moved since (on the
+  // chart, with Breakeven, from Vest's positions table, closer or further) stays where it is.
+  const LADDER_KEY = 'vc-ladder',
+    LADDER_MAX = 50;
+  S.ladder = {};
+  function loadLadder() {
+    const v = store.get(LADDER_KEY, {});
+    S.ladder = v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+  }
+  function notePanelLegs(positionId, legs) {
+    if (!positionId) return;
+    const e = (S.ladder[positionId] = S.ladder[positionId] || {});
+    if (!e.legs || typeof e.legs !== 'object') e.legs = {};
+    for (const l of legs) if (l && l.id && +l.price > 0) e.legs[l.id] = +l.price;
+    e.at = Date.now();
+    const old = Object.keys(S.ladder).sort((a, b) => (S.ladder[a].at || 0) - (S.ladder[b].at || 0));
+    old.slice(0, Math.max(0, old.length - LADDER_MAX)).forEach((k) => delete S.ladder[k]);
+    store.set(LADDER_KEY, S.ladder);
+  }
+  // True when this stop or target is still where the panel put it (an add may rebuild it).
+  const panelLeg = (positionId, l, tick) => {
+    const e = S.ladder[positionId],
+      at = e && e.legs && typeof e.legs === 'object' ? +e.legs[l.id] : NaN;
+    return at > 0 && Math.abs(at - l.price) < tick / 2;
+  };
+
   async function addToTrade({ t, qty, meta, side, held, lev, sizing }) {
     const sym = t.symbol,
       master = S.master,
@@ -7153,9 +8004,13 @@
     let stopAt = exact.stop,
       keptStop = false,
       skipped = 0;
+    const moved = new Set(legs.filter((l) => !panelLeg(positionId, l, tick)).map((l) => l.id)); // the trader's levels
     if (stops[0]) {
       const st = stops[0];
-      if (side === 'long' ? st.price > exact.stop + tick / 2 : st.price < exact.stop - tick / 2) {
+      if (moved.has(st.id)) {
+        stopAt = st.price; // moved by hand (or Breakeven) since the panel placed it: it stays
+        keptStop = 'moved';
+      } else if (side === 'long' ? st.price > exact.stop + tick / 2 : st.price < exact.stop - tick / 2) {
         stopAt = st.price;
         keptStop = true;
       } else if (stopPast(exact.stop)) {
@@ -7181,7 +8036,13 @@
     } else {
       ops.push({ m: 'POST', path: SL, body: { ...base, triggerPrice: fmtP(exact.stop) } });
     }
+    let keptTargets = 0;
     goal.forEach((g, i) => {
+      if (i < n && moved.has(tps[i].id)) {
+        g.price = tps[i].price; // the trader moved this target: it keeps its price (its size is re-split)
+        keptTargets++;
+        return;
+      }
       if (!tgtPast(g.price)) return;
       skipped++;
       g.price = i < n ? tps[i].price : null; // kept where it was; a new one is left out
@@ -7238,10 +8099,18 @@
     else
       logEvent(
         'ok',
-        `Added — ${fmtQ(total)} @ avg ${fmtP(entry)} · stop ${stopAt == null ? 'none' : fmtP(stopAt)}${keptStop && !skipped ? ' (kept: tighter than a rebuilt one)' : ''} · ${goal
+        `Added — ${fmtQ(total)} @ avg ${fmtP(entry)} · stop ${stopAt == null ? 'none' : fmtP(stopAt)}${keptStop === 'moved' ? ' (kept where you moved it)' : keptStop && !skipped ? ' (kept: tighter than a rebuilt one)' : ''} · ${goal
           .filter((g) => g.price != null)
           .map((g, i) => `TP${i + 1} ${fmtP(g.price)}${g.qty != null ? ' × ' + fmtQ(g.qty) : ''}`)
-          .join(' · ')}`,
+          .join(
+            ' · ',
+          )}${keptTargets ? ` · ${keptTargets} target${keptTargets > 1 ? 's' : ''} kept where you moved ${keptTargets > 1 ? 'them' : 'it'}` : ''}`,
+      );
+    const after = await tryOpenPosition(master, sym, positionId);
+    if (after)
+      notePanelLegs(
+        positionId,
+        posLegs(after).filter((l) => !moved.has(l.id)),
       );
     diag('add_ladder', {
       positionId,
@@ -7250,6 +8119,7 @@
       entry,
       stop: stopAt,
       keptStop,
+      keptTargets,
       skipped,
       targets: goal,
       ops: ops.map((o) => o.m + ' ' + o.path.split('/').pop()),
@@ -7376,6 +8246,7 @@
           triggerPrice: fmt(m.to),
           [isStop ? 'stopLossId' : 'takeProfitId']: m.id,
         });
+        notePanelLegs(positionId, [{ id: m.id, price: m.to }]);
       } catch (e) {
         failed++;
         logEvent(
@@ -7533,11 +8404,18 @@
   // an armed copier moves each follower's stop / closes each follower like the master. Breakeven = entry + the Auto BE
   // "lock" points, only once price is past it (a stop must stay on the losing side) and only if it tightens the stop.
   // Vest triggers stops on the best bid (longs) / ask (shorts), and refuses a stop the bid has already passed (seen live:
-  // HTTP 400 with the mark a fraction above it). So price must be clear of breakeven by about a spread: 4 ticks.
-  const BE_CLEAR_TICKS = 4;
-  function breakevenPlan(h, px, tick) {
+  // HTTP 400 with the mark a fraction above it). With Vest's book live, the bid (ask) itself must be BE_BOOK_CLEAR_TICKS
+  // clear of breakeven; without it, the mid or mark must be BE_CLEAR_TICKS clear (about a spread more).
+  const BE_CLEAR_TICKS = 4,
+    BE_BOOK_CLEAR_TICKS = 2;
+  // The price a breakeven stop is checked against and how far clear it must be: { px, clear }.
+  const beRef = (sym, side, px, tick) => {
+    const ref = stopRefOf(sym, side);
+    return ref > 0 ? { px: ref, clear: BE_BOOK_CLEAR_TICKS * tick } : { px, clear: BE_CLEAR_TICKS * tick };
+  };
+  function breakevenPlan(h, price, tick) {
     const be = breakevenPrice({ side: h.side, entry: h.openPrice, offsetPts: 0, tick }); // breakeven: the average entry
-    const clear = BE_CLEAR_TICKS * tick;
+    const { px, clear } = beRef(h.symbol, h.side, price, tick);
     const sl = (h.triggers || []).find((x) => x.kind === 'sl');
     const long = h.side === 'long';
     const why = !sl
@@ -7575,7 +8453,7 @@
         entry = parseFloat(pos.openPrice);
       if (!nearMarket(entry, px, NEAR_MARKET_LOOSE))
         throw new Error(`Vest shows an entry of ${pos.openPrice}, nowhere near the market — move the stop yourself`);
-      const h = { side: pos.side, openPrice: entry, triggers: posLegs(pos) };
+      const h = { symbol: sym, side: pos.side, openPrice: entry, triggers: posLegs(pos) };
       const be = breakevenPlan(h, px, tick);
       if (be.why) throw new Error(be.why.replace(/\.$/, ''));
       await send('PUT', '/v3/positions/stop-loss', master, {
@@ -7693,7 +8571,7 @@
     // the real fill price: breakeven is measured from it
     for (let i = 0; i < 4 && !(p.entry > 0); i++) {
       if (i) await sleep(1200);
-      const f = await fillInfo(p.master, p.symbol, p.orderId);
+      const f = await fillInfo(p.master, p.symbol, p.orderId, i ? 0 : FEED_FILL_WAIT_MS);
       if (f && f.price > 0) p.entry = f.price;
     }
     if (!(p.entry > 0)) {
@@ -7757,10 +8635,10 @@
   // position is re-read: the stop is measured from the worse of the plan's entry and Vest's average (never locks in a
   // loss), and a stop already at or past breakeven (moved by hand, say) is left alone.
   const BE_WAIT_MS = 2000;
-  async function moveToBreakeven(p, px) {
+  async function moveToBreakeven(p, price) {
     const tick = (SYMBOLS[p.symbol] || SYMBOLS[DEFAULT_SYMBOL]).tick,
-      clear = BE_CLEAR_TICKS * tick,
       long = p.side === 'long';
+    const { px, clear } = beRef(p.symbol, p.side, price, tick);
     const beAt = (entry) => breakevenPrice({ side: p.side, entry, offsetPts: p.beOffset, tick });
     const tooClose = (be) => (long ? px <= be + clear : px >= be - clear);
     if (tooClose(beAt(p.entry))) return; // a stop must stay clear of price on the losing side: wait
@@ -7851,6 +8729,7 @@
         _planTimer = null;
         return;
       }
+      if (feedLive() && !list.some((p) => !(p.entry > 0))) return; // the live feed ends a plan the moment its trade closes
       for (const master of [...new Set(list.map((p) => p.master))]) {
         try {
           const r = await api('/v3/positions/opened', (await mintAccountToken(master)).token);
@@ -7921,6 +8800,16 @@
     const symHtml = `${esc(c.meta.label)}${c.lev ? ` <span class="chip" title="Leverage on ${esc(c.t.symbol)}">${c.lev}x</span>` : ''}`;
     if ($('tr-sym').dataset.html !== symHtml) $('tr-sym').innerHTML = $('tr-sym').dataset.html = symHtml;
     $('tr-px').textContent = fmtPx(c.price, c.meta.tick);
+    const pr = S.price[c.t.symbol] || {},
+      fp = (n) => fmtPx(n, c.meta.tick);
+    $('tr-px').title =
+      [
+        recentAt(pr.bookAt) && `Mid of the book (bid ${fp(pr.bid)} · ask ${fp(pr.ask)})`,
+        recentAt(pr.lastAt) && `last trade ${fp(pr.last)}`,
+        recentAt(pr.at) && `mark ${fp(pr.px)}`,
+      ]
+        .filter(Boolean)
+        .join(' · ') || 'Waiting for a live price';
     body
       .querySelectorAll('[data-seg]')
       .forEach((g) =>
@@ -8030,16 +8919,9 @@
           `<button class="tr-usemax" data-fix="${i}" data-act="${f.act === 'max' ? 'usemax' : 'fix-' + f.act}">${esc(f.label)}</button>`,
       )
       .join(' ');
-    // In a trade these are about the next add, not the open position: one short line each, without the setup fixes.
-    const addQ = c.qty > 0 ? fmtQty(c.qty, c.t.symbol) : '';
-    const sideNow = c.held && c.sides[c.held.side];
+    // In a trade, warnings and errors about the next add go on the status line under the add buttons instead (below).
     const warnHtml = c.held
-      ? (c.blocked
-          ? `<div class="tr-addwarn hot">Add ${esc(addQ)}: more than ${esc(accLabel(c.limitedBy))} can open (max ${esc(fmtQty(c.maxQty, c.t.symbol))}). Pick a smaller add.</div>`
-          : '') +
-        (c.warnings.length && sideNow
-          ? `<div class="tr-addwarn">Add ${esc(addQ)}: a stop-out after it would lose about ${fmtUsd(sideNow.loss)} with fees, more than the ${fmtUsd(sideNow.room)} left to the floor.</div>`
-          : '')
+      ? ''
       : (c.blocked
           ? `<div class="tr-block">${esc(c.blocked)}${fixHtml ? `<div class="tr-fixes">${fixHtml}</div>` : ''}</div>`
           : '') + c.warnings.map((w) => `<div>${esc(w.text)}</div>`).join('');
@@ -8064,10 +8946,11 @@
         };
       });
     }
-    $('tr-err').textContent =
-      c.error ||
-      (c.blocked && !c.held ? 'Over what the account can open: use a fix above, or change the size or stop.' : '') ||
-      (S.adjusting ? 'Adjusting stop & targets…' : '');
+    $('tr-err').textContent = c.held
+      ? ''
+      : c.error ||
+        (c.blocked ? 'Over what the account can open: use a fix above, or change the size or stop.' : '') ||
+        (S.adjusting ? 'Adjusting stop & targets…' : '');
     const q = c.qty > 0 ? fmtQty(c.qty, c.t.symbol) : '';
     const h = c.held,
       busy = !!S.placing || !!S.adjusting || !!S.flattening || !!S.arming;
@@ -8182,13 +9065,28 @@
         tot = h.qty + addQ;
       const avgA = tot > 0 ? (h.qty * h.openPrice + addQ * c.price) / tot : 0;
       const o = c.sides[h.side];
-      const pvHtml =
-        addQ > 0 && c.price > 0 && !c.error
-          ? `<span>→ <b>${fmtQty(tot, h.symbol)}</b> · avg <b>${fmtPx(avgA, tick)}</b></span>${o ? `<span>stop-out <b>${fmtUsd(o.loss)}</b></span>` : ''}`
-          : '';
+      // One status line under the add buttons that is always there and never wraps, so nothing moves as the open P&L
+      // swings a warning on and off: what the add would do, or the most important reason it can't or shouldn't go
+      // (the full sentence is the tooltip).
+      const addTxt = fmtQty(addQ, h.symbol);
+      let pvHtml = '',
+        pvTitle = '';
+      if (S.adjusting) pvHtml = '<span>Adjusting stop &amp; targets…</span>';
+      else if (c.error) [pvHtml, pvTitle] = [`<span class="warn">${esc(c.error)}</span>`, c.error];
+      else if (c.blocked) {
+        const max = fmtQty(c.maxQty, c.t.symbol);
+        pvHtml = `<span class="hot">Add ${esc(addTxt)}: over ${esc(accLabel(c.limitedBy))}'s max (${esc(max)})</span>`;
+        pvTitle = `Add ${addTxt}: more than ${accLabel(c.limitedBy)} can open (max ${max}). Pick a smaller add.`;
+      } else if (c.warnings.length && o) {
+        pvHtml = `<span class="warn">Add ${esc(addTxt)}: stop-out ${fmtUsd(o.loss)}, ${fmtUsd(o.room)} left</span>`;
+        pvTitle = `Add ${addTxt}: a stop-out after it would lose about ${fmtUsd(o.loss)} with fees, more than the ${fmtUsd(o.room)} left to the floor.`;
+      } else if (addQ > 0 && c.price > 0) {
+        pvHtml = `<span>→ <b>${fmtQty(tot, h.symbol)}</b> · avg <b>${fmtPx(avgA, tick)}</b></span>${o ? `<span>stop-out <b>${fmtUsd(o.loss)}</b></span>` : ''}`;
+        pvTitle =
+          'After this add: new size and average. The stop and targets rebuild from the new average (a tighter stop is kept).';
+      }
       if ($('tr-addpv').dataset.html !== pvHtml) $('tr-addpv').innerHTML = $('tr-addpv').dataset.html = pvHtml;
-      $('tr-addpv').title =
-        'After this add: new size and average. The stop and targets rebuild from the new average (a tighter stop is kept).';
+      $('tr-addpv').title = pvTitle;
     } else if (S.addPick) S.addPick = null; // flat again: chips reset
     // The ladder: Buy prices on the right, Sell prices on the left, from the live mark (re-placed from the fill).
     const ok = !c.error && c.price > 0;
@@ -8215,7 +9113,7 @@
       set('tr-entry', c.qty > 0 ? `Limit · ${fmtQty(c.qty, c.t.symbol)}` : 'Limit');
       set('tr-stopq', c.qty > 0 ? fmtQty(c.qty, c.t.symbol) : '');
       const away = Math.abs(c.price - pk2.price);
-      set('tr-mk', `Mark · ${fmtNum(away, decimalsOf(c.meta.tick))} pts away`);
+      set('tr-mk', `Price · ${fmtNum(away, decimalsOf(c.meta.tick))} pts away`);
       set('lb-mk', px(c.price));
       $('tr-failrow').hidden = $('tr-passrow').hidden = true; // measured from the mark: not for a resting limit
     } else if (h2) {
@@ -8230,8 +9128,14 @@
         targetPts: c.t.targets.map(Number),
         tick: c.meta.tick,
       });
-      c.t.targets.forEach((_, i) => set('lb-t' + i, px(lv.targets && lv.targets[i])));
-      set('lb-stop', px(lv.stop));
+      // targets the trader moved keep their price, as the add's rebuild leaves them (nearest first, as it pairs them)
+      const movedTp = (h2.triggers || [])
+        .filter((l) => l.kind === 'tp')
+        .sort((a, b) => Math.abs(a.price - avg) - Math.abs(b.price - avg))
+        .map((l) => (panelLeg(h2.id, l, c.meta.tick) ? null : l.price));
+      c.t.targets.forEach((_, i) => set('lb-t' + i, px(movedTp[i] || (lv.targets && lv.targets[i]))));
+      const stopAt = c.addStopAt != null ? c.addStopAt : lv.stop;
+      set('lb-stop', px(stopAt));
       set('lb-entry', px(avg));
       set('tr-entry', addQ ? `Avg after add · ${fmtQty(total, c.t.symbol)}` : `Avg · ${fmtQty(total, c.t.symbol)}`);
       set('tr-stopq', fmtQty(total, c.t.symbol));
@@ -8241,9 +9145,9 @@
         set('tq' + i, all[i] ? fmtQty(all[i], c.t.symbol) : '—');
         set('tg' + i, all[i] ? '+' + fmtUsd(all[i] * (+p || 0) * c.meta.pointValue) : '');
       });
-      set('tr-stopcalc', `−${fmtUsd(total * (+c.t.stopPts || 0) * c.meta.pointValue)}`);
+      set('tr-stopcalc', stopAt > 0 ? `−${fmtUsd(total * Math.abs(avg - stopAt) * c.meta.pointValue)}` : '');
       const pts = (h2.side === 'long' ? 1 : -1) * (c.price - h2.openPrice);
-      set('tr-mk', `Mark · ${pts >= 0 ? '+' : '−'}${fmtNum(Math.abs(pts), decimalsOf(c.meta.tick))} pts`);
+      set('tr-mk', `Price · ${pts >= 0 ? '+' : '−'}${fmtNum(Math.abs(pts), decimalsOf(c.meta.tick))} pts`);
       set('lb-mk', px(c.price));
       const o = c.sides[h2.side];
       set('lb-fail', px(o && o.fail));
@@ -8271,7 +9175,7 @@
       $('tr-passrow').hidden = !ok || !((sl && sl.pass) || (ss && ss.pass));
     }
     const note =
-      'Prices are from the mark now; stop and targets are re-placed your exact points from your fill. Adding to an ' +
+      "Prices are from the market now (the mid of Vest's order book); stop and targets are re-placed your exact points from your fill. Adding to an " +
       'open trade rebuilds them from the new average.' +
       (!$('tr-failrow').hidden
         ? " Fail and pass: where your equity reaches the floor or the target, opening fee counted. Estimates, like Vest's own."
@@ -8391,7 +9295,7 @@
           'autoflat',
           S.autoFlatten,
           'Auto-flatten orphans',
-          "If followers end up in a trade the master isn't in (its entry was refused or didn't fill), close them automatically instead of asking. Never used when the master might be in the trade.",
+          "If followers end up in a trade the master isn't in (its entry was refused or didn't fill, or Vest closed the master), close them automatically instead of asking. Never used when the master might be in the trade.",
         )}
         <div class="set-h">Sizing</div>
         ${option(
@@ -8400,6 +9304,13 @@
           'Cap-to-fit size',
           'Size each follower to its own equity instead of copying 1:1. Every account takes the same % risk with the same stop distance, ' +
             'and <b>different-size followers</b> are allowed (e.g. a 25k master with 5k accounts). Off: strict 1:1, same-size accounts only.',
+        )}
+        <div class="set-h">Chart</div>
+        ${option(
+          'hidemarks',
+          S.hideMarks,
+          'Hide marks on bars',
+          "Hide Vest's buy and sell marks on the chart each time it loads (the chart's right-click Hide marks on bars, which Vest forgets on every refresh). Show them again from that menu any time.",
         )}
         <div class="set-h">Updates</div>
         ${option(
@@ -8436,6 +9347,11 @@
             S.checkUpdates = !S.checkUpdates;
             saveOpts();
             render();
+          } else if (o === 'hidemarks') {
+            S.hideMarks = !S.hideMarks;
+            saveOpts();
+            _marksDone = null; // switched on: hide them now
+            render();
           }
         }),
     );
@@ -8458,8 +9374,11 @@
           <li><b>Flat, or already in the same trade.</b> Arm when everyone is flat, or when the master and followers
             hold the same position (same market and side): arming <b>adopts</b> it, so exits and stop/target changes
             copy. It never opens a trade for a follower that isn't already in it.</li>
-          <li><b>Only your orders are copied.</b> If Vest closes the master itself (a drawdown breach or liquidation),
-            followers stay open. Close them yourself or use Flatten All.</li>
+          <li><b>Only your orders are copied.</b> When Vest closes the master itself (a stop or target filling, a
+            drawdown breach), nothing is copied: the log says what Vest did, and a follower still in the trade a few
+            seconds later is offered to flatten.</li>
+          <li><b>An account that fails drops out.</b> A follower is removed and the others keep copying; if the master
+            fails, the copier disarms.</li>
           <li><b>Sizing.</b> Strict 1:1 copies the exact size (same-size accounts only). <b>Cap-to-fit</b> (Settings)
             sizes each follower to its own equity: same % risk, same stop distance, smaller size.</li>
           <li><b>Shared risk.</b> One bad trade hits <b>every</b> linked account at once. Size so a simultaneous loss
@@ -8580,12 +9499,14 @@
         master: S.master,
         followers: [...S.followers],
         openTrades: Object.keys(S.posMap).length,
+        liveFeed: feedLive(),
       },
       settings: {
         fast: S.fast,
         autoFlatten: S.autoFlatten,
         capFit: S.capFit,
         checkUpdates: S.checkUpdates,
+        hideMarks: S.hideMarks,
         trade: S.trade,
       },
       accounts,
@@ -8673,7 +9594,7 @@
   // seconds apart; each claim has one idempotency key, reused on its single retry, so it can never be paid twice; and the
   // run can be stopped between accounts. Moving money from the Primary Account to a wallet stays a manual step on Vest.
   const CLAIM_MIN_USD = 1;
-  const CLAIM_GAP_MS = 2000; // between two accounts' claims: one at a time, unhurried (a claim answers in ~0.3 s)
+  const CLAIM_GAP_MS = 1000; // between two accounts' claims: one at a time (a claim answers in ~0.3 s)
   const CLAIM_RETRY_MS = 3000;
   const claimGap = () => (typeof window.__VC_CLAIM_GAP_MS === 'number' ? window.__VC_CLAIM_GAP_MS : CLAIM_GAP_MS);
   S.claim = null; // { phase: 'checking' | 'review' | 'running' | 'done', primary, items: [...], stop, error }
@@ -8711,16 +9632,7 @@
     return { ...item, claimable, net: claimable * item.split };
   }
   // Free balances of every account, and the Primary Account's id (account_type 1), in one read.
-  async function claimBalances() {
-    const res = await api('/v3/accounts');
-    const free = {};
-    let primary = null;
-    for (const a of res.accounts || []) {
-      free[a.account_id] = num(a.amount);
-      if (a.account_type === 1) primary = a.account_id;
-    }
-    return { free, primary };
-  }
+  const claimBalances = () => fetchBalances();
 
   async function claimPreview() {
     if (claimBusy()) return;
@@ -9008,9 +9920,15 @@
         )
       : '';
     const toastHtml = _toast ? `<div class="toast">${esc(_toast)}</div>` : '';
+    // armed, and Vest's own screen is on another of the user's accounts: orders placed on Vest's ticket there aren't copied
+    const screenHtml =
+      S.armed && S.master && S.screen && S.screen !== S.master && S.byId[S.screen]
+        ? `<div class="toast" data-warn="screen">Vest is showing ${esc(accLabel(S.screen))}, not your master ${esc(accLabel(S.master))}: orders placed there aren't copied.</div>`
+        : '';
     // The orphan prompt and notices sit above the log, so they show even while it's folded.
     const alerts = _root.querySelector('.alerts');
-    alerts.innerHTML = orphanHtml + toastHtml;
+    const html = orphanHtml + screenHtml + toastHtml;
+    if (alerts.dataset.html !== html) alerts.innerHTML = alerts.dataset.html = html; // a redraw would eat a click
     el.innerHTML = S.log
       .map(
         (e) =>
@@ -9043,6 +9961,7 @@
       );
     }
     show(`<div class="empty">Loading accounts…</div>`);
+    readScreen();
     try {
       await buildRegistry();
       dropClaimReview(); // it named the accounts as they were
@@ -9101,7 +10020,13 @@
       version: VERSION,
       build: fingerprint() || null,
       browser: navigator.userAgent,
-      settings: { fast: S.fast, autoFlatten: S.autoFlatten, capFit: S.capFit, checkUpdates: S.checkUpdates },
+      settings: {
+        fast: S.fast,
+        autoFlatten: S.autoFlatten,
+        capFit: S.capFit,
+        checkUpdates: S.checkUpdates,
+        hideMarks: S.hideMarks,
+      },
       termsAccepted: S.ack,
       openPlans: Object.keys(store.get('vc-plans', {}) || {}).length,
     });
@@ -9124,8 +10049,11 @@
           unhandled: true,
         });
     });
+    loadDock();
     _root = buildPanel();
+    setOpen(S.dock.open || !S.ack); // a first run opens fully, for the risk terms
     loadPlans();
+    loadLadder();
     renderHealth();
     renderLog();
     refresh();
