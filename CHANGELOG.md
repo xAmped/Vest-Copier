@@ -2,6 +2,13 @@
 
 Newest first. To update, click **Install** on the green bar that appears in the panel whenever there's a newer version.
 
+## v0.35.0
+Vest in STRATUH colours, and a cleaner chart.
+
+- **STRATUH theme for Vest (on by default, dark mode):** Vest's own page and chart in STRATUH's colours: onyx and lime, square corners, and grey candles like STRATUH's DeepCharts theme. Shorts and losses are grey, or red if you prefer (Settings → Chart). The first time you see it, a bar lets you keep it or go back to Vest's colours.
+- **A cleaner chart:** Vest's pre-market, after-hours and overnight bands are removed (Hide session shading, on by default), and so is the Volume indicator Vest adds by itself when the theme is on. A Volume indicator you add yourself stays.
+- **The panel no longer covers Vest's menus:** the market selector, Add Account, Vest's settings and every other Vest menu or dialog now open above it. The chart's own menus (timeframe, chart settings, indicators) are drawn inside the chart, so the panel steps out of the way while one of them is open over it.
+
 ## v0.34.0
 Live from Vest: the panel now listens to the same live feed Vest's own page uses, so balances, P&L, fills and failed accounts update as they happen instead of every 20 seconds.
 

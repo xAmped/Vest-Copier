@@ -59,6 +59,9 @@ their own browser.
 tools, and stays inside the chart whatever you resize (the window, Vest's order book or its positions list). Drag the header
 to move it; drag the bottom-right corner to resize. Its spot is remembered relative to the chart. Click the **pin** to
 float it anywhere in the window instead, and again to dock it back. On a Vest page without a chart it floats.
+Vest's menus and dialogs (market selector, Add Account, settings) open above the panel. The chart's own menus
+(timeframe, chart settings, indicators) are drawn inside the chart, so the panel fades out of their way while one is
+open over it.
 
 **Minimised,** it's a small pill with the logo, COPIER and the state: click it to open, or press and move to drag it.
 A red dot means something needs you (followers waiting on Flatten / Keep, or Vest's live feed lost while armed); an
@@ -228,6 +231,14 @@ average), and a risk bar for what's left before your floor. The setup folds into
 - **Hide marks on bars** (on by default) — hides Vest's buy and sell marks on the chart each time it loads, the same
   as the chart's right-click **Hide marks on bars**, which Vest forgets on every refresh. Show them again from that
   menu whenever you want; the copier leaves them shown until the next load.
+- **Hide session shading** (on by default) — removes the pre-market, after-hours and overnight bands Vest draws on
+  the chart (its Market Sessions indicator), each time Vest adds them.
+- **STRATUH theme for Vest** (on by default, dark mode only) — Vest's own page and chart in STRATUH's colours: onyx and
+  lime, square corners, grey candles, and no Volume indicator added by Vest (one you add yourself stays). The first
+  time, a bar under the tabs offers **Keep it** or **Back to Vest's colours**. Turning it off brings Vest's colours
+  back at once (the chart's after a refresh).
+- **Shorts and losses** — grey (as on STRATUH's DeepCharts theme) or red, for Sell buttons, losing P&L and the bid
+  side of the book. Candles stay grey either way.
 
 Options are saved and persist across refreshes. Active ones show as `FAST` / `CAP` in the header.
 

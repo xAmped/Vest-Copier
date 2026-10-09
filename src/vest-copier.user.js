@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vest Copier
 // @namespace    vestcopier
-// @version      0.34.0
+// @version      0.35.0
 // @description  Copies a master Vest account's trades to your other Vest accounts, live, and adds a points-based order panel.
 // @author       xAmped
 // @license      STRATUH Copier License — free to use, no selling; see LICENSE
@@ -22,7 +22,7 @@
   if (window.__vestCopier) return;
   window.__vestCopier = true;
 
-  const VERSION = '0.34.0';
+  const VERSION = '0.35.0';
   const API = 'https://api-gateway.hz.vestmarkets.com';
   const _fetch = window.fetch.bind(window);
   // Console echo of the activity log, for troubleshooting: localStorage.setItem('vc-debug', '1') and reload.
@@ -3336,6 +3336,9 @@
     S.capFit = !!o.capFit;
     S.checkUpdates = o.checkUpdates !== false; // on by default
     S.hideMarks = o.hideMarks !== false; // on by default: Vest's buy/sell marks come back on every load otherwise
+    S.hideSessions = o.hideSessions !== false; // Vest's pre-market / after-hours / overnight bands on the chart
+    S.theme = o.theme !== false; // STRATUH colours for Vest's own page and chart (on by default; introduced once)
+    S.themeDown = o.themeDown === 'red' ? 'red' : 'mono'; // shorts and losses on Vest's page: grey (DeepCharts) or red
   }
   function saveOpts() {
     const o = {
@@ -3344,6 +3347,9 @@
       capFit: S.capFit,
       checkUpdates: S.checkUpdates,
       hideMarks: S.hideMarks,
+      hideSessions: S.hideSessions,
+      theme: S.theme,
+      themeDown: S.themeDown,
     };
     diag('settings', o);
     store.set(OPTS_KEY, o);
@@ -3952,6 +3958,45 @@
     saveSupport('no');
     renderSupport();
   }
+  // ── The STRATUH theme, introduced once: what changed on Vest's page and chart, Keep or Back to Vest's colours, and
+  // where to change it later. Shown once the terms (and the one-time support question) are out of the way, and only
+  // with Vest in dark mode, where the theme applies.
+  const THEME_INTRO_KEY = 'vc-theme-intro';
+  function renderThemeIntro() {
+    const bar = _root && _root.querySelector('.themeintro');
+    if (!bar) return;
+    const due =
+      S.ack &&
+      S.theme &&
+      !S.supportOffer &&
+      !store.get(THEME_INTRO_KEY, null) &&
+      document.documentElement.classList.contains('dark');
+    bar.hidden = !due;
+    if (!due || bar.dataset.ready) return;
+    bar.dataset.ready = '1';
+    bar.innerHTML = `<span class="utext"><b>Vest is now in STRATUH colours.</b> Onyx and lime, grey shorts, losses and
+        candles, square corners. The chart's buy/sell marks, session bands and the Volume indicator Vest adds are hidden
+        too. Change any of it in Settings → Chart.</span>
+      <button class="ubtn" data-act="theme-keep">Keep it</button>
+      <button class="ubtn ghost" data-act="theme-revert">Back to Vest's colours</button>`;
+    const answer = (keep) => {
+      store.set(THEME_INTRO_KEY, { answered: keep ? 'keep' : 'revert', at: new Date().toISOString() });
+      if (!keep) {
+        S.theme = false;
+        saveOpts();
+        applyTheme();
+        logEvent(
+          'info',
+          "STRATUH theme off: Vest's own colours are back (the chart after a refresh). Settings → Chart turns it on.",
+        );
+      }
+      bar.hidden = true;
+      render();
+    };
+    bar.querySelector('[data-act="theme-keep"]').onclick = () => answer(true);
+    bar.querySelector('[data-act="theme-revert"]').onclick = () => answer(false);
+  }
+
   function renderSupport() {
     const bar = _root && _root.querySelector('.support');
     if (!bar) return;
@@ -4210,7 +4255,9 @@
       right: 16px;
       width: 368px;
       max-height: calc(100vh - 32px);
-      z-index: 2147483647;
+      /* above the chart and Vest's page (its header is 40), below every Vest menu, dropdown and dialog (50) */
+      z-index: 45;
+      transition: opacity 0.12s;
       display: flex;
       flex-direction: column;
       background: var(--bg);
@@ -6432,6 +6479,11 @@
     .panel.narrow .hdr .sep {
       display: none;
     }
+    /* a chart menu or dialog (drawn inside the chart's frame, which can't rise above the panel) is open over it */
+    .panel.aside {
+      opacity: 0;
+      pointer-events: none;
+    }
     /* minimised: the pill (click opens it, press and move drags it) */
     .panel.collapsed {
       width: auto;
@@ -6518,6 +6570,7 @@
         </div>
         <div class="update" hidden></div>
         <div class="support update" hidden></div>
+        <div class="themeintro update" hidden></div>
         <div class="body"><div class="empty">Waiting for your Vest session…</div></div>
         <div class="ctl">
           <button class="armbtn" data-act="arm" disabled>ARM</button>
@@ -6678,6 +6731,7 @@
     renderRate();
     renderUpdate();
     renderSupport();
+    renderThemeIntro();
   }
   function renderRate() {
     if (!_root) return;
@@ -6902,10 +6956,272 @@
       /* the chart isn't ready yet: tried again on the next check */
     }
   }
+  // ── STRATUH theme for Vest (optional). Vest colours its whole page from CSS variables on its dark theme (`.dark`):
+  // the copier sets them to STRATUH's tokens with one stylesheet, scoped to a class on <html>, so switching it off is
+  // instant. Vest paints the chart separately, through TradingView: the copier applies STRATUH's chart colours the same
+  // way (the chart frame's applyOverrides plus its --tv-color variables), once per chart load and after Vest re-applies
+  // its own (it does on load and on a theme change). Only colours change; nothing is sent to Vest.
+  const STRATUH = {
+    bg: '#0c0c0d',
+    raised: '#141416',
+    raised2: '#1a1a1d',
+    hover: '#1e1e22',
+    active: '#26262b',
+    line: 'rgba(255, 255, 255, 0.09)',
+    line2: 'rgba(255, 255, 255, 0.18)',
+    text: '#f0f0f1',
+    muted: '#a1a1a8',
+    dim: '#66666e',
+    lime: '#c8f542',
+    limeHi: '#e4ff7a',
+    red: '#ff5a4f',
+    amber: '#f5b942',
+    blue: '#7ab8ff',
+    grey: '#8a8a94',
+  };
+  function themeCss(down) {
+    const T = STRATUH,
+      red = down === 'red';
+    const short = red ? T.red : T.grey,
+      shortMuted = red ? 'rgba(255, 90, 79, 0.14)' : 'rgba(138, 138, 148, 0.16)';
+    return `html.vc-stratuh.dark, html.vc-stratuh .dark {
+      --primary: ${T.lime}; --primary-foreground: ${T.bg}; --primary-light: rgba(200, 245, 66, 0.1);
+      --background: ${T.bg}; --foreground: ${T.text}; --foreground-secondary: ${T.muted}; --contrast: #ffffff;
+      --secondary: ${T.raised2}; --secondary-foreground: ${T.text};
+      --muted: ${T.raised2}; --muted-foreground: ${T.muted};
+      --accent: ${T.raised2}; --accent-foreground: ${T.text};
+      --card: ${T.raised}; --card-foreground: ${T.text}; --card-elevated: ${T.raised2};
+      --popover: ${T.raised}; --popover-foreground: ${T.text};
+      --destructive: ${T.red}; --destructive-foreground: ${T.bg};
+      --input: ${T.raised}; --ring: ${T.lime}; --border: ${T.line}; --border-muted: rgba(255, 255, 255, 0.06);
+      --long: ${T.lime}; --long-foreground: ${T.bg}; --long-muted: rgba(200, 245, 66, 0.14);
+      --short: ${short}; --short-foreground: ${T.bg}; --short-muted: ${shortMuted};
+      --warning: ${T.amber}; --info: ${T.blue}; --highlight: ${T.limeHi}; --yellow: ${T.limeHi};
+      --surface: ${T.raised2}; --surface-foreground: ${T.text}; --surface-muted: ${T.dim}; --surface-hover: ${T.hover};
+      --surface-active: ${T.active}; --surface-elevated: ${T.raised}; --surface-overlay: ${T.text};
+      --chart-1: ${T.text}; --chart-2: ${T.lime}; --chart-3: ${T.grey}; --chart-4: ${T.limeHi}; --chart-5: ${T.dim};
+      --radius: 0px; --radius-xs: 0px; --radius-sm: 0px; --radius-md: 0px; --radius-lg: 0px; --radius-xl: 0px;
+      --radius-2xl: 0px; --radius-3xl: 0px;
+    }
+    html.vc-stratuh.dark ::selection { background: rgba(200, 245, 66, 0.25); }`;
+  }
+  // The chart: STRATUH's DeepCharts look, whatever the shorts colour: light and dark grey candles, onyx pane, faint grid.
+  const THEME_UP = '#b4b4ba',
+    THEME_DOWN = '#55555c',
+    THEME_VOL_UP = '#4a4a52',
+    THEME_VOL_DOWN = '#2c2c31';
+  function themeChartOverrides() {
+    const T = STRATUH,
+      up = THEME_UP,
+      dn = THEME_DOWN;
+    const o = {
+      'paneProperties.backgroundType': 'solid',
+      'paneProperties.background': T.bg,
+      'paneProperties.backgroundGradientStartColor': T.bg,
+      'paneProperties.backgroundGradientEndColor': T.bg,
+      'paneProperties.vertGridProperties.color': '#17171a',
+      'paneProperties.horzGridProperties.color': '#17171a',
+      'scalesProperties.lineColor': T.active,
+      'scalesProperties.textColor': T.muted,
+      'mainSeriesProperties.lineStyle.color': T.text,
+      'mainSeriesProperties.areaStyle.linecolor': T.lime,
+      'mainSeriesProperties.areaStyle.color1': 'rgba(200, 245, 66, 0.28)',
+      'mainSeriesProperties.areaStyle.color2': 'rgba(200, 245, 66, 0)',
+    };
+    for (const k of ['candleStyle', 'hollowCandleStyle', 'haStyle']) {
+      Object.assign(o, {
+        [`mainSeriesProperties.${k}.upColor`]: up,
+        [`mainSeriesProperties.${k}.downColor`]: dn,
+        [`mainSeriesProperties.${k}.borderUpColor`]: up,
+        [`mainSeriesProperties.${k}.borderDownColor`]: dn,
+        [`mainSeriesProperties.${k}.wickUpColor`]: up,
+        [`mainSeriesProperties.${k}.wickDownColor`]: dn,
+      });
+    }
+    o['mainSeriesProperties.barStyle.upColor'] = up;
+    o['mainSeriesProperties.barStyle.downColor'] = dn;
+    return o;
+  }
+  // Vest's own dark chart colours, put back when the theme is switched off.
+  const VEST_CHART = {
+    'paneProperties.background': '#0F0F0F',
+    'paneProperties.backgroundGradientStartColor': '#0F0F0F',
+    'paneProperties.backgroundGradientEndColor': '#0F0F0F',
+    'paneProperties.vertGridProperties.color': '#292929',
+    'paneProperties.horzGridProperties.color': '#292929',
+    'scalesProperties.lineColor': '#292929',
+    'scalesProperties.textColor': '#F2F2F2',
+    'mainSeriesProperties.candleStyle.upColor': '#00D98E',
+    'mainSeriesProperties.candleStyle.downColor': '#E03737',
+    'mainSeriesProperties.candleStyle.borderUpColor': '#00D98E',
+    'mainSeriesProperties.candleStyle.borderDownColor': '#E03737',
+    'mainSeriesProperties.candleStyle.wickUpColor': '#00D98E',
+    'mainSeriesProperties.candleStyle.wickDownColor': '#E03737',
+  };
+  const themeTvCss = () => {
+    const T = STRATUH;
+    const vars = {
+      '--tv-color-platform-background': T.bg,
+      '--tv-color-pane-background': T.bg,
+      '--tv-color-popup-background': T.raised,
+      '--tv-color-popup-element-background-active': T.active,
+      '--themed-color-drawer-backdrop': T.bg,
+      '--themed-color-pane-bg': T.bg,
+      '--themed-color-selection-bg': T.bg,
+      '--themed-color-text': T.text,
+      '--themed-color-background': T.raised,
+    };
+    return `:root, body { ${Object.entries(vars)
+      .map(([k, v]) => `${k}: ${v} !important;`)
+      .join(' ')} }`;
+  };
+  function applyTheme() {
+    try {
+      const html = document.documentElement;
+      let st = document.getElementById('vc-theme');
+      if (S.theme) {
+        if (!st) {
+          st = document.createElement('style');
+          st.id = 'vc-theme';
+          (document.head || html).appendChild(st);
+        }
+        const css = themeCss(S.themeDown);
+        if (st.textContent !== css) st.textContent = css;
+      }
+      html.classList.toggle('vc-stratuh', !!S.theme);
+    } catch {
+      /* best effort: nothing to do if this fails */
+    }
+  }
+  let _chartThemeTimers = []; // the chart follows on the next check after any change
+  // The volume bars (Vest adds TradingView's Volume indicator): grey with the theme, Vest's green and red without.
+  function themeVolume(f, on) {
+    const colors = on ? [THEME_VOL_DOWN, THEME_VOL_UP] : ['#E03737', '#00D98E'];
+    try {
+      const chart = f.contentWindow.tradingViewApi.activeChart();
+      for (const st of chart.getAllStudies() || [])
+        if (st && st.name === 'Volume')
+          chart.getStudyById(st.id).applyOverrides({ 'volume.color.0': colors[0], 'volume.color.1': colors[1] });
+    } catch {
+      /* best effort: nothing to do if this fails */
+    }
+  }
+  function themeChart(f) {
+    if (!f) return;
+    const dark =
+      document.documentElement.classList.contains('dark') || !!document.querySelector('body.dark, #root.dark');
+    const key = [S.theme ? 'on' : 'off', dark].join('|'); // the shorts colour doesn't touch the chart
+    if (f.__vcThemeKey === key) return;
+    let ready = false;
+    try {
+      const chart = f.contentWindow.tradingViewApi.activeChart();
+      ready =
+        typeof chart.getCheckableActionState === 'function' && chart.getCheckableActionState('hideAllMarks') != null;
+    } catch {
+      /* not ready yet */
+    }
+    if (!ready || typeof f.contentWindow.applyOverrides !== 'function') return; // tried again on the next check
+    if (!S.theme && !f.__vcThemeKey) {
+      f.__vcThemeKey = key; // never themed: Vest's colours are already there
+      return;
+    }
+    f.__vcThemeKey = key;
+    const paint = () => {
+      try {
+        const doc = f.contentDocument;
+        let st = doc.getElementById('vc-theme');
+        if (S.theme && dark) {
+          if (!st) {
+            st = doc.createElement('style');
+            st.id = 'vc-theme';
+            (doc.head || doc.documentElement).appendChild(st);
+          }
+          st.textContent = themeTvCss();
+          f.contentWindow.applyOverrides(themeChartOverrides());
+          themeVolume(f, true);
+        } else {
+          if (st) st.remove();
+          if (dark) {
+            f.contentWindow.applyOverrides(VEST_CHART);
+            themeVolume(f, false);
+          }
+        }
+      } catch {
+        /* best effort: nothing to do if this fails */
+      }
+    };
+    // now, and again shortly after: Vest applies its own colours when the chart becomes ready and on a theme change
+    _chartThemeTimers.forEach(clearTimeout);
+    paint();
+    _chartThemeTimers = [setTimeout(paint, 1500), setTimeout(paint, 4000)];
+  }
+  // Vest's session shading (pre-market, after-hours, overnight bands) is a chart indicator it adds named "Market
+  // Sessions" (on load and when its own setting changes). With the setting on, it's removed whenever it shows up.
+  const SESSIONS_STUDY = 'Market Sessions';
+  function hideSessionShading(f) {
+    if (!S.hideSessions || !f) return;
+    try {
+      const chart = f.contentWindow.tradingViewApi.activeChart();
+      if (typeof chart.getAllStudies !== 'function') return;
+      for (const st of chart.getAllStudies() || []) if (st && st.name === SESSIONS_STUDY) chart.removeEntity(st.id);
+    } catch {
+      /* the chart isn't ready yet: tried again on the next check */
+    }
+  }
+  // TradingView draws its own menus and dialogs (timeframe, chart settings, indicators, symbol search) inside the chart's
+  // frame, and nothing inside a frame can rise above the panel sitting over it. So while one of them overlaps the panel,
+  // the panel steps aside (fades out, ignores the mouse) and comes back as soon as it closes.
+  const TV_POPUPS =
+    '[role="menu"], [role="dialog"], [role="listbox"], [data-name="popup-menu-container"], [data-name="menu-inner"]';
+  function chartPopupOver(pr) {
+    const f = chartFrame();
+    let doc = null;
+    try {
+      doc = f && f.contentDocument;
+    } catch {
+      return false;
+    }
+    if (!doc || !doc.body) return false;
+    const fr = f.getBoundingClientRect();
+    for (const el of doc.querySelectorAll(TV_POPUPS)) {
+      const r = el.getBoundingClientRect();
+      if (r.width < 8 || r.height < 8) continue;
+      const l = fr.left + r.left,
+        t = fr.top + r.top;
+      if (l < pr.right && l + r.width > pr.left && t < pr.bottom && t + r.height > pr.top) return true;
+    }
+    return false;
+  }
+  setInterval(() => {
+    const panel = _root && _root.querySelector('.panel');
+    if (!panel || _dragging) return;
+    panel.classList.toggle('aside', chartPopupOver(panel.getBoundingClientRect())); // fading doesn't move it
+  }, 200);
+  // With the theme on: the Volume indicator Vest adds by itself when the chart loads (only on a chart with no other
+  // indicators) is removed, once per chart load. One the trader adds afterwards from Indicators stays.
+  const AUTO_VOLUME_MS = 20000; // Vest adds it as the chart becomes ready: looked for this long after the chart appears
+  function removeAutoVolume(f) {
+    if (!S.theme || !f || f.__vcVolumeDone) return;
+    f.__vcSeenAt = f.__vcSeenAt || Date.now();
+    try {
+      const chart = f.contentWindow.tradingViewApi.activeChart();
+      if (typeof chart.getAllStudies !== 'function') return;
+      const vols = (chart.getAllStudies() || []).filter((st) => st && st.name === 'Volume');
+      if (vols.length) {
+        vols.forEach((st) => chart.removeEntity(st.id));
+        f.__vcVolumeDone = true;
+      } else if (Date.now() - f.__vcSeenAt > AUTO_VOLUME_MS) f.__vcVolumeDone = true; // Vest didn't add one
+    } catch {
+      /* the chart isn't ready yet: tried again on the next check */
+    }
+  }
   window.addEventListener('resize', () => place());
   setInterval(() => {
     if (!_root || _dragging) return;
+    removeAutoVolume(chartFrame());
     hideChartMarks(chartFrame());
+    hideSessionShading(chartFrame());
+    themeChart(chartFrame());
     const f = chartFrame(),
       r = f && f.getBoundingClientRect();
     const key = r ? [r.left, r.top, r.width, r.height].map(Math.round).join() : 'none';
@@ -9312,6 +9628,23 @@
           'Hide marks on bars',
           "Hide Vest's buy and sell marks on the chart each time it loads (the chart's right-click Hide marks on bars, which Vest forgets on every refresh). Show them again from that menu any time.",
         )}
+        ${option(
+          'hidesessions',
+          S.hideSessions,
+          'Hide session shading',
+          'Remove the pre-market, after-hours and overnight bands Vest draws on the chart (its Market Sessions indicator), every time it adds them.',
+        )}
+        ${option(
+          'theme',
+          S.theme,
+          'STRATUH theme for Vest',
+          "Recolour Vest's own page and chart in STRATUH's colours: onyx, lime and greys, square corners, and drop the Volume indicator Vest adds to the chart by itself. Dark mode only; turn it off to go back to Vest's colours (the chart on the next refresh).",
+        )}
+        <div class="opt ${S.theme ? '' : 'dep-off'}">
+          <div class="opt-txt"><div class="opt-name">Shorts and losses</div>
+            <div class="opt-desc">Grey, as on STRATUH's DeepCharts theme, or red. Candles stay grey either way.</div></div>
+          <div class="seg" data-theme-down><button data-v="mono" class="${S.themeDown === 'mono' ? 'on' : ''}">Grey</button><button data-v="red" class="${S.themeDown === 'red' ? 'on' : ''}">Red</button></div>
+        </div>
         <div class="set-h">Updates</div>
         ${option(
           'updates',
@@ -9347,12 +9680,30 @@
             S.checkUpdates = !S.checkUpdates;
             saveOpts();
             render();
+          } else if (o === 'hidesessions') {
+            S.hideSessions = !S.hideSessions;
+            saveOpts();
+            render();
+          } else if (o === 'theme') {
+            S.theme = !S.theme;
+            saveOpts();
+            applyTheme();
+            render();
           } else if (o === 'hidemarks') {
             S.hideMarks = !S.hideMarks;
             saveOpts();
             _marksDone = null; // switched on: hide them now
             render();
           }
+        }),
+    );
+    body.querySelectorAll('[data-theme-down] button').forEach(
+      (b) =>
+        (b.onclick = () => {
+          S.themeDown = b.dataset.v;
+          saveOpts();
+          applyTheme();
+          render();
         }),
     );
     body.querySelector('[data-act="check-now"]').onclick = () => checkForUpdate(true);
@@ -10050,6 +10401,7 @@
         });
     });
     loadDock();
+    applyTheme();
     _root = buildPanel();
     setOpen(S.dock.open || !S.ack); // a first run opens fully, for the risk terms
     loadPlans();
