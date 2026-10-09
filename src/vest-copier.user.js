@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vest Copier
 // @namespace    vestcopier
-// @version      0.36.0
+// @version      0.37.0
 // @description  Copies a master Vest account's trades to your other Vest accounts, live, and adds a points-based order panel.
 // @author       xAmped
 // @license      STRATUH Copier License — free to use, no selling; see LICENSE
@@ -22,7 +22,7 @@
   if (window.__vestCopier) return;
   window.__vestCopier = true;
 
-  const VERSION = '0.36.0';
+  const VERSION = '0.37.0';
   const API = 'https://api-gateway.hz.vestmarkets.com';
   const _fetch = window.fetch.bind(window);
   // Console echo of the activity log, for troubleshooting: localStorage.setItem('vc-debug', '1') and reload.
@@ -420,7 +420,8 @@
   // it finds Vest's own socket the moment Vest creates it (the constructor is wrapped at document-start; Vest never
   // sends a subscription, only a ping every 30 s), or failing that on that first ping, and listens. Balances, positions,
   // fills and failed accounts then update as they happen; the polled reads become a backstop.
-  const _feed = { ws: null, last: 0, attached: 0 };
+  const _feed = { ws: null, last: 0, attached: 0, stateAt: 0, missing: [] };
+  const FEED_FIELDS = ['account_id', 'account_seq', 'positions', 'final_balance']; // in every account_state event
   const _feedAt = {}; // accountId -> when its last feed event landed (a slower REST read must not overwrite it)
   const _seq = {}; // accountId -> the last account_seq applied (Vest drops older and repeated events the same way)
   const feedLive = () => !!_feed.ws && _feed.ws.readyState === 1 && Date.now() - _feed.last < FEED_QUIET_MS;
@@ -474,6 +475,11 @@
     if (typeof raw !== 'string' || raw.charCodeAt(0) !== 123) return; // '{'
     const m = parseJson(raw, null);
     if (!m || typeof m.channel !== 'string' || !m.data || typeof m.data !== 'object') return;
+    if (m.channel === 'account_state') {
+      // for the site check: does Vest's update still carry what the copier reads?
+      _feed.stateAt = Date.now();
+      _feed.missing = FEED_FIELDS.filter((k) => !(k in m.data));
+    }
     try {
       if (m.channel === 'account_state') onAccountState(m.data);
       else if (m.channel === 'capital_account') onCapitalAccount(m.data);
@@ -3152,9 +3158,14 @@
     if (armedElsewhere())
       return toast('The copier is armed in another Vest tab. Disarm it there first: two would copy every trade twice.');
     if (healthState().changed) {
-      // Vest shipped an update that hasn't been checked
-      logEvent('warn', 'Not armed — Vest updated its site. Run the site check and accept the build first.');
-      return openSiteCheck();
+      // Vest shipped an update the site check hasn't passed (it runs by itself)
+      logEvent(
+        'warn',
+        siteGate() === 'failed'
+          ? 'Not armed — Vest changed something the copier relies on. Copying is off until a copier update.'
+          : 'Not armed — Vest updated its site and the check is still running.',
+      );
+      return render();
     }
     const epoch = ++_armEpoch;
     const master = S.master,
@@ -3581,9 +3592,8 @@
     if (!fp)
       return _unknownBuildChecked
         ? { level: 'amber', text: 'build unknown (checked)', changed: false }
-        : { level: 'amber', text: 'Unknown Vest build — click to run the site check', changed: true };
-    if (last && last !== fp)
-      return { level: 'amber', text: 'Vest updated — click to run the site check', changed: true };
+        : { level: 'amber', text: 'Unknown Vest build — checking…', changed: true };
+    if (last && last !== fp) return { level: 'amber', text: 'Vest updated — checking…', changed: true };
     return { level: 'green', text: fp, changed: false };
   };
 
@@ -4019,16 +4029,22 @@
   }
 
   // ───────────────────────── site check (run after Vest ships an update) ─────────────────────────
-  // Read-only: probes every endpoint the copier reads and checks the responses still have the fields it uses, then scans
-  // Vest's loaded code for the order endpoints and payload fields it sends. Places no orders. Stop-loss / take-profit
-  // paths are built at runtime in Vest's code, so those are covered by the live per-order guard (checkShape) and a small
-  // test trade.
+  // When Vest's build changes, the copier checks by itself that everything it relies on still looks the way it expects
+  // and accepts the build once every required check passes. Until then the panel shows only the check, and if a
+  // required check fails, copying, Trade-tab orders, automatic breakeven and claims stay off until a copier update
+  // (Flatten All still works). Read-only: it reads endpoints the copier uses and scans Vest's loaded code; nothing is
+  // sent to an account. The extras (live feed, prices, chart, claims) only warn: without them the copier is slower or a
+  // feature is off, never wrong.
+  // Order endpoints and payload fields the copier sends, looked for in Vest's own code (Vest joins "stop-loss" and
+  // "take-profit" into their path at runtime, so the bare words are looked for).
   const SCAN_TERMS = [
     '/v3/positions/open',
     '/v3/positions/append',
     '/v3/positions/reduce',
     '/v3/positions/close',
     '/v3/positions/cancel-order',
+    'stop-loss',
+    'take-profit',
     '/v3/auth/account-token',
     '/v3/positions/opened-orders',
     '/v3/executions',
@@ -4038,154 +4054,331 @@
     'reduceOnly',
     'timeInForce',
     'triggerPrice',
+    'positionId',
+    'isBuy',
+    'orderType',
+    'quantity',
+    'leverage',
   ];
+  const FEED_TERMS = ['account_state', 'capital_account', 'final_balance', 'balance_version']; // Vest's private socket
+  const CLAIM_TERMS = ['/v3/capital/withdraw'];
   // A whole term: "/v3/positions/open" must not be satisfied by "/v3/positions/opened".
   const hasTerm = (code, term) => new RegExp(term.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&') + '(?![\\w-])').test(code);
-  async function runSiteCheck() {
-    const site = (S.site = { fp: fingerprint(), running: true, results: [] });
-    const add = (name, status, detail) => {
-      site.results.push({ name, status, detail });
+  // [key, name, tier]: a failed 'must' keeps copying off; an 'extra' only warns.
+  const SITE_CHECKS = [
+    ['accounts', 'Accounts and balances', 'must'],
+    ['token', 'Account access', 'must'],
+    ['leverage', 'Leverage', 'must'],
+    ['positions', 'Positions and orders', 'must'],
+    ['fills', 'Fill history', 'must'],
+    ['market', 'Market rules', 'must'],
+    ['code', "Vest's order code", 'must'],
+    ['feed', 'Live account feed', 'extra'],
+    ['prices', 'Live prices', 'extra'],
+    ['chart', 'Chart tools', 'extra'],
+    ['claims', 'Profit claims', 'extra'],
+  ];
+  const SITE_WAIT_MS = 6000, // how long the extras wait for Vest's feed, a price and the chart
+    SITE_RETRY_MS = 20000, // a failed check runs once more by itself (a passing hiccup rather than Vest)
+    SITE_EMPTY_MS = 15000, // Vest listed no active account: asked again after this long
+    SITE_SETTLE_MS = 8000, // after a page load, the session and accounts get this long before "waiting" shows
+    ALL_CLEAR_MS = 2500, // the "All clear" screen, before the panel comes back
+    SITE_PACE_MS = 450; // the rows tick off one at a time, this far apart, so the check can be followed
+  // Test builds: localStorage 'vc-sim-site' = any of fail, warn, wait, slow (comma-separated) to see each screen.
+  const SITE_SIM = false;
+  const simSite = () => {
+    if (!SITE_SIM) return new Set();
+    try {
+      return new Set(
+        String(localStorage.getItem('vc-sim-site') || '')
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean),
+      );
+    } catch {
+      return new Set();
+    }
+  };
+  // The first truthy value of fn() (errors count as "not yet"), or null after ms.
+  async function waitUntil(fn, ms) {
+    const end = Date.now() + ms;
+    for (;;) {
+      let v = null;
+      try {
+        v = fn();
+      } catch {
+        /* not there yet */
+      }
+      if (v) return v;
+      if (Date.now() > end) return null;
+      await sleep(200);
+    }
+  }
+  // Vest's own scripts (same host; never this copier), as one text to scan.
+  async function readVestCode() {
+    const urls = new Set();
+    for (const s of document.scripts) if (s.src) urls.add(s.src);
+    for (const e of performance.getEntriesByType('resource')) if (e.initiatorType === 'script') urls.add(e.name);
+    const own = [...urls].filter((u) => {
+      try {
+        const x = new URL(u);
+        return x.host === location.host && !/vest-copier/.test(x.pathname);
+      } catch {
+        return false;
+      }
+    });
+    let code = '';
+    for (const u of own.slice(0, 60)) {
+      try {
+        code += await (await _fetch(u)).text();
+      } catch {
+        /* best effort: nothing to do if this fails */
+      }
+    }
+    return code;
+  }
+
+  let _siteRun = 0;
+  async function runSiteCheck(retry = false) {
+    const fp = fingerprint(),
+      sim = simSite();
+    if (!userTokenOk()) {
+      S.site = { fp, phase: 'waiting', wait: 'session', results: [], at: Date.now() };
+      return render();
+    }
+    const run = ++_siteRun;
+    const site = (S.site = {
+      fp,
+      phase: 'checking',
+      running: true,
+      retried: retry,
+      at: Date.now(),
+      results: SITE_CHECKS.map(([key, name, tier]) => ({ key, name, tier, status: 'pending', detail: '' })),
+      shown: 0, // rows revealed so far (results arrive faster than they're shown)
+    });
+    render();
+    const live = () => run === _siteRun && site.phase === 'checking';
+    const pacer = setInterval(() => {
+      const r = site.results[site.shown];
+      if (!live() || !r) return clearInterval(pacer);
+      if (r.status === 'pending') return;
+      site.shown++;
       render();
+    }, SITE_PACE_MS);
+    const set = (key, status, detail) => {
+      if (!live()) return;
+      if (status === 'wait') {
+        // Vest lists no active account: nothing to read from yet
+        Object.assign(site, { phase: 'waiting', wait: 'accounts', empty: true, running: false, at: Date.now() });
+        return render();
+      }
+      if (sim.has('fail') && key === 'code') [status, detail] = ['fail', 'No longer found: positionId (simulated)'];
+      if (sim.has('warn') && (key === 'feed' || key === 'prices'))
+        [status, detail] = ['warn', 'Not connected (simulated): copying works, a little slower'];
+      Object.assign(
+        site.results.find((r) => r.key === key),
+        { status, detail },
+      );
+      render();
+    };
+    const probe = async (key, fn) => {
+      if (!live()) return;
+      if (sim.has('slow')) await sleep(700);
+      const must = SITE_CHECKS.find((c) => c[0] === key)[2] === 'must';
+      try {
+        const [status, detail] = await fn();
+        set(key, status, detail);
+      } catch (e) {
+        set(key, must ? 'fail' : 'warn', e.message);
+      }
     };
     const missing = (o, keys) => keys.filter((k) => !o || typeof o !== 'object' || !(k in o));
     const fields = (o, keys, ok) => {
       const m = missing(o, keys);
       return m.length ? ['fail', 'Missing fields: ' + m.join(', ')] : ['pass', ok];
     };
-    const probe = async (name, fn) => {
-      try {
-        const [status, d] = await fn();
-        add(name, status, d);
-      } catch (e) {
-        add(name, 'fail', e.message);
-      }
-    };
-    render();
+    const sym = S.trade.symbol || 'NDX-USD-PERP';
+    const codeP = readVestCode();
 
-    if (!userTokenOk()) {
-      add('Session', 'fail', 'No Vest session captured yet. Click around Vest, then re-run.');
-      site.running = false;
-      return finishSiteCheck(site);
-    }
-    add('Session', 'pass', 'Logged-in session captured from the page');
-
-    let active = [];
-    await probe('Account list', async () => {
-      const r = await api('/v3/capital/accounts/active');
-      if (!Array.isArray(r.accounts)) return ['fail', 'Response no longer has an accounts list'];
-      active = r.accounts;
-      if (!active.length)
-        return [
-          'warn',
-          'No active accounts: the account checks are skipped until you have one (buy or reactivate one)',
+    const required = (async () => {
+      let active = [],
+        tok = null;
+      await probe('accounts', async () => {
+        const [a, b] = await Promise.all([
+          api('/v3/capital/accounts/active'),
+          api(`/v3/accounts?active=true&limit=${BALANCES_LIMIT}`),
+        ]);
+        if (!Array.isArray(a.accounts)) return ['fail', "The account list is gone from Vest's answer"];
+        active = a.accounts;
+        if (!active.length || sim.has('wait')) return ['wait'];
+        if (!Array.isArray(b.accounts) || !b.accounts.length) return ['fail', 'No balances returned'];
+        const m = [
+          ...missing(active[0], ['id', 'initial_capital', 'max_drawdown_limit', 'account_type']),
+          ...missing(b.accounts[0], ['account_id', 'amount']),
         ];
-      return fields(
-        active[0],
-        ['id', 'initial_capital', 'max_drawdown_limit', 'account_type'],
-        `${active.length} active account(s), fields OK`,
-      );
-    });
-    await probe('Balances', async () => {
-      const r = await api(`/v3/accounts?active=true&limit=${BALANCES_LIMIT}`);
-      if (!Array.isArray(r.accounts) || !r.accounts.length) return ['warn', 'No balances returned to inspect'];
-      return fields(r.accounts[0], ['account_id', 'amount'], 'Balance fields OK');
-    });
-
-    const testId = (S.master && S.byId[S.master] ? S.master : null) || (active[0] && active[0].id);
-    let tok = null;
-    await probe('Account tokens', async () => {
-      if (!testId) return ['warn', 'No account to test with'];
-      const r = await api('/v3/auth/account-token', userToken, {
-        method: 'POST',
-        body: JSON.stringify({ accountId: testId }),
+        return m.length
+          ? ['fail', 'Missing fields: ' + m.join(', ')]
+          : ['pass', `${active.length} active account(s), balances readable`];
       });
-      tok = r.apiKey || r.accessToken;
-      if (!tok) return ['fail', 'No token in the response'];
-      const c = decodeJwt(tok);
-      if (c.accountId !== testId) return ['fail', 'Token no longer names its account (needed to recognise the master)'];
-      return 'canTrade' in c
-        ? ['pass', 'Minted; account + canTrade claims present']
-        : ['warn', 'Minted, but the canTrade claim is gone'];
-    });
-    await probe('Leverage read', async () => {
-      const r = await api('/v3/user-state');
-      if (!Array.isArray(r.accounts)) return ['fail', 'No accounts list in user-state'];
-      if (!r.accounts.length) return ['warn', 'No accounts in user-state to inspect'];
-      return fields(r.accounts[0], ['accountId', 'leverages'], 'Per-symbol leverage readable');
-    });
-    await probe('Flat check', async () => {
-      if (!tok) return ['warn', 'Skipped (no account token)'];
-      const [p, o] = await Promise.all([api('/v3/positions/opened', tok), api('/v3/positions/opened-orders', tok)]);
-      const m = [...missing(p, ['positions']), ...missing(o, ['orders'])];
-      return m.length ? ['fail', 'Missing: ' + m.join(', ')] : ['pass', 'Open positions & orders readable'];
-    });
-    await probe('Fill confirmation', async () => {
-      if (!tok) return ['warn', 'Skipped (no account token)'];
-      const now = Math.floor(Date.now() / 1000);
-      const q = `account_id=${encodeURIComponent(testId)}&symbol=${encodeURIComponent(S.trade.symbol)}&from=${now - 86400}&to=${now}&limit=5`;
-      const r = await api(`/v3/executions?${q}`, tok);
-      if (!Array.isArray(r.items)) return ['fail', 'No items list'];
-      if (!r.items.length) return ['pass', 'Endpoint OK (no recent fills to inspect)'];
-      return fields(r.items[0], ['id', 'price'], 'Fill fields OK');
-    });
-    // Equity history is only a backup (equity is computed live from balances and positions), so a problem here warns
-    // and never blocks arming. With no active accounts Vest answers this one with a 503, so it is skipped then.
-    await probe('Equity history', async () => {
-      if (!active.length) return ['warn', 'Skipped (no active accounts)'];
-      const now = Date.now();
-      let r;
-      try {
-        r = await api(`/v3/trading-performance/series?from=${now - 30 * 60000}&to=${now}&points=30`);
-      } catch (e) {
-        return ['warn', `Unavailable (${e.message}); only a backup, live equity is unaffected`];
-      }
-      if (!Array.isArray(r.items) || !r.items.length) return ['warn', 'No equity points returned (only a backup)'];
-      const [st, msg] = fields(r.items[0], ['account_id', 'equity_value'], 'Equity history readable');
-      return st === 'fail' ? ['warn', msg + ' (only a backup)'] : [st, msg];
-    });
-    await probe("Vest's order code", async () => {
-      const urls = new Set();
-      for (const s of document.scripts) if (s.src) urls.add(s.src);
-      for (const e of performance.getEntriesByType('resource')) if (e.initiatorType === 'script') urls.add(e.name);
-      const own = [...urls].filter((u) => {
-        try {
-          return new URL(u).host === location.host;
-        } catch {
-          return false;
-        }
+      if (!live()) return;
+      const testId = (S.master && S.byId[S.master] ? S.master : null) || (active[0] && active[0].id);
+      await probe('token', async () => {
+        if (!testId) return ['fail', 'Not checked: no account to test with'];
+        const r = await api('/v3/auth/account-token', userToken, {
+          method: 'POST',
+          body: JSON.stringify({ accountId: testId }),
+        });
+        tok = r.apiKey || r.accessToken;
+        if (!tok) return ['fail', "No token in Vest's answer"];
+        const c = decodeJwt(tok);
+        if (c.accountId !== testId)
+          return ['fail', 'The token no longer names its account (how the master is told apart)'];
+        return [
+          'pass',
+          'canTrade' in c
+            ? 'Account token issued'
+            : 'Account token issued (its trading-status flag is gone: shown as unknown)',
+        ];
       });
-      let code = '';
-      for (const u of own.slice(0, 60)) {
-        try {
-          code += await (await _fetch(u)).text();
-        } catch {
-          /* best effort: nothing to do if this fails */
-        }
-      }
-      if (!code) return ['warn', "Couldn't read the site's code"];
-      const lost = SCAN_TERMS.filter((t) => !hasTerm(code, t));
-      return lost.length
-        ? ['warn', 'No longer found: ' + lost.join(', ') + '. Confirm with a small test trade.']
-        : ['pass', `All ${SCAN_TERMS.length} order endpoints & fields still present`];
-    });
+      await probe('leverage', async () => {
+        const r = await api('/v3/user-state');
+        if (!Array.isArray(r.accounts)) return ['fail', 'No accounts list in user-state'];
+        if (!r.accounts.length) return ['fail', 'No accounts in user-state'];
+        return fields(r.accounts[0], ['accountId', 'leverages'], 'Leverage per market readable');
+      });
+      await probe('positions', async () => {
+        if (!tok) return ['fail', 'Not checked: no account token'];
+        const [p, o] = await Promise.all([api('/v3/positions/opened', tok), api('/v3/positions/opened-orders', tok)]);
+        const m = [...missing(p, ['positions']), ...missing(o, ['orders'])];
+        return m.length ? ['fail', 'Missing: ' + m.join(', ')] : ['pass', 'Open positions and orders readable'];
+      });
+      await probe('fills', async () => {
+        if (!tok) return ['fail', 'Not checked: no account token'];
+        const now = Math.floor(Date.now() / 1000);
+        const q = `account_id=${encodeURIComponent(testId)}&symbol=${encodeURIComponent(sym)}&from=${now - 86400}&to=${now}&limit=5`;
+        const r = await api(`/v3/executions?${q}`, tok);
+        if (!Array.isArray(r.items)) return ['fail', 'No items list'];
+        if (!r.items.length) return ['pass', 'Readable (no recent fills to inspect)'];
+        return fields(r.items[0], ['id', 'price'], 'Fill prices readable');
+      });
+      await probe('market', async () => {
+        const r = await (await _fetch(`${API}/v3/exchangeInfo?symbols=${encodeURIComponent(sym)}`)).json();
+        const x = (r.symbols || []).find((s) => s && s.symbol === sym);
+        if (!x) return ['fail', `${symLabel(sym)} is missing from Vest's market list`];
+        return fields(
+          x,
+          ['sizeDecimals', 'minTickSize', 'initMarginRatio'],
+          `${symLabel(sym)}: tick, size step and margin readable`,
+        );
+      });
+      await probe('code', async () => {
+        const code = await codeP;
+        if (!code) return ['fail', "Couldn't read Vest's code"];
+        const lost = SCAN_TERMS.filter((t) => !hasTerm(code, t));
+        return lost.length
+          ? ['fail', 'No longer found: ' + lost.join(', ')]
+          : ['pass', `All ${SCAN_TERMS.length} order endpoints and fields present`];
+      });
+    })();
 
+    const extras = Promise.all([
+      probe('feed', async () => {
+        const code = await codeP;
+        const lost = code ? FEED_TERMS.filter((t) => !hasTerm(code, t)) : [];
+        const up = await waitUntil(() => _feed.ws && _feed.ws.readyState === 1, SITE_WAIT_MS);
+        if (!up) return ['warn', 'Not connected: copying works, balances and closes are read every 20 s instead'];
+        const gone = [...new Set([...lost, ...(_feed.missing || [])])];
+        return gone.length
+          ? ['warn', `Vest changed its live updates (${gone.join(', ')}): copying works, balances may lag a minute`]
+          : ['pass', _feed.stateAt ? 'Connected, updates read' : 'Connected'];
+      }),
+      probe('prices', async () => {
+        watchPrice(sym);
+        const got = await waitUntil(() => priceOf(sym) != null, SITE_WAIT_MS);
+        const p = S.price[sym] || {};
+        const book = recentAt(p.bookAt);
+        unwatchUnused();
+        if (!got)
+          return [
+            'warn',
+            `No live ${symLabel(sym)} price: breakeven and Max sizing wait for one, copying is unaffected`,
+          ];
+        return [
+          'pass',
+          book ? `${symLabel(sym)} order book streaming` : `${symLabel(sym)} price streaming (no order book yet)`,
+        ];
+      }),
+      probe('chart', async () => {
+        if (!/^\/trade(\/|$)/.test(location.pathname)) return ['skip', 'Checked on a trade page'];
+        const f = await waitUntil(() => {
+          const x = chartFrame();
+          return x && x.contentWindow.tradingViewApi.activeChart() && x;
+        }, SITE_WAIT_MS);
+        const off = 'picking a limit on the chart, hiding marks and the theme may not work; copying is unaffected';
+        if (!f) return ['warn', `Vest's chart wasn't found: ${off}`];
+        const w = f.contentWindow,
+          c = w.tradingViewApi.activeChart();
+        const ok =
+          typeof c.getCheckableActionState === 'function' &&
+          typeof c.getAllStudies === 'function' &&
+          typeof w.applyOverrides === 'function';
+        return ok ? ['pass', 'TradingView tools reachable'] : ['warn', `Vest's chart changed: ${off}`];
+      }),
+      probe('claims', async () => {
+        const code = await codeP;
+        if (!code) return ['warn', "Couldn't read Vest's code"];
+        return CLAIM_TERMS.every((t) => hasTerm(code, t))
+          ? ['pass', 'Claim endpoint present']
+          : ['warn', "Vest's claim endpoint is gone: claim on Vest's own page"];
+      }),
+    ]);
+
+    await Promise.all([required, extras]);
+    await waitUntil(() => !live() || site.shown >= site.results.length, SITE_PACE_MS * (site.results.length + 2));
+    clearInterval(pacer);
+    if (!live()) return;
+    site.shown = site.results.length;
     site.running = false;
     finishSiteCheck(site);
   }
   const countStatus = (site, status) => site.results.filter((r) => r.status === status).length;
   function finishSiteCheck(site) {
-    const pass = countStatus(site, 'pass'),
-      warn = countStatus(site, 'warn'),
-      fail = countStatus(site, 'fail');
-    diag('site_check', { fp: site.fp, pass, warn, fail, results: site.results });
-    logEvent(fail ? 'warn' : 'info', `Site check: ${pass} passed, ${warn} warning(s), ${fail} failed.`);
+    const fails = site.results.filter((r) => r.status === 'fail'),
+      warns = site.results.filter((r) => r.status === 'warn');
+    site.doneAt = Date.now();
+    diag('site_check', {
+      fp: site.fp,
+      pass: countStatus(site, 'pass'),
+      warn: warns.length,
+      fail: fails.length,
+      results: site.results.map(({ key, status, detail }) => ({ key, status, detail })),
+    });
+    const gated = healthState().changed;
+    if (fails.length) {
+      site.phase = 'failed';
+      const names = fails.map((r) => r.name).join(', ');
+      logEvent(
+        'warn',
+        gated
+          ? `Vest updated its site and the copier no longer matches it (${names}). Copying is off until a copier update.`
+          : `Site check: ${names} failed. Diag has the details.`,
+      );
+    } else {
+      const must = SITE_CHECKS.filter((c) => c[2] === 'must').length;
+      logEvent('info', `Site check: all ${must} required checks passed.`);
+      for (const r of warns) logEvent('warn', `${r.name}: ${r.detail}`);
+      if (gated) acceptBuild(site);
+      else site.phase = 'done';
+    }
     render();
   }
-  function acceptBuild() {
-    const site = S.site;
-    if (!site || site.running || countStatus(site, 'fail')) return;
+  // Every required check passed on this build: remember it, show "All clear" for a moment.
+  function acceptBuild(site) {
     const fp = fingerprint();
-    if (site.fp !== fp) return; // the page changed build since the check ran
+    if (site.fp !== fp) {
+      site.phase = 'done'; // the page changed build during the check: the next round checks that one
+      return;
+    }
     if (fp) {
       try {
         localStorage.setItem(BUILD_KEY, fp);
@@ -4193,20 +4386,58 @@
         /* best effort: nothing to do if this fails */
       }
     } else _unknownBuildChecked = true;
-    logEvent('info', `Vest build ${fp || '(unknown)'} accepted. Do one small test trade before trading size.`);
-    diag('build_accepted', { fp });
-    S.siteOpen = false;
-    render();
+    site.phase = 'accepted';
+    site.acceptedAt = Date.now();
+    logEvent('info', `Vest build ${fp || '(unknown)'} checked and accepted.`);
+    diag('build_accepted', { fp, auto: true });
+    setTimeout(render, ALL_CLEAR_MS + 50);
   }
+  // What the panel shows in place of its tabs: 'checking' | 'waiting' | 'failed' while Vest's build isn't accepted,
+  // 'clear' for a moment once it is; null = the normal panel. An armed copier is never taken over.
+  function siteGate() {
+    const s = S.site;
+    if (s && s.phase === 'accepted' && Date.now() - s.acceptedAt < ALL_CLEAR_MS) return 'clear';
+    if (S.armed || !healthState().changed) return null;
+    return s && s.fp === fingerprint() && s.phase !== 'done' ? s.phase : 'checking';
+  }
+  // Why an order from the panel (or automatic breakeven) has to wait, or null.
+  const siteBlocks = () => {
+    const g = siteGate();
+    if (!g || g === 'clear') return null;
+    return g === 'failed'
+      ? "Vest changed something the copier relies on: use Vest's own panel until a copier update."
+      : 'Vest updated its site: wait a moment for the check to finish.';
+  };
+  // Every second: start (or restart) the check whenever Vest's build isn't accepted and it can run.
+  function autoSiteCheck() {
+    if (S.armed || !healthState().changed) return;
+    const fp = fingerprint(),
+      s = S.site && S.site.fp === fp ? S.site : null;
+    if (s && (s.running || s.phase === 'accepted')) return;
+    if (s && s.phase === 'failed') {
+      if (!s.retried && Date.now() - s.doneAt > SITE_RETRY_MS) runSiteCheck(true);
+      return;
+    }
+    if (s && s.phase === 'waiting' && s.empty && Date.now() - s.at < SITE_EMPTY_MS) return;
+    const wait = !userTokenOk() ? 'session' : !S.groups.length ? 'accounts' : null;
+    if (!wait) return runSiteCheck();
+    if (Date.now() - _bootAt < SITE_SETTLE_MS) return; // still loading: shown as "checking" until then
+    if (!s || s.phase !== 'waiting' || s.wait !== wait) {
+      S.site = { fp, phase: 'waiting', wait, results: [], at: Date.now() };
+      render();
+    }
+  }
+  // The site check view from the status bar (a fresh check unless this build's results are already in).
   function openSiteCheck() {
+    if (siteGate()) return render();
     S.siteOpen = true;
     S.rulesOpen = false;
     S.supportOpen = false;
     S.summaryOpen = false;
     S.settingsOpen = false;
     S.tradeOpen = false;
-    const stale = !S.site || S.site.fp !== fingerprint();
-    if (stale && !(S.site && S.site.running)) runSiteCheck();
+    const have = S.site && S.site.fp === fingerprint() && S.site.results.length;
+    if (!have && !(S.site && S.site.running)) runSiteCheck();
     else render();
   }
 
@@ -4430,7 +4661,7 @@
     .body {
       flex: 1 1 auto;
       overflow: auto;
-      min-height: 64px;
+      min-height: 96px; /* a short panel squeezes the open log first, then this; the bottom bar always shows */
     }
     .body::-webkit-scrollbar,
     .log::-webkit-scrollbar {
@@ -4450,7 +4681,10 @@
       background: var(--accent-dim);
       color: var(--accent);
       font-size: 11px;
-      flex: none;
+      flex: 0 1 auto; /* a short panel scrolls a long bar rather than losing the bottom bar */
+      min-height: 44px;
+      overflow: auto;
+      align-content: flex-start;
     }
     .utext {
       flex-basis: 100%;
@@ -4558,6 +4792,7 @@
       align-items: center;
       gap: 6px;
       white-space: nowrap;
+      overflow: hidden; /* never runs into the balance column */
     }
     .chip {
       font-family: var(--mono);
@@ -4855,6 +5090,13 @@
     }
     .logwrap {
       border-top: 1px solid var(--line2);
+      flex: 0 10 auto; /* gives up its height before the accounts do, down to its header line */
+      min-height: 30px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .logh {
       flex: none;
     }
     .logh {
@@ -4912,7 +5154,8 @@
       padding: 2px 5px;
     }
     .log {
-      max-height: 22vh;
+      max-height: calc(5 * (1.55em + 2px) + 10px); /* five lines; the rest scrolls (CSV / Diag export it all) */
+      min-height: 0;
       overflow: auto;
       padding: 0 14px 10px;
       font-size: 10.5px;
@@ -4923,12 +5166,6 @@
       max-height: 0;
       padding: 0;
       overflow: hidden;
-    }
-    .panel.v-trade .log {
-      max-height: 11vh;
-    }
-    .panel.v-trade .logwrap:not(.open) .log {
-      max-height: 0;
     }
     .le {
       display: flex;
@@ -5173,6 +5410,42 @@
       color: var(--dim);
       margin-top: 12px;
       line-height: 1.5;
+    }
+    .sc-h {
+      font-family: var(--mono);
+      font-size: 9.5px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--dim);
+      margin: -4px 0 4px;
+    }
+    .dot.pending {
+      animation: vc-blink 1s ease-in-out infinite;
+    }
+    @keyframes vc-blink {
+      50% {
+        opacity: 0.25;
+      }
+    }
+    /* Vest updated: the site check takes the panel (Flatten All, alerts, the log and a copier update stay) */
+    .panel.gated .tabs,
+    .panel.gated .support,
+    .panel.gated .themeintro,
+    .panel.gated [data-act='arm'] {
+      display: none !important;
+    }
+    .gate-h {
+      font-weight: 700;
+      font-size: 15px;
+      letter-spacing: -0.01em;
+      margin: 2px 0 10px;
+      color: var(--warn);
+    }
+    .gate-failed .gate-h {
+      color: var(--danger);
+    }
+    .gate-clear .gate-h {
+      color: var(--accent);
     }
     .sup-card {
       border: 1px solid var(--line2);
@@ -6465,6 +6738,17 @@
     .collapsed .hdr .iconbtn {
       display: none;
     }
+    .panel.narrow .tabs {
+      padding: 0 3px;
+    }
+    .panel.narrow .tab {
+      padding-left: 4px;
+      padding-right: 4px;
+      letter-spacing: 0.03em;
+    }
+    .panel.narrow .row .chip,
+    .panel.narrow .codebtn .off,
+    .panel.narrow .rate,
     .panel.narrow .hdr .title,
     .panel.narrow .hdr .sep {
       display: none;
@@ -6581,7 +6865,7 @@
           </span></div>
           <div class="log" aria-live="polite"></div>
         </div>
-        <div class="reportbar"><button class="codebtn" data-act="code" title="Click to copy the code" hidden>Use code <b>${SUPPORT_CODE}</b> · <span class="off">5% off</span></button>
+        <div class="reportbar"><button class="codebtn" data-act="code" title="Click to copy the code" hidden>Use code <b>${SUPPORT_CODE}</b><span class="off"> · 5% off</span></button>
           <div class="health" role="button" tabindex="0" title="Vest's build, this version and the API budget. Click to run the site check.">
             <span class="dot gray"></span><span class="htext">Starting…</span><span class="ver">v${VERSION}</span><span class="rate" id="rate"></span>
           </div></div>
@@ -6672,6 +6956,7 @@
     root.querySelectorAll('[data-tab]').forEach((b) => (b.onclick = () => setView(b.dataset.tab)));
     const health = root.querySelector('.health');
     const toggleSite = () => {
+      if (siteGate()) return; // the check already fills the panel
       if (S.siteOpen) {
         S.siteOpen = false;
         render();
@@ -6718,9 +7003,11 @@
 
   function renderHealth() {
     if (!_root) return;
-    const h = healthState();
-    _root.querySelector('.health .dot').className = 'dot ' + h.level;
-    _root.querySelector('.htext').textContent = h.text;
+    const h = healthState(),
+      g = siteGate();
+    _root.querySelector('.health .dot').className = 'dot ' + (g === 'failed' ? 'red' : h.level);
+    _root.querySelector('.htext').textContent =
+      g === 'failed' ? 'Vest changed — copying off' : g === 'waiting' ? 'Vest updated — check waiting' : h.text;
     _root.querySelector('.health').classList.toggle('amber-bar', h.changed);
     _root.querySelector('.reportbar').classList.toggle('alert', h.level !== 'green');
     renderRate();
@@ -6765,7 +7052,7 @@
   const DOCK_KEY = 'vc-dock'; // { docked, open, at: {x,y} from the chart's corner, free: {x,y} in the window }
   const PANEL_MIN_W = 300,
     PANEL_MAX_W = 700,
-    PANEL_MIN_H = 260;
+    PANEL_MIN_H = 350; // header, tabs, a one-time bar, an account row, ARM, the log's header line and the bottom bar
   const HDR_FULL_W = 350; // narrower than this, the header leaves out the "COPIER" label
   const DOCK_INSET = 6, // px kept between the panel and the chart's edges (and the window's)
     DRAG_PX = 4, // a press on the pill that moves less than this is a click
@@ -6926,18 +7213,21 @@
         ? 'The chart is too small to hold the panel, so it floats until the chart is bigger. Click to float it for good.'
         : 'Docked on the chart: click to float it anywhere';
     pin.setAttribute('aria-label', S.dock.docked ? 'Detach from the chart' : 'Dock on the chart');
-    const red =
-      !!(S.orphan && S.orphan.list.length) || (S.armed && !feedLive() && Date.now() - _bootAt > FEED_QUIET_MS / 5);
+    const orphans = !!(S.orphan && S.orphan.list.length),
+      siteOff = siteGate() === 'failed';
+    const red = orphans || siteOff || (S.armed && !feedLive() && Date.now() - _bootAt > FEED_QUIET_MS / 5);
     const amber = !red && healthState().changed;
     const panel = _root.querySelector('.panel'),
       dot = _root.querySelector('#attn');
     dot.className = 'attn' + (red ? ' red' : amber ? ' amber' : '');
     dot.title = red
-      ? S.orphan
+      ? orphans
         ? 'Followers are waiting on Flatten / Keep'
-        : "Vest's live feed is down"
+        : siteOff
+          ? 'Vest changed something the copier relies on: copying is off'
+          : "Vest's live feed is down"
       : amber
-        ? 'Vest updated its site: run the site check'
+        ? 'Vest updated its site: checking'
         : '';
     panel.classList.toggle('attn-red', red);
     panel.classList.toggle('attn-amber', amber);
@@ -7273,10 +7563,15 @@
     if (!_root) return;
     renderHealth();
     const body = _root.querySelector('.body');
+    const gate = siteGate(); // Vest updated: the check takes the whole panel
+    _root.querySelector('.panel').classList.toggle('gated', !!gate);
     // the Trade, Support and first-run Rules views keep their DOM between renders (typing, a ticked box)
-    const keeps = S.tradeOpen || S.supportOpen || (S.rulesOpen && !S.settingsOpen && !S.ack);
+    const keeps = !gate && (S.tradeOpen || S.supportOpen || (S.rulesOpen && !S.settingsOpen && !S.ack));
     if (!keeps || S.siteOpen) body.dataset.view = '';
-    if (S.siteOpen) {
+    if (!gate && !S.siteOpen) delete body.dataset.check;
+    if (gate) {
+      renderGate(body, gate);
+    } else if (S.siteOpen) {
       renderSiteCheck(body);
     } else if (S.supportOpen) {
       renderSupportTab(body);
@@ -7352,12 +7647,20 @@
 
     const armBtn = _root.querySelector('[data-act="arm"]');
     // DISARM is never blocked; only ARM is gated on a valid selection and the accounts view.
-    const otherView = S.rulesOpen || S.summaryOpen || S.settingsOpen || S.siteOpen || S.supportOpen;
+    const otherView = gate || S.rulesOpen || S.summaryOpen || S.settingsOpen || S.siteOpen || S.supportOpen;
     armBtn.disabled = S.armed ? false : S.arming || otherView || !(S.master && S.followers.size);
     armBtn.textContent = S.armed ? 'DISARM' : S.arming ? 'ARMING…' : 'ARM';
     armBtn.classList.toggle('armed', S.armed);
     const tag = _root.querySelector('#armtag');
-    tag.textContent = S.armed ? 'Armed · live' : S.master ? 'Ready' : 'Idle';
+    tag.textContent = S.armed
+      ? 'Armed · live'
+      : gate === 'failed'
+        ? 'Off'
+        : gate && gate !== 'clear'
+          ? 'Checking'
+          : S.master
+            ? 'Ready'
+            : 'Idle';
     tag.className = 'armtag ' + (S.armed ? 'on' : 'off');
     const opts = _root.querySelector('#opttag');
     opts.textContent = [S.fast && 'FAST', S.capFit && 'CAP'].filter(Boolean).join(' ');
@@ -7376,44 +7679,111 @@
     showOnThisPage();
   }
 
+  // The check list: required checks, then the extras (which never block copying).
+  function siteRows(site) {
+    const rows =
+      site && site.results.length
+        ? site.results
+        : SITE_CHECKS.map(([key, name, tier]) => ({ key, name, tier, status: 'pending', detail: '' }));
+    const shown = site && site.shown != null ? site.shown : rows.length; // rows not revealed yet still wait
+    const dot = { pass: 'green', warn: 'amber', fail: 'red', skip: 'gray', pending: 'gray' };
+    const row = (r) => {
+      const i = rows.indexOf(r),
+        active = i === shown && site && site.running,
+        status = i < shown ? r.status : 'pending',
+        detail = i < shown ? r.detail : active ? 'Checking…' : '';
+      return `
+          <div class="sc-row${active ? ' active' : ''}"><span class="dot ${dot[status]}${active ? ' pending' : ''}"></span>
+            <div><div class="sc-name">${esc(r.name)}</div><div class="sc-detail">${esc(detail || '')}</div></div></div>`;
+    };
+    return `<div class="sc-list">${rows
+      .filter((r) => r.tier === 'must')
+      .map(row)
+      .join('')}</div>
+        <div class="sc-h">Extras · never block copying</div>
+        <div class="sc-list">${rows
+          .filter((r) => r.tier !== 'must')
+          .map(row)
+          .join('')}</div>`;
+  }
+  // While the check runs, keep the row being checked in view; on a new screen (the verdict), back to the top.
+  function followCheck(body, top, screen) {
+    if (body.dataset.check !== screen) {
+      body.dataset.check = screen;
+      body.scrollTop = 0;
+      return;
+    }
+    body.scrollTop = top; // the list was just redrawn: stay where it was
+    const el = body.querySelector('.sc-row.active');
+    if (!el) return;
+    const r = el.getBoundingClientRect(),
+      b = body.getBoundingClientRect();
+    if (r.bottom > b.bottom - 8) body.scrollTop += r.bottom - b.bottom + 24;
+    else if (r.top < b.top) body.scrollTop -= b.top - r.top + 8;
+  }
+  // The site check from the status bar, on an accepted build: the latest results, Re-run and Close.
   function renderSiteCheck(body) {
-    const h = healthState(),
-      site = S.site;
-    const color = (st) => (st === 'pass' ? 'green' : st === 'warn' ? 'amber' : 'red');
-    const fails = site ? site.results.filter((r) => r.status === 'fail').length : 0;
-    const canAccept = h.changed && site && !site.running && !fails && site.fp === fingerprint();
-    const intro = h.changed
-      ? 'Vest updated its site since your last check. '
-      : `Vest build ${esc(fingerprint() || 'unknown')}. `;
-    const result = (r) => `
-          <div class="sc-row"><span class="dot ${color(r.status)}"></span>
-            <div><div class="sc-name">${esc(r.name)}</div><div class="sc-detail">${esc(r.detail || '')}</div></div></div>`;
+    const site = S.site,
+      top = body.scrollTop;
     body.innerHTML = `
       <div class="rules">
         <div class="rules-h">Site check</div>
-        <div class="sc-sub">${intro}Read-only: no orders are placed.</div>
-        <div class="sc-list">
-          ${(site ? site.results : []).map(result).join('')}
-          ${site && site.running ? '<div class="sc-detail">Checking…</div>' : ''}
-        </div>
+        <div class="sc-sub">Vest build ${esc(fingerprint() || 'unknown')}. Runs by itself whenever Vest updates its site. Read-only: nothing is sent to your accounts.</div>
+        ${siteRows(site)}
         <div class="rules-btns">
-          ${h.changed ? `<button class="armbtn sm" id="sc-accept" ${canAccept ? '' : 'disabled'}>Accept this build</button>` : ''}
-          <button class="ghostbtn" id="sc-run" ${site && site.running ? 'disabled' : ''}>${site ? 'Re-run' : 'Run check'}</button>
+          <button class="ghostbtn" id="sc-run" ${site && site.running ? 'disabled' : ''}>Re-run</button>
           <button class="ghostbtn" id="sc-close">Close</button>
         </div>
-        <div class="sc-note">${
-          fails
-            ? "Something Vest-side changed. Don't arm: send the Diag file for a fix."
-            : 'After accepting, do one small test with one follower: open with a stop, move the stop, then close. Confirm each step copies.'
-        }</div>
       </div>`;
-    const acc = body.querySelector('#sc-accept');
-    if (acc) acc.onclick = () => acceptBuild();
+    followCheck(body, top, site && site.running ? 'site-run' : 'site');
     body.querySelector('#sc-run').onclick = () => runSiteCheck();
     body.querySelector('#sc-close').onclick = () => {
       S.siteOpen = false;
       render();
     };
+  }
+  // In place of the tabs while Vest's update isn't accepted (siteGate): checking, waiting, failed, then "All clear".
+  function renderGate(body, g) {
+    const s = S.site,
+      top = body.scrollTop;
+    const [title, sub] = {
+      checking: [
+        'Vest updated its site',
+        'Checking that the copier still works with it. Takes a few seconds. Read-only: nothing is sent to your accounts.',
+      ],
+      waiting: [
+        'Vest updated its site',
+        s && s.wait === 'session'
+          ? 'Log in to Vest: the check runs by itself once your session loads.'
+          : 'The check runs by itself once Vest lists an active account to read from.',
+      ],
+      failed: [
+        'Copying is off',
+        "Vest changed something the copier relies on (in red below). Copying, Trade-tab orders, automatic breakeven and claims stay off until a copier update fixes it: trade from Vest's own panel meanwhile. Flatten All still works.",
+      ],
+      clear: ['All clear', "The copier works with Vest's update."],
+    }[g];
+    body.innerHTML = `
+      <div class="rules gate gate-${g}">
+        <div class="gate-h">${esc(title)}</div>
+        <div class="sc-sub">${esc(sub)}</div>
+        ${g === 'waiting' ? '' : siteRows(s)}
+        ${
+          g === 'failed'
+            ? `<div class="rules-btns">
+          <button class="armbtn sm" id="sc-run">Check again</button>
+          <button class="ghostbtn" id="sc-diag">Diag file</button>
+          <button class="ghostbtn" id="sc-help">Discord</button>
+        </div>
+        <div class="sc-note">Send the Diag file on Discord or GitHub. The fix arrives as a copier update in the bar above.</div>`
+            : ''
+        }
+      </div>`;
+    followCheck(body, top, 'gate-' + g);
+    if (g !== 'failed') return;
+    body.querySelector('#sc-run').onclick = () => runSiteCheck();
+    body.querySelector('#sc-diag').onclick = () => downloadDiag();
+    body.querySelector('#sc-help').onclick = () => window.open(DISCORD_URL, '_blank', 'noopener');
   }
 
   // ───────────────────────── trade panel UI ─────────────────────────
@@ -7955,6 +8325,8 @@
     if (S.placing || S.adjusting) return;
     if (S.flattening) return toast('Wait for Flatten All to finish.');
     if (S.arming || claimBusy()) return toast('Wait for arming or the claim to finish.');
+    const siteHeld = siteBlocks(); // Vest's update not checked yet, or the check failed
+    if (siteHeld) return toast(siteHeld);
     if (!S.ack) {
       S.rulesOpen = true;
       S.tradeOpen = false;
@@ -8466,6 +8838,8 @@
   }
   async function breakevenNow() {
     if (S.placing || S.adjusting || S.flattening || S.arming) return;
+    const siteHeld = siteBlocks();
+    if (siteHeld) return toast(siteHeld);
     const master = S.master,
       sym = S.trade.symbol,
       meta = SYMBOLS[sym],
@@ -8551,7 +8925,9 @@
     if (S.placing || S.adjusting || S.flattening || S.arming) return;
     const key = S.addPick || '25';
     if (key === 'max') return;
-    if (key === '100') return closeNow();
+    if (key === '100') return closeNow(); // a close is never held back
+    const siteHeld = siteBlocks();
+    if (siteHeld) return toast(siteHeld);
     const master = S.master,
       sym = S.trade.symbol,
       meta = SYMBOLS[sym];
@@ -8663,6 +9039,7 @@
     updateTrade();
   }
   function checkPlans(sym, px) {
+    if (siteBlocks()) return; // paused while Vest's update is unchecked or failed the check
     for (const p of Object.values(S.plans)) {
       if (
         p.symbol !== sym ||
@@ -9736,7 +10113,11 @@
     // a trade copied mid-claim would change what each account can claim
     if (S.armed) return toast('Disarm the copier before claiming profit.');
     if (healthState().changed)
-      return toast('Vest updated its site: run the site check (bottom right) before claiming.');
+      return toast(
+        siteGate() === 'failed'
+          ? "Vest changed something the copier relies on: claim on Vest's own page until a copier update."
+          : 'Vest updated its site: wait a moment for the check to finish.',
+      );
     S.claim = { phase: 'checking', items: [] };
     render();
     try {
@@ -10110,6 +10491,7 @@
     loadTrade();
     loadUpdate();
     initBuild();
+    setInterval(autoSiteCheck, 1000); // Vest updated: the site check runs by itself
     loadAllSymbolRules();
     diag('session', {
       version: VERSION,

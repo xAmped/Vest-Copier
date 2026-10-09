@@ -2,6 +2,15 @@
 
 Newest first. To update, click **Install** on the green bar that appears in the panel whenever there's a newer version.
 
+## v0.37.0
+When Vest updates its site, the copier now checks itself. No more finding the site check and pressing Accept.
+
+- **The check runs by itself.** The panel shows only the check while it runs (about five seconds, read-only), ticking off each check as it goes. When everything the copier needs still matches Vest, it says "All clear" and goes back to normal: nothing to click.
+- **If something no longer matches, copying stays off** until a copier update fixes it. The panel says what changed, with the Diag file and Discord one click away; trade from Vest's own panel meanwhile. Flatten All always works.
+- **More is checked:** Vest's market rules (tick, size step, margin), its stop-loss and take-profit orders and the fields adds and reduces send. The live account feed, prices, chart tools and claims are checked too, as extras: a problem there shows a warning but never stops copying.
+- **No accounts yet?** The check waits until Vest lists one instead of passing on an empty check.
+- **A tidier panel when it's small:** the open activity log shows five lines (scroll it, or save it all with CSV or Diag) and gives up its space before your accounts do. Making the panel short or narrow no longer cuts off the bottom bar, overlaps the account balances, or hides the last tab.
+
 ## v0.36.0
 Scale in and out of a trade from the Trade tab.
 

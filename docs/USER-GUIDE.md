@@ -49,11 +49,12 @@ their own browser.
   equity), **floor** (or **daily floor** on plans with a daily loss limit, when it's the higher one today), **room
   left** to that floor, **% used**, and two selectors, **M** (make master) and **FLW** (add follower).
 - **Controls:** **ARM / DISARM** and a red **Flatten All**.
-- **Activity log:** folded to one line showing the latest event. Click it to open the full feed, with **Diag** /
-  **CSV** / **Clear**. The panel remembers whether you left it open. Prompts that need you (Flatten / Keep for
+- **Activity log:** folded to one line showing the latest event. Click it to open the last five lines (scroll for
+  more), with **Diag** / **CSV** / **Clear**; CSV saves the whole log. The panel remembers whether you left it open. Prompts that need you (Flatten / Keep for
   followers left without the master) always show above it.
 - **Bottom bar:** the AMPED code on the left; on the right a colored dot with **Vest's build**, your **version** and a
-  live `API nnn/200` budget. Green = a known build; amber = Vest changed its site (click to run the site check).
+  live `API nnn/200` budget. Green = a checked build; amber = Vest updated its site and the check is running; red =
+  the check failed and copying is off (click it any other time to re-run the check).
 
 **Where it sits.** The panel is docked on Vest's chart: it starts on the left, just right of the chart's drawing
 tools, and stays inside the chart whatever you resize (the window, Vest's order book or its positions list). Drag the header
@@ -67,7 +68,8 @@ open over it.
 
 **Minimised,** it's a small pill with the logo, COPIER and the state: click it to open, or press and move to drag it.
 A red dot means something needs you (followers waiting on Flatten / Keep, or Vest's live feed lost while armed); an
-amber dot means Vest updated its site. Position, size and open or minimised are all remembered.
+amber dot means Vest updated its site and the check is running (red if copying is off after it). Position, size and
+open or minimised are all remembered.
 
 ---
 
@@ -260,12 +262,15 @@ Options are saved and persist across refreshes. Active ones show as `FAST` / `CA
   don't target a trade that isn't there.
 - **Screen check** — while armed, if Vest's own screen is on another of your accounts, the panel warns that orders
   placed there aren't copied (only the master's are).
-- **Site check (after Vest updates)** — when Vest ships a site update, the status in the bottom right turns amber
-  ("Vest updated — click to run the site check") and **arming is paused**. Click it: the copier probes
-  every Vest endpoint it relies on and scans Vest's code for the order endpoints and fields it uses —
-  read-only, no orders placed. Each check shows green / amber / red. If nothing is red, click
-  **Accept this build**, then do one small test (one follower: open with a stop, move the stop, close).
-  If anything is red, don't arm — hit **Diag** and send the file.
+- **Site check (after Vest updates)** — when Vest ships a site update, the panel shows only the check, which runs by
+  itself in a few seconds: read-only, nothing is sent to your accounts. Seven **required** checks read every Vest
+  endpoint the copier relies on (accounts and balances, account access, leverage, positions and orders, fill history,
+  market rules) and scan Vest's code for the order endpoints and fields the copier sends. Four **extras** check the
+  live account feed, live prices, the chart tools and claims; a warning there never stops copying (the copier is a
+  little slower or that one feature is off). When every required check passes the panel says **All clear** and comes
+  back by itself. If one fails, **copying stays off**, with Trade-tab orders, automatic breakeven and claims, until a
+  copier update fixes it: trade from Vest's own panel meanwhile (Flatten All always works), and send the **Diag** file.
+  With no active account yet, the check waits for one. A small test trade after a Vest update is still a good idea.
 - **Live order check** — every master order is checked against the fields the copier needs. If Vest
   changed its order format, the log warns immediately (and says what's missing or new).
 

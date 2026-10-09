@@ -109,7 +109,7 @@ line. The bottom right shows Vest's build, your version and the API budget.
 | ARM refuses | The log names the account and the reason, usually a resting order or an opposite position. Clear it on Vest and arm again. |
 | "did NOT fill" in the log | Vest accepted the order but didn't execute it, usually not enough margin for that size. The margin bar on the Trade tab shows how much fits. |
 | Breakeven stays grey | Price has to be clear of your entry first (Vest refuses a stop the bid or ask has already passed). Hover it for the reason. |
-| Amber status in the bottom right | Vest updated its site. Click it, let the check finish, then Accept. |
+| Amber status in the bottom right | Vest updated its site and the copier is checking itself. Give it a few seconds. If it says copying is off, send the Diag file and use Vest's own panel until an update. |
 | Need a hand | Ask in the [Discord](https://discord.gg/Aa69y9KnM3). |
 | Anything else | Open the **Support** tab and use Report a problem. It saves a report file and opens a pre-filled [GitHub issue](https://github.com/xAmped/Vest-Copier/issues); drag the file in. The file has sizes, prices and balances but no login data. |
 
