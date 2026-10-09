@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vest Copier
 // @namespace    vestcopier
-// @version      0.35.0
+// @version      0.35.1
 // @description  Copies a master Vest account's trades to your other Vest accounts, live, and adds a points-based order panel.
 // @author       xAmped
 // @license      STRATUH Copier License — free to use, no selling; see LICENSE
@@ -22,7 +22,7 @@
   if (window.__vestCopier) return;
   window.__vestCopier = true;
 
-  const VERSION = '0.35.0';
+  const VERSION = '0.35.1';
   const API = 'https://api-gateway.hz.vestmarkets.com';
   const _fetch = window.fetch.bind(window);
   // Console echo of the activity log, for troubleshooting: localStorage.setItem('vc-debug', '1') and reload.
@@ -3336,6 +3336,7 @@
     S.capFit = !!o.capFit;
     S.checkUpdates = o.checkUpdates !== false; // on by default
     S.hideMarks = o.hideMarks !== false; // on by default: Vest's buy/sell marks come back on every load otherwise
+    S.tradeOnly = o.tradeOnly !== false; // the panel shows on Vest's Trade page only (it runs on every page)
     S.hideSessions = o.hideSessions !== false; // Vest's pre-market / after-hours / overnight bands on the chart
     S.theme = o.theme !== false; // STRATUH colours for Vest's own page and chart (on by default; introduced once)
     S.themeDown = o.themeDown === 'red' ? 'red' : 'mono'; // shorts and losses on Vest's page: grey (DeepCharts) or red
@@ -3348,6 +3349,7 @@
       checkUpdates: S.checkUpdates,
       hideMarks: S.hideMarks,
       hideSessions: S.hideSessions,
+      tradeOnly: S.tradeOnly,
       theme: S.theme,
       themeDown: S.themeDown,
     };
@@ -7215,9 +7217,23 @@
       /* the chart isn't ready yet: tried again on the next check */
     }
   }
+  // The panel shows on Vest's Trade page only (with the setting on); the copier keeps running on every page. It shows
+  // anywhere when something needs the trader: followers waiting on Flatten / Keep, or the first-run risk terms.
+  const onTradePage = () => /^\/(trade(\/|$)|$)/.test(location.pathname); // Vest's root opens the Trade page
+  function showOnThisPage() {
+    const host = _root && _root.host;
+    if (!host) return;
+    const show = !S.tradeOnly || onTradePage() || !S.ack || !!(S.orphan && S.orphan.list.length);
+    if ((host.style.display !== 'none') === show) return;
+    host.style.display = show ? '' : 'none';
+    if (show) place();
+  }
+  window.addEventListener('popstate', showOnThisPage);
   window.addEventListener('resize', () => place());
   setInterval(() => {
-    if (!_root || _dragging) return;
+    if (!_root) return;
+    showOnThisPage();
+    if (_dragging) return;
     removeAutoVolume(chartFrame());
     hideChartMarks(chartFrame());
     hideSessionShading(chartFrame());
@@ -7347,6 +7363,7 @@
     renderLog();
     place();
     renderDock();
+    showOnThisPage();
   }
 
   function renderSiteCheck(body) {
@@ -9629,6 +9646,12 @@
           "Hide Vest's buy and sell marks on the chart each time it loads (the chart's right-click Hide marks on bars, which Vest forgets on every refresh). Show them again from that menu any time.",
         )}
         ${option(
+          'tradeonly',
+          S.tradeOnly,
+          'Show only on the Trade page',
+          "Hide the panel on Vest's other pages (Portfolio, Markets, Affiliate…). It keeps running and copying there, and shows on any page when something needs you.",
+        )}
+        ${option(
           'hidesessions',
           S.hideSessions,
           'Hide session shading',
@@ -9679,6 +9702,11 @@
           } else if (o === 'updates') {
             S.checkUpdates = !S.checkUpdates;
             saveOpts();
+            render();
+          } else if (o === 'tradeonly') {
+            S.tradeOnly = !S.tradeOnly;
+            saveOpts();
+            showOnThisPage();
             render();
           } else if (o === 'hidesessions') {
             S.hideSessions = !S.hideSessions;

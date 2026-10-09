@@ -68,7 +68,7 @@ You need a desktop browser (Chrome, Edge, Brave or Firefox). Five steps, about f
 | **Accounts** | Your master on top, then the followers, with balance, floor and room left. Pick them here. |
 | **Trade** | An order ticket in points for the market Vest is showing (details below). |
 | **P&L** | Profit per account and in total, what you keep after each profit split, and **Claim all profit** in one preview and one confirm. |
-| **Settings** | Fast mode, Auto-flatten, Cap-to-fit, the chart (STRATUH colours for Vest, hide the buy/sell marks and session bands), update checks, and the AMPED code switch. |
+| **Settings** | Fast mode, Auto-flatten, Cap-to-fit, the chart (STRATUH colours for Vest, hide the buy/sell marks and session bands, show the panel on the Trade page only), update checks, and the AMPED code switch. |
 | **Rules** | What the copier will and won't do, and the risk notice. |
 | **Support** | Report a problem, share an idea, the Discord and the guides. |
 

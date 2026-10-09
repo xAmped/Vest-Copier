@@ -2,6 +2,9 @@
 
 Newest first. To update, click **Install** on the green bar that appears in the panel whenever there's a newer version.
 
+## v0.35.1
+- **The panel shows on Vest's Trade page only** (Settings → Chart, on by default). On Portfolio, Markets, Affiliate and Vest's other pages it's hidden but keeps running: copying, the live feed and breakeven carry on. It still appears on any page when something needs you, such as followers waiting on Flatten / Keep.
+
 ## v0.35.0
 Vest in STRATUH colours, and a cleaner chart.
 

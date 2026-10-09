@@ -231,6 +231,9 @@ average), and a risk bar for what's left before your floor. The setup folds into
 - **Hide marks on bars** (on by default) — hides Vest's buy and sell marks on the chart each time it loads, the same
   as the chart's right-click **Hide marks on bars**, which Vest forgets on every refresh. Show them again from that
   menu whenever you want; the copier leaves them shown until the next load.
+- **Show only on the Trade page** (on by default) — hides the panel on Vest's other pages (Portfolio, Markets,
+  Affiliate…). It keeps running and copying there, and shows on any page when something needs you (followers waiting
+  on Flatten / Keep, or the first-run risk terms).
 - **Hide session shading** (on by default) — removes the pre-market, after-hours and overnight bands Vest draws on
   the chart (its Market Sessions indicator), each time Vest adds them.
 - **STRATUH theme for Vest** (on by default, dark mode only) — Vest's own page and chart in STRATUH's colours: onyx and
