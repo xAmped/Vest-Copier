@@ -2,6 +2,14 @@
 
 Newest first. To update, click **Install** on the green bar that appears in the panel whenever there's a newer version.
 
+## v0.36.0
+Scale in and out of a trade from the Trade tab.
+
+- **Scale:** in a trade, pick 25, 50 or 100% of your position (or MAX, the most you can add), then **Add** or **Reduce**, right under the chips. Reduce takes that share off at market (100 = all of it); armed, every follower adds or reduces by the same share of its own position.
+- **Your stop and targets stay where they are** when you add or reduce, a stop at breakeven included. Move them yourself on the chart. (Adds no longer rebuild the stop and targets from the new average.)
+- **The setup for a new trade is put away while you're in one,** and the separate Add button at the bottom is gone.
+- **Fixed:** an add to a small position could be blocked by the new-trade setup's target split ("too small to split into 3 targets").
+
 ## v0.35.2
 - **Small windows:** when Vest's chart gets too small to hold the panel (Vest stacks its layout in a small window), the panel floats on its own, at your floating spot or the top left of the window, at full height. When the chart is big enough again it docks back by itself. The pin shows amber while it's floating this way.
 

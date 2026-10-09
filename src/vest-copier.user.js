@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vest Copier
 // @namespace    vestcopier
-// @version      0.35.2
+// @version      0.36.0
 // @description  Copies a master Vest account's trades to your other Vest accounts, live, and adds a points-based order panel.
 // @author       xAmped
 // @license      STRATUH Copier License — free to use, no selling; see LICENSE
@@ -22,7 +22,7 @@
   if (window.__vestCopier) return;
   window.__vestCopier = true;
 
-  const VERSION = '0.35.2';
+  const VERSION = '0.36.0';
   const API = 'https://api-gateway.hz.vestmarkets.com';
   const _fetch = window.fetch.bind(window);
   // Console echo of the activity log, for troubleshooting: localStorage.setItem('vc-debug', '1') and reload.
@@ -5985,6 +5985,26 @@
       padding: 2px 0 2px 7px;
       line-height: 1.45;
     }
+    .tr-redbtn {
+      cursor: pointer;
+      font-family: var(--mono);
+      font-weight: 700;
+      font-size: 12px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      padding: 11px;
+      border: 1px solid var(--line2);
+      background: var(--elev);
+      color: var(--text);
+      transition: 0.12s;
+    }
+    .tr-redbtn:hover:not(:disabled) {
+      border-color: var(--text);
+    }
+    .tr-redbtn:disabled {
+      opacity: 0.3;
+      cursor: not-allowed;
+    }
     .tr-bebtn,
     .tr-close {
       cursor: pointer;
@@ -6241,7 +6261,6 @@
     .tr-lims[hidden],
     .tr-pacts[hidden],
     .tr-setup[hidden],
-    .tr-setuphdr[hidden],
     .tr-poscard[hidden] {
       display: none;
     }
@@ -6278,37 +6297,6 @@
       display: flex;
       flex-direction: column;
       gap: 10px;
-    }
-    .tr-setuphdr {
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      width: 100%;
-      background: none;
-      border: 1px dashed var(--line2);
-      padding: 7px 10px;
-      font-family: var(--mono);
-      font-size: 10px;
-      color: var(--dim);
-      text-align: left;
-    }
-    .tr-setuphdr:hover {
-      border-color: var(--accent-line);
-      color: var(--text);
-    }
-    .tr-setuphdr .caret {
-      color: var(--faint);
-    }
-    .tr-setuptxt {
-      flex: 1;
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .tr-setuphdr .e {
-      color: var(--accent);
     }
     .tr-sizeq {
       margin-left: auto;
@@ -7534,73 +7522,59 @@
           [riskRoom, riskBy] = [f.equity - floorOf(f), id];
       }
 
-    // In a trade: add chips sized from the open position (+25%, +50%, +100%) and MAX, the largest add that fits both
-    // Vest's buying power and a stop-out above the floor (the stop rebuilt from the new average, fees counted).
-    // An add rebuilds the stop from the new average. A position deep in a loss can put that stop past the price (Vest would
-    // refuse it, or stop the trade out at once): such an add is refused.
-    // A stop the trader moved since the panel placed it stays (as does one tighter than the rebuilt one).
+    // In a trade: the Scale chips size both buttons from the open position: 25%, 50%, 100% of it, or MAX (adds only:
+    // the largest add that fits both Vest's buying power and a stop-out above the floor, fees counted). An add or a
+    // reduce changes the size only: the stop and targets stay where they are (the trader moves them on the chart), so a
+    // stop-out after an add is measured at the stop as it is. Without a stop, only the margin limits an add.
     const heldSl = held && (held.triggers || []).find((x) => x.kind === 'sl');
-    const slMoved = !!heldSl && !panelLeg(held.id, heldSl, meta.tick);
-    const rebuiltStop = (a) => {
-      const dir = held.side === 'long' ? 1 : -1;
-      return (held.qty * held.openPrice + a * price) / (held.qty + a) - dir * +t.stopPts;
-    };
-    const stopKept = (a) =>
-      !!heldSl && (slMoved || (held.side === 'long' ? 1 : -1) * (heldSl.price - rebuiltStop(a)) > meta.tick / 2);
-    const addStop = (a) => (stopKept(a) ? heldSl.price : rebuiltStop(a));
-    const stopThrough = (a) =>
-      !stopKept(a) &&
-      (held.side === 'long'
-        ? addStop(a) >= price - BE_CLEAR_TICKS * meta.tick
-        : addStop(a) <= price + BE_CLEAR_TICKS * meta.tick);
+    const addStop = () => (heldSl ? heldSl.price : null);
     let chips = null,
       pick = null;
-    if (held && price > 0 && +t.stopPts > 0) {
+    if (held && price > 0) {
       const lossFor = (a) =>
-        stopThrough(a)
-          ? Infinity
-          : stopOutLoss({
+        heldSl
+          ? stopOutLoss({
               side: held.side,
               qty: held.qty + a,
               price,
-              stopPrice: addStop(a),
+              stopPrice: heldSl.price,
               openFee: a * price * fee,
               takerFee: fee,
-            });
-      const fits = (a) => (riskRoom === null ? !stopThrough(a) : lossFor(a) < riskRoom);
+            })
+          : null;
+      const fits = (a) => riskRoom === null || !heldSl || lossFor(a) < riskRoom;
       const chip = (key, label, a) => ({
         key,
         label,
         qty: a,
+        // why an ADD of this size can't go (a reduce of it still can)
         why: !(a > 0)
           ? key === 'max'
             ? 'no room'
             : 'too small'
           : maxQty !== null && a > maxQty + meta.step / 2
             ? 'over margin'
-            : stopThrough(a)
-              ? 'stop past price'
-              : !fits(a)
-                ? 'past floor'
-                : null,
+            : !fits(a)
+              ? 'past floor'
+              : null,
       });
-      let best = 0;
-      if (maxQty !== null && maxQty > 0) {
+      let best = maxQty !== null && maxQty > 0 ? maxQty : 0;
+      if (best > 0 && heldSl && riskRoom !== null) {
         let lo = 0,
-          hi = maxQty;
+          hi = best;
         for (let i = 0; i < 40; i++) {
           const mid = (lo + hi) / 2;
           fits(mid) ? (lo = mid) : (hi = mid);
         }
-        best = floorStep(lo, meta.step);
+        best = lo;
       }
       chips = [
-        chip('25', '+25%', floorStep(held.qty * 0.25, meta.step)),
-        chip('50', '+50%', floorStep(held.qty * 0.5, meta.step)),
-        chip('100', '+100%', floorStep(held.qty, meta.step)),
-        chip('max', 'MAX', best),
+        chip('25', '25', floorStep(held.qty * 0.25, meta.step)),
+        chip('50', '50', floorStep(held.qty * 0.5, meta.step)),
+        chip('100', '100', floorStep(held.qty, meta.step)),
+        chip('max', 'MAX', floorStep(best, meta.step)),
       ];
-      pick = chips.find((x) => x.key === S.addPick) || null;
+      pick = chips.find((x) => x.key === (S.addPick || '25')) || chips[0];
     }
     const qty = pick
       ? pick.qty
@@ -7644,7 +7618,7 @@
         side,
         qty: total,
         price,
-        stopPrice: held ? addStop(qty) : avg - dir * (+t.stopPts || 0), // an add keeps a moved or tighter stop
+        stopPrice: held ? addStop() : avg - dir * (+t.stopPts || 0), // an add leaves the stop where it is
         openFee,
         takerFee: fee,
       });
@@ -7653,20 +7627,26 @@
     const sides = { long: outcome('long'), short: outcome('short') };
 
     let error = null;
+    // In a trade the setup (size mode, stop, targets, Auto BE) is for the next new trade: an add is held to its size,
+    // the price and the margin only (it leaves the stop and targets as they are).
+    const fresh = !held;
     if (!master) error = 'Pick a master account (M) first.';
-    else if (t.sizeMode === 'max' && maxQty === null)
+    else if (fresh && t.sizeMode === 'max' && maxQty === null)
       error = price > 0 ? 'Working out the max size…' : 'Waiting for a live price…';
-    else if (t.sizeMode === 'max' && !(maxQty > 0))
+    else if (fresh && t.sizeMode === 'max' && !(maxQty > 0))
       error = `No trading power left on ${accLabel(limitedBy)} for ${meta.label} at ${lev}x.`;
     else if (!(qty > 0))
-      error = t.sizeMode === 'risk' ? 'Risk and stop must be above zero.' : 'Size must be above zero.';
-    else if (split.error) error = split.error;
+      error = held
+        ? 'Too small to add.'
+        : t.sizeMode === 'risk'
+          ? 'Risk and stop must be above zero.'
+          : 'Size must be above zero.';
+    else if (fresh && split.error) error = split.error;
     else if (!(price > 0)) error = 'Waiting for a live price…';
-    else if (long.error) error = long.error;
-    else if (t.beMode === 'points' && !(+t.beTrigger > 0)) error = 'Breakeven trigger must be above zero points.';
-    if (master && pick && pick.why) error = `Add ${pick.label}: ${pick.why}.`;
-    else if (!error && held && held.side && qty > 0 && price > 0 && +t.stopPts > 0 && stopThrough(qty))
-      error = `Adding ${fmtQty(qty, sym)} would rebuild the stop at ${fmtPx(addStop(qty), meta.tick)}, past the price. Use a wider stop or a bigger add.`;
+    else if (fresh && long.error) error = long.error;
+    else if (fresh && t.beMode === 'points' && !(+t.beTrigger > 0))
+      error = 'Breakeven trigger must be above zero points.';
+    if (master && pick && pick.why) error = `Add ${pick.label}%: ${pick.why}.`;
 
     // The allowed range for this account now: where the stop may go and how much can be risked (new positions; an add
     // is held to Vest's max only, since its room depends on the position already open).
@@ -7736,7 +7716,7 @@
       t,
       meta,
       price,
-      addStopAt: held && price > 0 && +t.stopPts > 0 ? addStop(qty > 0 ? qty : 0) : null, // the stop an add leaves
+      pick,
       qty,
       qtys,
       long,
@@ -7782,7 +7762,8 @@
         </div>
         <div class="tr-pacts" id="tr-pacts" hidden>
           <div class="tr-go"><button class="tr-bebtn" id="tr-be">Breakeven</button><button class="tr-close" id="tr-close">Close</button></div>
-          <div class="tr-addrow"><span class="tr-k">Add</span><div class="tr-chips" id="tr-chips"></div></div>
+          <div class="tr-addrow"><span class="tr-k">Scale</span><div class="tr-chips" id="tr-chips"></div></div>
+          <div class="tr-go tr-scale"><button class="tr-buy" id="tr-addbtn">Add</button><button class="tr-redbtn" id="tr-reduce">Reduce</button></div>
           <div class="tr-addpv" id="tr-addpv"></div>
         </div>
         <div class="tr-lims" id="tr-lims">
@@ -7792,7 +7773,6 @@
             <div class="tr-track"><i class="pv" id="tr-rpv"></i><i id="tr-rnow"></i></div></div>
           <div class="tr-tight" id="tr-tight"></div>
         </div>
-        <button class="tr-setuphdr" id="tr-setuphdr" hidden aria-expanded="false"><span class="caret">▸</span><span class="tr-setuptxt" id="tr-setuptxt"></span><span class="e">edit</span></button>
         <div class="tr-setup" id="tr-setup">
           <div class="tr-f"><span class="tr-k">Size</span><div class="tr-row">${seg('sizeMode', [
             ['qty', 'Qty'],
@@ -7890,10 +7870,6 @@
     body.querySelector('#tr-buy').onclick = () => placeTrade('long');
     body.querySelector('#tr-sell').onclick = () => placeTrade('short');
     body.querySelector('#tr-be').onclick = () => breakevenNow();
-    body.querySelector('#tr-setuphdr').onclick = () => {
-      S.setupOpen = !S.setupOpen;
-      updateTrade();
-    };
     body.querySelector('#tr-lbuy').onclick = () => startPick('long');
     body.querySelector('#tr-lsell').onclick = () => startPick('short');
     body.querySelector('#tr-place').onclick = () => placePick();
@@ -7901,6 +7877,11 @@
     const lpx = body.querySelector('#tr-lpx');
     lpx.addEventListener('input', () => setPickPrice(parse(lpx), false));
     body.querySelector('#tr-close').onclick = () => closeNow();
+    body.querySelector('#tr-addbtn').onclick = () => {
+      const h = tradeCalc().held;
+      if (h) placeTrade(h.side); // same direction while holding: an add
+    };
+    body.querySelector('#tr-reduce').onclick = () => reduceNow();
     renderTargets(body);
     followVestMarket();
     watchPrice(t.symbol);
@@ -8084,7 +8065,6 @@
       };
       const res = await send('POST', '/v3/positions/open', master, body);
       if (!res.positionId) throw new Error('Vest returned no position');
-      notePanelLegs(res.positionId, legsOf(body, res));
       const tps = takeProfits
         .map((l, i) => `TP${i + 1} ${l.triggerPrice}${l.quantity ? ' × ' + l.quantity : ''}`)
         .join(' · ');
@@ -8189,332 +8169,27 @@
   // position — the stop and targets re-placed from the new average entry at the panel's points, with the full size split
   // across the targets by the chosen scale. The add and every leg change go through the hooked fetch, so an armed
   // copier adds to each follower (scaled) and moves/resizes their legs to match.
-  // ── Levels the panel placed itself (at entry, re-anchored, or rebuilt by an add), per position, kept across reloads.
-  // An add rebuilds only a stop or target still exactly where the panel last put it: one the trader moved since (on the
-  // chart, with Breakeven, from Vest's positions table, closer or further) stays where it is.
-  const LADDER_KEY = 'vc-ladder',
-    LADDER_MAX = 50;
-  S.ladder = {};
-  function loadLadder() {
-    const v = store.get(LADDER_KEY, {});
-    S.ladder = v && typeof v === 'object' && !Array.isArray(v) ? v : {};
-  }
-  function notePanelLegs(positionId, legs) {
-    if (!positionId) return;
-    const e = (S.ladder[positionId] = S.ladder[positionId] || {});
-    if (!e.legs || typeof e.legs !== 'object') e.legs = {};
-    for (const l of legs) if (l && l.id && +l.price > 0) e.legs[l.id] = +l.price;
-    e.at = Date.now();
-    const old = Object.keys(S.ladder).sort((a, b) => (S.ladder[a].at || 0) - (S.ladder[b].at || 0));
-    old.slice(0, Math.max(0, old.length - LADDER_MAX)).forEach((k) => delete S.ladder[k]);
-    store.set(LADDER_KEY, S.ladder);
-  }
-  // True when this stop or target is still where the panel put it (an add may rebuild it).
-  const panelLeg = (positionId, l, tick) => {
-    const e = S.ladder[positionId],
-      at = e && e.legs && typeof e.legs === 'object' ? +e.legs[l.id] : NaN;
-    return at > 0 && Math.abs(at - l.price) < tick / 2;
-  };
-
   async function addToTrade({ t, qty, meta, side, held, lev, sizing }) {
+    // Vest's own "add to position" order: the position grows, the stop and targets stay where they are (a stop covers
+    // the whole position, so it covers the add too). Armed, the copier adds to each follower, scaled.
     const sym = t.symbol,
       master = S.master,
-      positionId = posIdOf(held),
       prevQty = parseFloat(held.quantity);
     const body = {
       symbol: sym,
-      positionId,
+      positionId: posIdOf(held),
       orderType: 'market',
       quantity: fmtQty(qty, sym),
       leverage: fmtNum(lev, 2),
       isBuy: side === 'long',
       timeInForce: 'IOC',
     };
-    const plan = S.plans[positionId];
-    if (plan) {
-      plan.reanchoring = true;
-      savePlans();
-    } // breakeven holds off until the ladder is rebuilt
-    let res;
-    try {
-      res = await send('POST', '/v3/positions/append', master, body);
-    } catch (e) {
-      if (plan) {
-        plan.reanchoring = false;
-        savePlans();
-      }
-      throw e;
-    }
+    const res = await send('POST', '/v3/positions/append', master, body);
     logEvent(
       'ok',
-      `Trade panel: ADD ${body.quantity} ${meta.label} to the ${side} (${fmtQty(prevQty, sym)} → ${fmtQty(prevQty + qty, sym)}) — rebuilding stop & targets from the new average entry.`,
+      `Trade panel: ADD ${body.quantity} ${meta.label} to the ${side} (${fmtQty(prevQty, sym)} → ${fmtQty(prevQty + qty, sym)}). Stop and targets unchanged.`,
     );
     diag('trade_panel', { outcome: 'added', side, sizing, body, orderId: res.orderId, prevQty });
-    adjust(() =>
-      rebuildLadder({
-        master,
-        sym,
-        side,
-        positionId,
-        orderId: res.orderId,
-        prevQty,
-        prevOpen: parseFloat(held.openPrice),
-        addQty: qty,
-        ref: priceOf(sym),
-        t,
-      }),
-    );
-  }
-
-  // Whatever happens inside, breakeven is released afterwards.
-  async function rebuildLadder(args) {
-    const old = S.plans[args.positionId];
-    try {
-      return await rebuildLadderSteps(args);
-    } finally {
-      if (old && old.reanchoring && S.plans[args.positionId] === old) {
-        old.reanchoring = false;
-        savePlans();
-      }
-    }
-  }
-  async function rebuildLadderSteps({ master, sym, side, positionId, orderId, prevQty, prevOpen, addQty, ref, t }) {
-    const meta = SYMBOLS[sym],
-      tick = meta.tick,
-      step = meta.step,
-      want = prevQty + addQty;
-    const fmtP = (n) => fmtNum(n, decimalsOf(tick)),
-      fmtQ = (n) => fmtQty(n, sym);
-    const old = S.plans[positionId];
-    const release = () => {
-      if (old && S.plans[positionId] === old) {
-        old.reanchoring = false;
-        savePlans();
-      }
-    };
-    let pos = null;
-    for (let i = 0; i < 8; i++) {
-      // wait for the add to show in the position size
-      if (i) await sleep(POLL_MS);
-      pos = await tryOpenPosition(master, sym);
-      if (!pos || parseFloat(pos.quantity) >= want - step / 2) break;
-    }
-    if (!pos) {
-      logEvent('warn', 'Add: the position is gone (closed or stopped out) — nothing to rebuild.');
-      return release();
-    }
-    const total = parseFloat(pos.quantity);
-    if (total < want - step / 2) {
-      logEvent('warn', `Add: Vest didn't fill it (still ${fmtQ(total)}) — stop & targets left as they were.`);
-      diag('add_ladder', { positionId, outcome: 'not-filled', total, want });
-      return release();
-    }
-    // New average entry: the held entry and the add's own fill, weighted. Vest's openPrice is only a fallback.
-    const addFill = await orderFill(master, sym, orderId, ref);
-    let entry =
-      addFill && nearMarket(prevOpen, ref, NEAR_MARKET_LOOSE)
-        ? (prevQty * prevOpen + addQty * addFill) / (prevQty + addQty)
-        : null;
-    if (!entry && nearMarket(parseFloat(pos.openPrice), ref, NEAR_MARKET_LOOSE)) entry = parseFloat(pos.openPrice);
-    if (!entry) {
-      logEvent(
-        'warn',
-        `Add: filled, but couldn't get a believable average entry${pos.openPrice ? ` (Vest showed ${pos.openPrice})` : ''} — check stop & targets on Vest.`,
-      );
-      diag('add_ladder', { positionId, outcome: 'no-entry-price', openPrice: pos.openPrice, prevOpen, addFill, ref });
-      return release();
-    }
-    const exact = planPrices({ side, entry, stopPts: +t.stopPts, targetPts: t.targets, tick });
-    const split = t.targets.length > 1 ? splitQty(total, t.targets.length, t.scale, step) : null;
-    const err =
-      exact.error ||
-      (split && split.error) ||
-      (split && split.qtys.some((q, i) => q * exact.targets[i] < MIN_LEG_USD) && "a target is below Vest's $1 minimum");
-    if (err) {
-      logEvent('warn', `Add: filled, but couldn't rebuild the ladder (${err}) — check stop & targets on Vest.`);
-      return release();
-    }
-
-    // Work out the leg changes: fewer targets → delete the farthest; the stop moves; kept targets are re-priced and
-    // resized (shrinking ones first, so sized legs never add up past the position); extra targets are added.
-    const legs = posLegs(pos),
-      stops = legs.filter((l) => l.kind === 'sl');
-    const tps = legs
-      .filter((l) => l.kind === 'tp')
-      .sort((a, b) => Math.abs(a.price - entry) - Math.abs(b.price - entry));
-    const goal = exact.targets.map((price, i) => ({ price, qty: split ? split.qtys[i] : null }));
-    const n = Math.min(tps.length, goal.length),
-      ops = [];
-    const TP = '/v3/positions/take-profit',
-      SL = '/v3/positions/stop-loss',
-      base = { positionId, executionType: 'market' };
-    tps.slice(n).forEach((l) => ops.push({ m: 'DELETE', path: TP, body: { positionId, takeProfitId: l.id } }));
-    // An add never loosens the stop: one already tighter than the rebuilt one (moved to breakeven, say) stays put.
-    // Nothing is placed past the price now: a rebuilt stop there would be refused or stop the trade out at once (the old
-    // stop stays), and a target there would fill at once (the old target keeps its price, a new one is left out).
-    const nowPx = priceOf(sym) || ref,
-      clear = BE_CLEAR_TICKS * tick;
-    const stopPast = (x) => (side === 'long' ? x >= nowPx - clear : x <= nowPx + clear);
-    const tgtPast = (x) => (side === 'long' ? x <= nowPx + clear : x >= nowPx - clear);
-    let stopAt = exact.stop,
-      keptStop = false,
-      skipped = 0;
-    const moved = new Set(legs.filter((l) => !panelLeg(positionId, l, tick)).map((l) => l.id)); // the trader's levels
-    if (stops[0]) {
-      const st = stops[0];
-      if (moved.has(st.id)) {
-        stopAt = st.price; // moved by hand (or Breakeven) since the panel placed it: it stays
-        keptStop = 'moved';
-      } else if (side === 'long' ? st.price > exact.stop + tick / 2 : st.price < exact.stop - tick / 2) {
-        stopAt = st.price;
-        keptStop = true;
-      } else if (stopPast(exact.stop)) {
-        stopAt = st.price;
-        keptStop = true;
-        skipped++;
-      }
-      if (Math.abs(st.price - stopAt) >= tick / 2 || st.qty != null) {
-        ops.push({
-          m: 'PUT',
-          path: SL,
-          body: {
-            ...base,
-            triggerPrice: fmtP(stopAt),
-            stopLossId: st.id,
-            ...(st.qty != null ? { quantity: fmtQ(total) } : {}),
-          },
-        });
-      }
-    } else if (stopPast(exact.stop)) {
-      stopAt = null;
-      skipped++;
-    } else {
-      ops.push({ m: 'POST', path: SL, body: { ...base, triggerPrice: fmtP(exact.stop) } });
-    }
-    let keptTargets = 0;
-    goal.forEach((g, i) => {
-      if (i < n && moved.has(tps[i].id)) {
-        g.price = tps[i].price; // the trader moved this target: it keeps its price (its size is re-split)
-        keptTargets++;
-        return;
-      }
-      if (!tgtPast(g.price)) return;
-      skipped++;
-      g.price = i < n ? tps[i].price : null; // kept where it was; a new one is left out
-    });
-    const legQty = (l) => (l.qty != null ? parseFloat(l.qty) : total); // a full-position leg covers everything
-    const puts = tps
-      .slice(0, n)
-      .map((l, i) => {
-        const q = goal[i].qty != null ? goal[i].qty : l.qty != null ? total : null;
-        return { l, q, price: goal[i].price, grow: (q != null ? q : total) - legQty(l) };
-      })
-      .filter(
-        (x) => Math.abs(x.l.price - x.price) >= tick / 2 || (x.q != null && Math.abs(legQty(x.l) - x.q) >= step / 2),
-      )
-      .sort((a, b) => a.grow - b.grow);
-    puts.forEach((x) =>
-      ops.push({
-        m: 'PUT',
-        path: TP,
-        body: {
-          ...base,
-          triggerPrice: fmtP(x.price),
-          takeProfitId: x.l.id,
-          ...(x.q != null ? { quantity: fmtQ(x.q) } : {}),
-        },
-      }),
-    );
-    goal
-      .slice(n)
-      .filter((g) => g.price != null)
-      .forEach((g) =>
-        ops.push({
-          m: 'POST',
-          path: TP,
-          body: { ...base, triggerPrice: fmtP(g.price), ...(g.qty != null ? { quantity: fmtQ(g.qty) } : {}) },
-        }),
-      );
-
-    let failed = 0;
-    for (const o of ops) {
-      try {
-        await send(o.m, o.path, master, o.body);
-      } catch (e) {
-        failed++;
-        logEvent('warn', `Add: a ${o.path.endsWith('stop-loss') ? 'stop' : 'target'} change failed (${e.message}).`);
-      }
-    }
-    if (skipped)
-      logEvent(
-        'warn',
-        `Add: ${skipped} stop/target level${skipped > 1 ? 's' : ''} would have been past the price (${fmtP(nowPx)}) — left as ${skipped > 1 ? 'they were' : 'it was'}. Check the ladder on Vest.`,
-      );
-    if (failed) logEvent('warn', 'Add: some stop/target changes failed — check the ladder on Vest.');
-    else
-      logEvent(
-        'ok',
-        `Added — ${fmtQ(total)} @ avg ${fmtP(entry)} · stop ${stopAt == null ? 'none' : fmtP(stopAt)}${keptStop === 'moved' ? ' (kept where you moved it)' : keptStop && !skipped ? ' (kept: tighter than a rebuilt one)' : ''} · ${goal
-          .filter((g) => g.price != null)
-          .map((g, i) => `TP${i + 1} ${fmtP(g.price)}${g.qty != null ? ' × ' + fmtQ(g.qty) : ''}`)
-          .join(
-            ' · ',
-          )}${keptTargets ? ` · ${keptTargets} target${keptTargets > 1 ? 's' : ''} kept where you moved ${keptTargets > 1 ? 'them' : 'it'}` : ''}`,
-      );
-    const after = await tryOpenPosition(master, sym, positionId);
-    if (after)
-      notePanelLegs(
-        positionId,
-        posLegs(after).filter((l) => !moved.has(l.id)),
-      );
-    diag('add_ladder', {
-      positionId,
-      outcome: failed ? 'partial' : 'rebuilt',
-      total,
-      entry,
-      stop: stopAt,
-      keptStop,
-      keptTargets,
-      skipped,
-      targets: goal,
-      ops: ops.map((o) => o.m + ' ' + o.path.split('/').pop()),
-      failed,
-    });
-
-    // breakeven follows the panel's setting, measured from the new average entry
-    if (t.beMode === 'off') {
-      if (old && S.plans[positionId] === old) endPlan(old, 'Breakeven: off for this trade now (Trade tab setting).');
-      return;
-    }
-    // a kept stop already at or past breakeven of the new average: breakeven is done for this trade
-    const beNew = breakevenPrice({ side, entry, offsetPts: +t.beOffset || 0, tick });
-    if (keptStop && stopAt != null && (side === 'long' ? stopAt >= beNew - tick / 2 : stopAt <= beNew + tick / 2)) {
-      if (old && S.plans[positionId] === old)
-        endPlan(old, `Breakeven: the stop (${fmtP(stopAt)}) is already at or past breakeven for the new average.`);
-      return;
-    }
-    const fresh = await tryOpenPosition(master, sym);
-    const stopLegId =
-      ((fresh && posLegs(fresh)) || []).filter((l) => l.kind === 'sl').map((l) => l.id)[0] ||
-      (stops[0] && stops[0].id) ||
-      null;
-    addPlan({
-      positionId,
-      orderId: null,
-      master,
-      symbol: sym,
-      side,
-      stopLegId,
-      tp1: exact.targets[0],
-      beMode: t.beMode,
-      beTrigger: +t.beTrigger || 0,
-      beOffset: +t.beOffset || 0,
-      entry,
-      triggered: false,
-      moved: false,
-      reanchoring: false,
-      at: Date.now(),
-    });
   }
 
   // ── Re-anchor after fill (always). The order's stop and targets are computed from the live price at the click.
@@ -8601,7 +8276,6 @@
           triggerPrice: fmt(m.to),
           [isStop ? 'stopLossId' : 'takeProfitId']: m.id,
         });
-        notePanelLegs(positionId, [{ id: m.id, price: m.to }]);
       } catch (e) {
         failed++;
         logEvent(
@@ -8863,6 +8537,52 @@
     } catch (e) {
       logEvent('warn', `Close: not sent — ${e.message}.`);
       diag('trade_panel', { outcome: 'close-failed', error: e.message, errorCode: errCode(e) });
+    } finally {
+      S.placing = false;
+      updateTrade();
+      refreshTradeState();
+    }
+  }
+
+  // Scale out: take the picked share (25 or 50%) off the master's position at market, with Vest's own reduce order (the
+  // body its close window sends). 100% is a close. The stop and targets stay where they are. It goes through the hooked
+  // fetch, so an armed copier reduces each follower by the same share of its own position.
+  async function reduceNow() {
+    if (S.placing || S.adjusting || S.flattening || S.arming) return;
+    const key = S.addPick || '25';
+    if (key === 'max') return;
+    if (key === '100') return closeNow();
+    const master = S.master,
+      sym = S.trade.symbol,
+      meta = SYMBOLS[sym];
+    if (!master) return;
+    S.placing = true;
+    updateTrade();
+    try {
+      const pos = await openPosition(master, sym);
+      if (!pos) throw new Error(`${accLabel(master)} has no open ${meta.label} position`);
+      const have = parseFloat(pos.quantity),
+        q = floorStep(have * (key === '50' ? 0.5 : 0.25), meta.step);
+      if (!(q > 0)) throw new Error(`${key}% of ${fmtQty(have, sym)} rounds to nothing at ${meta.label}'s size step`);
+      const lev = orderLeverage(levFor(await fetchLeverages(), master, sym), maxLeverageFor(sym, master));
+      const body = {
+        positionId: posIdOf(pos),
+        orderType: 'market',
+        leverage: fmtNum(lev, 2),
+        quantity: fmtQty(q, sym),
+        timeInForce: 'IOC',
+        reduceOnly: true,
+        symbol: sym,
+      };
+      await send('POST', '/v3/positions/reduce', master, body);
+      logEvent(
+        'ok',
+        `Trade panel: REDUCE ${body.quantity} ${meta.label} (${fmtQty(have, sym)} → ${fmtQty(have - q, sym)})${S.armed ? ' — the copier reduces the followers' : ''}. Stop and targets unchanged.`,
+      );
+      diag('trade_panel', { outcome: 'reduced', positionId: body.positionId, quantity: body.quantity, prevQty: have });
+    } catch (e) {
+      logEvent('warn', `Reduce: not sent — ${e.message}.`);
+      diag('trade_panel', { outcome: 'reduce-failed', error: e.message, errorCode: errCode(e) });
     } finally {
       S.placing = false;
       updateTrade();
@@ -9242,21 +8962,12 @@
     });
     $('tr-betrigw').style.display = c.t.beMode === 'points' ? '' : 'none';
     body.querySelector('.tr-be').style.display = c.t.beMode === 'off' ? 'none' : '';
-    // in a trade the setup folds into one line (open it to change how an add rebuilds)
+    // in a trade the setup (size, stop, targets, Auto BE for a new trade) is put away: Scale and the trade's own
+    // stop and targets apply
     const held = !!c.held;
-    $('tr-setuphdr').hidden = !held;
-    $('tr-setup').hidden = held && !S.setupOpen;
-    $('tr-setuphdr').setAttribute('aria-expanded', String(held && !!S.setupOpen));
-    $('tr-setuphdr').querySelector('.caret').textContent = S.setupOpen ? '▾' : '▸';
+    $('tr-setup').hidden = held;
     $('tr-lims').hidden = held;
     $('tr-pacts').hidden = !held;
-    if (held) {
-      const be = { off: 'BE off', tp1: 'BE after TP1', points: `BE at +${c.t.beTrigger}` }[c.t.beMode] || '';
-      set(
-        'tr-setuptxt',
-        `Setup · stop ${c.t.stopPts} · TP ${c.t.targets.join('/')} · ${c.t.scale[0].toUpperCase() + c.t.scale.slice(1)} · ${be}`,
-      );
-    }
     $('tr-sum').innerHTML =
       c.qty > 0 && c.qtys.length
         ? `${c.held ? 'This add · ' : ''}Risk <b>${fmtUsd(c.risk)}</b>${c.fees > 0 ? ` + ${fmtUsd(c.fees)} fees` : ''} · Reward <b>${fmtUsd(c.reward)}</b> · <b>${c.risk > 0 ? (c.reward / c.risk).toFixed(2) : '—'}R</b>`
@@ -9322,7 +9033,7 @@
     // limits: a new trade only, so the limit row shows when flat; while picking, the pick replaces both rows
     if (h && S.pick) stopPick(true);
     const pk = S.pick;
-    $('tr-mgo').hidden = !!pk;
+    $('tr-mgo').hidden = !!pk || !!h; // in a trade, ADD and REDUCE sit under the Scale chips
     $('tr-lgo').hidden = !!h || !!pk;
     $('tr-lbuy').disabled = $('tr-lsell').disabled = !!c.error || !!c.blocked || busy;
     $('tr-pick').hidden = !pk;
@@ -9395,14 +9106,17 @@
       $('tr-be').title = be.why || `Move the stop to ${fmtPx(be.price, tick)}, your average entry`;
       $('tr-close').textContent = `Close ${fmtQty(h.qty, h.symbol)}`;
       $('tr-close').disabled = busy;
-      // add chips: a click picks one, a second click goes back to the Size field
-      // (chips are sized from the open position; a picked chip again goes back to the Size field)
+      // Scale chips: a share of the position (or MAX, adds only) that sizes both ADD and REDUCE; one is always picked
+      const key = (c.pick && c.pick.key) || '25',
+        step = c.meta.step;
+      const redQ = key === '100' ? h.qty : key === 'max' ? 0 : floorStep(h.qty * (key === '50' ? 0.5 : 0.25), step);
       const chipsHtml = (c.chips || [])
-        .map(
-          (x) =>
-            `<button class="tr-chip${S.addPick === x.key ? ' on' : ''}${x.why ? ' no' : ''}" data-add="${x.key}" ${busy || (x.why && S.addPick !== x.key) ? 'disabled' : ''}
-              title="${x.why ? esc(x.label + ': ' + x.why) : esc(`Add ${fmtQty(x.qty, h.symbol)}`)}"><b>${x.label}</b><span>${esc(x.why || fmtQty(x.qty, h.symbol))}</span></button>`,
-        )
+        .map((x) => {
+          const off = x.key === 'max' ? 'adds only' : `reduce ${fmtQty(x.key === '100' ? h.qty : x.qty, h.symbol)}`;
+          const tip = `${x.label === 'MAX' ? 'MAX' : x.label + '%'}: add ${fmtQty(x.qty, h.symbol)}${x.why ? ` (${x.why})` : ''} · ${off}`;
+          return `<button class="tr-chip${key === x.key ? ' on' : ''}${x.why ? ' no' : ''}" data-add="${x.key}" ${busy ? 'disabled' : ''}
+              title="${esc(tip)}"><b>${x.label}</b><span>${esc(x.why || fmtQty(x.qty, h.symbol))}</span></button>`;
+        })
         .join('');
       const box = $('tr-chips');
       if (box.dataset.html !== chipsHtml) {
@@ -9411,11 +9125,28 @@
         box.querySelectorAll('[data-add]').forEach(
           (b) =>
             (b.onclick = () => {
-              S.addPick = S.addPick === b.dataset.add ? null : b.dataset.add;
+              S.addPick = b.dataset.add;
               updateTrade();
             }),
         );
       }
+      const addBtn = $('tr-addbtn'),
+        redBtn = $('tr-reduce');
+      addBtn.className = h.side === 'long' ? 'tr-buy' : 'tr-sell';
+      addBtn.textContent = c.qty > 0 ? `Add ${fmtQty(c.qty, h.symbol)}` : 'Add';
+      addBtn.disabled = busy || !!c.error || !!c.blocked || !(c.qty > 0);
+      addBtn.title =
+        c.pick && c.pick.why
+          ? `Add: ${c.pick.why}`
+          : `Add ${fmtQty(c.qty, h.symbol)} to the ${h.side}${S.armed ? ' (the copier adds to each follower, scaled)' : ''}. The stop and targets stay where they are.`;
+      redBtn.textContent = key === '100' ? 'Reduce all' : redQ > 0 ? `Reduce ${fmtQty(redQ, h.symbol)}` : 'Reduce';
+      redBtn.disabled = busy || key === 'max' || !(redQ > 0);
+      redBtn.title =
+        key === 'max'
+          ? 'MAX is for adds: pick 25, 50 or 100 to reduce'
+          : key === '100'
+            ? `Close the whole ${fmtQty(h.qty, h.symbol)}${S.armed ? ' (the copier closes the followers)' : ''}`
+            : `Take ${fmtQty(redQ, h.symbol)} off at market${S.armed ? ' (the copier reduces each follower by the same share)' : ''}. The stop and targets stay where they are.`;
       const addQ = c.qty > 0 ? c.qty : 0,
         tot = h.qty + addQ;
       const avgA = tot > 0 ? (h.qty * h.openPrice + addQ * c.price) / tot : 0;
@@ -9426,19 +9157,18 @@
       const addTxt = fmtQty(addQ, h.symbol);
       let pvHtml = '',
         pvTitle = '';
-      if (S.adjusting) pvHtml = '<span>Adjusting stop &amp; targets…</span>';
-      else if (c.error) [pvHtml, pvTitle] = [`<span class="warn">${esc(c.error)}</span>`, c.error];
+      if (c.error) [pvHtml, pvTitle] = [`<span class="warn">${esc(c.error)}</span>`, c.error];
       else if (c.blocked) {
         const max = fmtQty(c.maxQty, c.t.symbol);
         pvHtml = `<span class="hot">Add ${esc(addTxt)}: over ${esc(accLabel(c.limitedBy))}'s max (${esc(max)})</span>`;
         pvTitle = `Add ${addTxt}: more than ${accLabel(c.limitedBy)} can open (max ${max}). Pick a smaller add.`;
-      } else if (c.warnings.length && o) {
+      } else if (c.warnings.length && o && o.loss > 0) {
         pvHtml = `<span class="warn">Add ${esc(addTxt)}: stop-out ${fmtUsd(o.loss)}, ${fmtUsd(o.room)} left</span>`;
         pvTitle = `Add ${addTxt}: a stop-out after it would lose about ${fmtUsd(o.loss)} with fees, more than the ${fmtUsd(o.room)} left to the floor.`;
       } else if (addQ > 0 && c.price > 0) {
-        pvHtml = `<span>→ <b>${fmtQty(tot, h.symbol)}</b> · avg <b>${fmtPx(avgA, tick)}</b></span>${o ? `<span>stop-out <b>${fmtUsd(o.loss)}</b></span>` : ''}`;
+        pvHtml = `<span>→ <b>${fmtQty(tot, h.symbol)}</b> · avg <b>${fmtPx(avgA, tick)}</b></span>${o && o.loss > 0 ? `<span>stop-out <b>${fmtUsd(o.loss)}</b></span>` : ''}`;
         pvTitle =
-          'After this add: new size and average. The stop and targets rebuild from the new average (a tighter stop is kept).';
+          'After this add: the new size and average, and what a stop-out would then cost. The stop and targets stay where they are.';
       }
       if ($('tr-addpv').dataset.html !== pvHtml) $('tr-addpv').innerHTML = $('tr-addpv').dataset.html = pvHtml;
       $('tr-addpv').title = pvTitle;
@@ -9472,43 +9202,7 @@
       set('lb-mk', px(c.price));
       $('tr-failrow').hidden = $('tr-passrow').hidden = true; // measured from the mark: not for a resting limit
     } else if (h2) {
-      // in a trade: the levels an add would leave, rebuilt from the new average; Vest's chart shows the current ones
-      const addQ = c.qty > 0 ? c.qty : 0,
-        total = h2.qty + addQ,
-        avg = (h2.qty * h2.openPrice + addQ * c.price) / total;
-      const lv = planPrices({
-        side: h2.side,
-        entry: avg,
-        stopPts: +c.t.stopPts,
-        targetPts: c.t.targets.map(Number),
-        tick: c.meta.tick,
-      });
-      // targets the trader moved keep their price, as the add's rebuild leaves them (nearest first, as it pairs them)
-      const movedTp = (h2.triggers || [])
-        .filter((l) => l.kind === 'tp')
-        .sort((a, b) => Math.abs(a.price - avg) - Math.abs(b.price - avg))
-        .map((l) => (panelLeg(h2.id, l, c.meta.tick) ? null : l.price));
-      c.t.targets.forEach((_, i) => set('lb-t' + i, px(movedTp[i] || (lv.targets && lv.targets[i]))));
-      const stopAt = c.addStopAt != null ? c.addStopAt : lv.stop;
-      set('lb-stop', px(stopAt));
-      set('lb-entry', px(avg));
-      set('tr-entry', addQ ? `Avg after add · ${fmtQty(total, c.t.symbol)}` : `Avg · ${fmtQty(total, c.t.symbol)}`);
-      set('tr-stopq', fmtQty(total, c.t.symbol));
-      // the rebuilt ladder covers the whole position: its sizes and dollars, not the add's
-      const all = splitQty(total, c.t.targets.length, c.t.scale, c.meta.step).qtys || [];
-      c.t.targets.forEach((p, i) => {
-        set('tq' + i, all[i] ? fmtQty(all[i], c.t.symbol) : '—');
-        set('tg' + i, all[i] ? '+' + fmtUsd(all[i] * (+p || 0) * c.meta.pointValue) : '');
-      });
-      set('tr-stopcalc', stopAt > 0 ? `−${fmtUsd(total * Math.abs(avg - stopAt) * c.meta.pointValue)}` : '');
-      const pts = (h2.side === 'long' ? 1 : -1) * (c.price - h2.openPrice);
-      set('tr-mk', `Price · ${pts >= 0 ? '+' : '−'}${fmtNum(Math.abs(pts), decimalsOf(c.meta.tick))} pts`);
-      set('lb-mk', px(c.price));
-      const o = c.sides[h2.side];
-      set('lb-fail', px(o && o.fail));
-      set('lb-pass', px(o && o.pass));
-      $('tr-failrow').hidden = !ok || !(o && o.fail);
-      $('tr-passrow').hidden = !ok || !(o && o.pass);
+      // in a trade the ladder (part of the setup for a new trade) is put away: the trade keeps its own stop and targets
     } else {
       c.t.targets.forEach((_, i) => {
         set('lb-t' + i, px(c.long.targets && c.long.targets[i]));
@@ -10455,7 +10149,6 @@
     _root = buildPanel();
     setOpen(S.dock.open || !S.ack); // a first run opens fully, for the risk terms
     loadPlans();
-    loadLadder();
     renderHealth();
     renderLog();
     refresh();

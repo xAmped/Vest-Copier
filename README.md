@@ -24,7 +24,7 @@ steps), the [tutorial](https://xamped.github.io/Vest-Copier/tutorial/) or the
   <tr valign="top">
     <td><img src="docs/tutorial/img/accounts.png" alt="Accounts tab: the master on top and two followers, armed" width="250"><br><sub>Master on top, followers below.</sub></td>
     <td><img src="docs/tutorial/img/trade.png" alt="Trade tab: margin and risk bars and the price ladder" width="250"><br><sub>Bars up top, one price ladder.</sub></td>
-    <td><img src="docs/tutorial/img/trade-in.png" alt="In a trade: Breakeven, Close and the add chips" width="250"><br><sub>Breakeven, Close and add.</sub></td>
+    <td><img src="docs/tutorial/img/trade-in.png" alt="In a trade: Breakeven, Close, the Scale chips, Add and Reduce" width="250"><br><sub>Breakeven, Close, scale in and out.</sub></td>
   </tr>
 </table>
 
@@ -80,8 +80,8 @@ You need a desktop browser (Chrome, Edge, Brave or Firefox). Five steps, about f
   the right, points in the middle.
 - **Sizing:** contracts, dollars at risk, or the max the account allows.
 - **Limit orders:** click Vest's chart for the price, then Place.
-- **In a trade:** Breakeven, Close, and add buttons (+25%, +50%, +100% or the most that fits). Adding keeps any stop
-  or target you moved yourself.
+- **In a trade:** Breakeven, Close, and scaling in or out: pick 25, 50 or 100% of the position (or MAX, the most you
+  can add), then Add or Reduce. Your stop and targets stay where they are.
 
 Along the bottom of the panel: **ARM / DISARM**, a red **Flatten All** that closes everything on every account at once
 (no confirmation, and the copier stays armed, so it doubles as a quick exit), and the activity log folded to its latest
@@ -94,8 +94,7 @@ line. The bottom right shows Vest's build, your version and the API budget.
 - It won't copy an order Vest rejected on the master.
 - It won't copy closes Vest makes by itself, such as a stop filling or a drawdown breach on the master. The log tells
   you what Vest did, and a follower still in the trade a few seconds later gets a Flatten / Keep prompt.
-- It won't undo your own changes when you add: a stop or target you moved (closer, further, or to breakeven) stays
-  where you put it, the rest rebuild from the new average, and it won't place a stop or target past the price.
+- It won't move your stop or targets when you add or reduce. Move them yourself on the chart.
 - It won't let you change the master, followers or Cap-to-fit while armed, or arm in a second Vest tab while one is
   already armed. Disarm first.
 - It won't arm right after Vest changes its website until you've run the quick read-only check (click the status in

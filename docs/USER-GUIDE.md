@@ -199,26 +199,23 @@ copy every order like any other master order.
 
 **In a trade.** The position becomes the screen: a card with side, size, live P&L, average entry and how many accounts
 are in it, chips showing where your stop and targets sit on Vest (the stop with what it makes or loses from your
-average), and a risk bar for what's left before your floor. The setup folds into one line ("Setup · stop 20 · TP
-20/40/60 …"); click it to change how an add rebuilds. Warnings then speak about the next add in one short line ("Add
-0.5: more than Account 53 can open"), since your open position is already placed.
+average), and a risk bar for what's left before your floor. The setup for a new trade (size, stop, targets, Auto BE) is put away
+until you're flat again.
 
 - **Breakeven** moves the stop to your **average entry** (an average between ticks rounds toward profit to the nearest
   tick, so it never locks a loss). It's offered once price is 4 ticks clear of the entry, since Vest refuses a stop
   the bid or ask has already passed; hover it for the reason when it's grey.
 - **Close** closes the master's position; armed, the copier closes the followers.
-- **Add:** the button for your direction becomes **Add**, with chips **+25%**, **+50%**, **+100%** of your position
-  or **MAX**, the largest add that fits Vest's buying power and keeps a stop-out above the floor. A chip that wouldn't
-  fit is greyed with the reason ("over margin", "past floor", or "stop past price" when the position is so far in a loss
-  that the rebuilt stop would sit beyond the price). Click a picked chip again to go back to your Size. A
-  preview shows the new total, average and stop-out cost.
-- An add uses Vest's own "add to position" order, which followers copy, scaled. The targets are then rebuilt as **one
-  ladder for the whole position**, measured from the **new average entry**, with the full size re-split by your scale
-  setting, and breakeven is re-measured from it too. **Your own changes stay:** a stop or target you moved since the
-  panel placed it (on the chart, with Breakeven, from Vest's positions table, closer or further) keeps its price; only
-  its size is re-split. A stop the panel placed is rebuilt, but never loosened: one already tighter than the rebuilt one
-  stays. Nothing is placed past the price: a target the price has already passed keeps its old level. While you're in, the ladder shows the levels the add would
-  leave, with a live **Price** row.
+- **Scale in or out:** pick **25**, **50** or **100**% of your position, or **MAX**, then **Add** or **Reduce** right
+  under the chips.
+  - **Add** grows the position by that share (MAX = the largest add that fits Vest's buying power and keeps a
+    stop-out above the floor). A chip that can't be added shows why ("over margin", "past floor"), and the line under
+    the buttons shows the new size, average and stop-out cost.
+  - **Reduce** takes that share off at market (100 = all of it, like Close; MAX is for adds only).
+  - Both use Vest's own orders ("add to position" and "reduce"), and armed, the copier does the same to each follower,
+    by the same share of its own position.
+- **Your stop and targets stay exactly where they are** when you add or reduce, including a stop you moved to
+  breakeven. A stop covers the whole position, whatever its size. To move them, drag them on Vest's chart.
 - The other direction is replaced by Close: the panel doesn't reverse a position in one click.
 
 ## 7. Settings
