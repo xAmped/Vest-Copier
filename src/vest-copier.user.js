@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vest Copier
 // @namespace    vestcopier
-// @version      0.35.1
+// @version      0.35.2
 // @description  Copies a master Vest account's trades to your other Vest accounts, live, and adds a points-based order panel.
 // @author       xAmped
 // @license      STRATUH Copier License — free to use, no selling; see LICENSE
@@ -22,7 +22,7 @@
   if (window.__vestCopier) return;
   window.__vestCopier = true;
 
-  const VERSION = '0.35.1';
+  const VERSION = '0.35.2';
   const API = 'https://api-gateway.hz.vestmarkets.com';
   const _fetch = window.fetch.bind(window);
   // Console echo of the activity log, for troubleshooting: localStorage.setItem('vc-debug', '1') and reload.
@@ -6532,6 +6532,11 @@
     [data-act='dock']:not(.active) .unpin {
       display: inline;
     }
+    /* docked, but floating for now: the chart is too small to hold the panel */
+    [data-act='dock'].active.auto {
+      color: var(--warn);
+      border-color: var(--warn-line);
+    }
   `;
 
   // STRATUH logo: the five-bar profile mark (lime point of control) and the "stratuh" wordmark (Instrument Sans,
@@ -6776,8 +6781,10 @@
   const HDR_FULL_W = 350; // narrower than this, the header leaves out the "COPIER" label
   const DOCK_INSET = 6, // px kept between the panel and the chart's edges (and the window's)
     DRAG_PX = 4, // a press on the pill that moves less than this is a click
-    CHART_MIN_W = 400, // a chart smaller than this isn't docked into (it couldn't hold the panel)
-    CHART_MIN_H = 300;
+    CHART_MIN_W = 400, // a frame smaller than this isn't Vest's chart
+    CHART_MIN_H = 300,
+    DOCK_MIN_W = 520, // a chart area narrower or shorter than this (Vest's stacked layout in a small window) can't hold
+    DOCK_MIN_H = 440; // the panel without squashing it: it floats until the chart is big enough, then docks back
   let _dragging = false,
     _placeKey = '';
   const clampPx = (v, lo, hi) => Math.max(lo, Math.min(hi, v)) || lo;
@@ -6819,9 +6826,21 @@
     }
     return { left: r.left + left, top: r.top + top, right: r.right, bottom: r.bottom };
   }
+  // The chart area to dock into: none when floating, when there's no chart, or when the chart is too small to hold the
+  // panel (then it floats on its own until the chart is big enough: `_autoFloat`).
+  let _autoFloat = false;
+  function dockZone() {
+    const z = S.dock && S.dock.docked ? chartZone() : null;
+    const small = !!z && (z.right - z.left < DOCK_MIN_W || z.bottom - z.top < DOCK_MIN_H);
+    if (small !== _autoFloat) {
+      _autoFloat = small;
+      setTimeout(renderDock, 0);
+    }
+    return small ? null : z;
+  }
   // Where the panel may be: inside the chart when docked on a page with one, else inside the window.
   function placeBounds() {
-    const z = S.dock && S.dock.docked ? chartZone() : null;
+    const z = dockZone();
     const box = z || { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight, window: true };
     return {
       l: box.left + DOCK_INSET,
@@ -6847,7 +6866,7 @@
     // its spot: from the chart's corner when docked, else in the window (the first time: top right, as before)
     const want = B.zone
       ? { x: B.zone.left + (d.at ? d.at.x : DOCK_INSET), y: B.zone.top + (d.at ? d.at.y : DOCK_INSET) }
-      : d.free || { x: window.innerWidth - width - 16, y: 16 };
+      : d.free || (_autoFloat ? { x: DOCK_INSET, y: DOCK_INSET } : { x: window.innerWidth - width - 16, y: 16 });
     const x = clampPx(want.x, B.l, B.r - width);
     let y;
     if (!open) {
@@ -6867,7 +6886,7 @@
     const panel = _root && _root.querySelector('.panel');
     if (!panel) return;
     const r = panel.getBoundingClientRect(),
-      z = S.dock.docked ? chartZone() : null;
+      z = dockZone();
     if (z) S.dock.at = { x: Math.round(r.left - z.left), y: Math.round(r.top - z.top) };
     else S.dock.free = { x: Math.round(r.left), y: Math.round(r.top) };
     saveDock();
@@ -6912,9 +6931,12 @@
     const pin = _root.querySelector('[data-act="dock"]');
     pin.classList.toggle('active', S.dock.docked);
     pin.setAttribute('aria-pressed', String(S.dock.docked));
-    pin.title = S.dock.docked
-      ? 'Docked on the chart: click to float it anywhere'
-      : 'Floating: click to dock it on the chart';
+    pin.classList.toggle('auto', S.dock.docked && _autoFloat);
+    pin.title = !S.dock.docked
+      ? 'Floating: click to dock it on the chart'
+      : _autoFloat
+        ? 'The chart is too small to hold the panel, so it floats until the chart is bigger. Click to float it for good.'
+        : 'Docked on the chart: click to float it anywhere';
     pin.setAttribute('aria-label', S.dock.docked ? 'Detach from the chart' : 'Dock on the chart');
     const red =
       !!(S.orphan && S.orphan.list.length) || (S.armed && !feedLive() && Date.now() - _bootAt > FEED_QUIET_MS / 5);

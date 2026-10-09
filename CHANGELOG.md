@@ -2,6 +2,9 @@
 
 Newest first. To update, click **Install** on the green bar that appears in the panel whenever there's a newer version.
 
+## v0.35.2
+- **Small windows:** when Vest's chart gets too small to hold the panel (Vest stacks its layout in a small window), the panel floats on its own, at your floating spot or the top left of the window, at full height. When the chart is big enough again it docks back by itself. The pin shows amber while it's floating this way.
+
 ## v0.35.1
 - **The panel shows on Vest's Trade page only** (Settings → Chart, on by default). On Portfolio, Markets, Affiliate and Vest's other pages it's hidden but keeps running: copying, the live feed and breakeven carry on. It still appears on any page when something needs you, such as followers waiting on Flatten / Keep.
 

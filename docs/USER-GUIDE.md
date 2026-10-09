@@ -58,7 +58,9 @@ their own browser.
 **Where it sits.** The panel is docked on Vest's chart: it starts on the left, just right of the chart's drawing
 tools, and stays inside the chart whatever you resize (the window, Vest's order book or its positions list). Drag the header
 to move it; drag the bottom-right corner to resize. Its spot is remembered relative to the chart. Click the **pin** to
-float it anywhere in the window instead, and again to dock it back. On a Vest page without a chart it floats.
+float it anywhere in the window instead, and again to dock it back. On a Vest page without a chart it floats. In a
+small window, where Vest stacks its layout and the chart gets too small to hold the panel, it floats on its own (top
+left by default, or your floating spot) and docks back when the chart is big enough; the pin shows amber meanwhile.
 Vest's menus and dialogs (market selector, Add Account, settings) open above the panel. The chart's own menus
 (timeframe, chart settings, indicators) are drawn inside the chart, so the panel fades out of their way while one is
 open over it.
