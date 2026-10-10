@@ -296,89 +296,93 @@
     mirror(action, req, res, method);
   };
 
-  // fetch
-  window.fetch = function (input, init) {
-    const url = typeof input === 'string' ? input : (input && input.url) || '';
-    let auth = null;
-    try {
-      auth = new Headers((init && init.headers) || (input && input.headers) || {}).get('authorization');
-    } catch {
-      /* best effort: nothing to do if this fails */
-    }
-    const method = ((init && init.method) || (input && input.method) || 'GET').toUpperCase();
-    const body = init && init.body;
-    let pending = null;
-    try {
-      if (method === 'POST') pending = maybeFastOpen(url, body, auth);
-    } catch {
-      /* best effort: nothing to do if this fails */
-    }
-    try {
-      offerUser(auth);
-      if (method !== 'GET') notePageRequest(url, method, body);
-    } catch {
-      /* best effort: nothing to do if this fails */
-    }
-    const p = _fetch.apply(this, arguments);
-    // Only order requests are read back (never other responses, which may be long-lived streams).
-    if (pending || (auth && orderAction(url))) {
-      p.then(
-        (r) =>
-          r
-            .clone()
-            .text()
-            .then(
-              (t) => (pending ? reconcileFast(pending, t, r.status) : onRequest(url, body, t, auth, method, r.status)),
-              () => pending && reconcileFast(pending, null, r.status, true),
-            ),
-        () => pending && reconcileFast(pending, null, 0), // network failure: Vest may or may not have the order
-      );
-    }
-    return p;
-  };
-  // XHR
-  const _open = XMLHttpRequest.prototype.open,
-    _send = XMLHttpRequest.prototype.send,
-    _setH = XMLHttpRequest.prototype.setRequestHeader;
-  XMLHttpRequest.prototype.open = function (m, u) {
-    this.__vc = { url: u, method: String(m || 'GET').toUpperCase() };
-    return _open.apply(this, arguments);
-  };
-  XMLHttpRequest.prototype.setRequestHeader = function (k, v) {
-    if (/^authorization$/i.test(k)) {
-      if (this.__vc) this.__vc.auth = v;
-      offerUser(v);
-    }
-    return _setH.apply(this, arguments);
-  };
-  XMLHttpRequest.prototype.send = function (b) {
-    const vc = this.__vc;
-    if (vc) {
-      let pending = null;
+  // Wrap the page's fetch and XHR, at document-start, before Vest's own code makes a request.
+  function installRequestHooks() {
+    // fetch
+    window.fetch = function (input, init) {
+      const url = typeof input === 'string' ? input : (input && input.url) || '';
+      let auth = null;
       try {
-        pending = vc.method === 'POST' ? maybeFastOpen(vc.url, b, vc.auth) : null;
-        if (vc.method !== 'GET') notePageRequest(vc.url, vc.method, b);
+        auth = new Headers((init && init.headers) || (input && input.headers) || {}).get('authorization');
       } catch {
         /* best effort: nothing to do if this fails */
       }
-      this.addEventListener(
-        'loadend',
-        () => {
-          // once per request; also fires on error/abort/timeout
-          let r = '';
-          try {
-            r = this.responseText;
-          } catch {
-            /* best effort: nothing to do if this fails */
-          }
-          if (pending) reconcileFast(pending, r, this.status);
-          else onRequest(vc.url, b, r, vc.auth, vc.method, this.status);
-        },
-        { once: true },
-      );
-    }
-    return _send.apply(this, arguments);
-  };
+      const method = ((init && init.method) || (input && input.method) || 'GET').toUpperCase();
+      const body = init && init.body;
+      let pending = null;
+      try {
+        if (method === 'POST') pending = maybeFastOpen(url, body, auth);
+      } catch {
+        /* best effort: nothing to do if this fails */
+      }
+      try {
+        offerUser(auth);
+        if (method !== 'GET') notePageRequest(url, method, body);
+      } catch {
+        /* best effort: nothing to do if this fails */
+      }
+      const p = _fetch.apply(this, arguments);
+      // Only order requests are read back (never other responses, which may be long-lived streams).
+      if (pending || (auth && orderAction(url))) {
+        p.then(
+          (r) =>
+            r
+              .clone()
+              .text()
+              .then(
+                (t) =>
+                  pending ? reconcileFast(pending, t, r.status) : onRequest(url, body, t, auth, method, r.status),
+                () => pending && reconcileFast(pending, null, r.status, true),
+              ),
+          () => pending && reconcileFast(pending, null, 0), // network failure: Vest may or may not have the order
+        );
+      }
+      return p;
+    };
+    // XHR
+    const _open = XMLHttpRequest.prototype.open,
+      _send = XMLHttpRequest.prototype.send,
+      _setH = XMLHttpRequest.prototype.setRequestHeader;
+    XMLHttpRequest.prototype.open = function (m, u) {
+      this.__vc = { url: u, method: String(m || 'GET').toUpperCase() };
+      return _open.apply(this, arguments);
+    };
+    XMLHttpRequest.prototype.setRequestHeader = function (k, v) {
+      if (/^authorization$/i.test(k)) {
+        if (this.__vc) this.__vc.auth = v;
+        offerUser(v);
+      }
+      return _setH.apply(this, arguments);
+    };
+    XMLHttpRequest.prototype.send = function (b) {
+      const vc = this.__vc;
+      if (vc) {
+        let pending = null;
+        try {
+          pending = vc.method === 'POST' ? maybeFastOpen(vc.url, b, vc.auth) : null;
+          if (vc.method !== 'GET') notePageRequest(vc.url, vc.method, b);
+        } catch {
+          /* best effort: nothing to do if this fails */
+        }
+        this.addEventListener(
+          'loadend',
+          () => {
+            // once per request; also fires on error/abort/timeout
+            let r = '';
+            try {
+              r = this.responseText;
+            } catch {
+              /* best effort: nothing to do if this fails */
+            }
+            if (pending) reconcileFast(pending, r, this.status);
+            else onRequest(vc.url, b, r, vc.auth, vc.method, this.status);
+          },
+          { once: true },
+        );
+      }
+      return _send.apply(this, arguments);
+    };
+  }
 
   const waitForUserToken = (timeoutMs = 20000) =>
     new Promise((resolve, reject) => {
@@ -425,33 +429,36 @@
   const _feedAt = {}; // accountId -> when its last feed event landed (a slower REST read must not overwrite it)
   const _seq = {}; // accountId -> the last account_seq applied (Vest drops older and repeated events the same way)
   const feedLive = () => !!_feed.ws && _feed.ws.readyState === 1 && Date.now() - _feed.last < FEED_QUIET_MS;
-  if (typeof WebSocket === 'function' && typeof Proxy === 'function')
-    try {
-      // a Proxy keeps everything else about WebSocket as it was (prototype, constants, instanceof, subclasses)
-      window.WebSocket = new Proxy(WebSocket, {
-        construct(target, args, newTarget) {
-          const ws = Reflect.construct(target, args, newTarget);
-          try {
-            if (/\/ws\/private/.test(String(args[0] || ''))) attachFeed(ws);
-          } catch {
-            /* best effort: nothing to do if this fails */
-          }
-          return ws;
-        },
-      });
-    } catch {
-      /* best effort: the ping below still finds it */
-    }
-  if (typeof WebSocket === 'function' && WebSocket.prototype && WebSocket.prototype.send) {
-    const _wsSend = WebSocket.prototype.send;
-    WebSocket.prototype.send = function () {
+  // Find Vest's private socket as it is created (or on its first ping), at document-start.
+  function installFeedTap() {
+    if (typeof WebSocket === 'function' && typeof Proxy === 'function')
       try {
-        if (this !== _feed.ws && /\/ws\/private/.test(this.url || '')) attachFeed(this);
+        // a Proxy keeps everything else about WebSocket as it was (prototype, constants, instanceof, subclasses)
+        window.WebSocket = new Proxy(WebSocket, {
+          construct(target, args, newTarget) {
+            const ws = Reflect.construct(target, args, newTarget);
+            try {
+              if (/\/ws\/private/.test(String(args[0] || ''))) attachFeed(ws);
+            } catch {
+              /* best effort: nothing to do if this fails */
+            }
+            return ws;
+          },
+        });
       } catch {
-        /* best effort: nothing to do if this fails */
+        /* best effort: the ping below still finds it */
       }
-      return _wsSend.apply(this, arguments);
-    };
+    if (typeof WebSocket === 'function' && WebSocket.prototype && WebSocket.prototype.send) {
+      const _wsSend = WebSocket.prototype.send;
+      WebSocket.prototype.send = function () {
+        try {
+          if (this !== _feed.ws && /\/ws\/private/.test(this.url || '')) attachFeed(this);
+        } catch {
+          /* best effort: nothing to do if this fails */
+        }
+        return _wsSend.apply(this, arguments);
+      };
+    }
   }
   function attachFeed(ws) {
     const again = _feed.attached > 0; // Vest reconnected: anything said while it was down is read in full once
@@ -932,7 +939,7 @@
       const list = S.orphan.list.filter((o) => o.accountId !== id);
       S.orphan = list.length ? { list } : null;
     }
-    if (S.arming && (wasMaster || wasFollower)) _armEpoch++; // the arm in progress was for a selection that's gone
+    if (S.arming && (wasMaster || wasFollower)) cancelPendingArm(); // the arm in progress was for a selection that's gone
     if (wasFollower) S.followers.delete(id);
     if (wasMaster) S.master = null;
     breachReason(id).then((why) => why && logEvent('warn', `${name}: ${why}.`));
@@ -1185,8 +1192,7 @@
     ...new Set(Object.values(S.acctState || {}).flatMap((st) => (st ? st.positions.map((p) => p.symbol) : []))),
   ];
   let _liveRenderAt = 0,
-    _liveRenderTimer = null,
-    _pointerDown = false;
+    _liveRenderTimer = null;
   // A stop or target the price sits past without Vest filling it (a stop triggers on the bid, not the mark) would ask
   // for a read on every new state: at most one per account per CROSSED_COOLDOWN_MS. State older than LIVE_STALE_MS
   // (reads failing) isn't re-priced: its positions may be gone.
@@ -2382,7 +2388,7 @@
       return render();
     }
     S.flattening = true;
-    _armEpoch++; // an arm in progress would adopt positions that are being closed
+    cancelPendingArm(); // an arm in progress would adopt positions that are being closed
     S.orphan = null;
     Object.values(S.plans).forEach((p) => endPlan(p, null)); // nothing left for breakeven to manage
     render();
@@ -2873,7 +2879,7 @@
       _following = false;
     }
   }
-  setInterval(followVestMarket, 1000);
+  const startFollowingVestMarket = () => setInterval(followVestMarket, 1000);
   // A market's saved settings, keeping only well-formed values (storage can hold anything).
   function cleanMarket(m) {
     if (!m || typeof m !== 'object') return null;
@@ -3095,25 +3101,28 @@
   // Bumped by disarm and Flatten All, so an arm still in flight is cancelled: it would switch the copier back on after a
   // disarm, or adopt positions that Flatten All is closing.
   let _armEpoch = 0;
+  const cancelPendingArm = () => _armEpoch++;
   // Other Vest tabs running the copier: each says when it arms or disarms, and answers a new tab's hello. A tab that
   // closes says bye; one that crashes is forgotten after TAB_STALE_MS without news.
   const TAB_ID = Math.random().toString(36).slice(2),
     TAB_STALE_MS = 5 * 60 * 1000,
     _peers = {};
   let _tabs = null;
-  try {
-    _tabs = new BroadcastChannel('vc-tabs');
-    _tabs.onmessage = (e) => {
-      const m = e.data || {};
-      if (!m.id || m.id === TAB_ID) return;
-      if (m.type === 'hello') tabSay('state');
-      if (m.type === 'bye') return delete _peers[m.id];
-      if (!_peers[m.id]) logEvent('warn', 'The copier is open in another Vest tab too. Arm it in one tab only.');
-      _peers[m.id] = { armed: !!m.armed, at: Date.now() };
-    };
-    window.addEventListener('pagehide', () => tabSay('bye'));
-  } catch {
-    _tabs = null; // no BroadcastChannel: nothing to coordinate
+  function openTabChannel() {
+    try {
+      _tabs = new BroadcastChannel('vc-tabs');
+      _tabs.onmessage = (e) => {
+        const m = e.data || {};
+        if (!m.id || m.id === TAB_ID) return;
+        if (m.type === 'hello') tabSay('state');
+        if (m.type === 'bye') return delete _peers[m.id];
+        if (!_peers[m.id]) logEvent('warn', 'The copier is open in another Vest tab too. Arm it in one tab only.');
+        _peers[m.id] = { armed: !!m.armed, at: Date.now() };
+      };
+      window.addEventListener('pagehide', () => tabSay('bye'));
+    } catch {
+      _tabs = null; // no BroadcastChannel: nothing to coordinate
+    }
   }
   function tabSay(type) {
     try {
@@ -3572,6 +3581,7 @@
   };
   const BUILD_KEY = 'vc-known-build-v3';
   let _unknownBuildChecked = false;
+  const markUnknownBuildChecked = () => (_unknownBuildChecked = true);
   // First run on this browser: trust the build that is loaded now.
   function initBuild() {
     const fp = fingerprint();
@@ -3727,17 +3737,18 @@
     _leftForInstall = false;
     renderUpdate();
   }
-  document.addEventListener('visibilitychange', () => {
-    if (!S.update || S.update.state !== 'installing') return;
-    if (document.hidden) {
-      _leftForInstall = true;
-      return;
-    }
-    if (!_leftForInstall) return;
-    if (S.armed)
-      renderUpdate(); // shows Reload now
-    else reloadWhenIdle();
-  });
+  const watchForInstallReturn = () =>
+    document.addEventListener('visibilitychange', () => {
+      if (!S.update || S.update.state !== 'installing') return;
+      if (document.hidden) {
+        _leftForInstall = true;
+        return;
+      }
+      if (!_leftForInstall) return;
+      if (S.armed)
+        renderUpdate(); // shows Reload now
+      else reloadWhenIdle();
+    });
 
   // ───────────────────────── support (optional referral code) ─────────────────────────
   // Asked once, after the terms are accepted: "Support the free copier with code AMPED?" If the account already uses
@@ -4385,7 +4396,7 @@
       } catch {
         /* best effort: nothing to do if this fails */
       }
-    } else _unknownBuildChecked = true;
+    } else markUnknownBuildChecked();
     site.phase = 'accepted';
     site.acceptedAt = Date.now();
     logEvent('info', `Vest build ${fp || '(unknown)'} checked and accepted.`);
@@ -4442,7 +4453,6 @@
   }
 
   // ───────────────────────── UI ─────────────────────────
-  let _root = null; // the panel's shadow root
   const money = (n) =>
     isNaN(n) ? '—' : '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const pct = (n) => (isNaN(n) ? '—' : (n * 100).toFixed(0) + '%');
@@ -6820,6 +6830,10 @@
       <rect x="1" y="10.3" width="22" height="3.4" fill="url(#vc-poc)"/><rect x="1" y="14.95" width="15" height="3.4" fill="#f0f0f1"/>
       <rect x="1" y="19.6" width="8" height="3.4" fill="#77777d"/></svg><svg height="16" viewBox="0 -73 237.9 75" aria-hidden="true"><path fill="#f0f0f1" d="M18.3 1L18.3 1Q10.9 1 6.8-3.4Q2.7-7.8 2.3-15.7L2.3-15.7L11.7-15.7Q12-11.7 13.8-9.7Q15.6-7.6 18.5-7.6L18.5-7.6Q20.9-7.6 22.2-8.8Q23.5-10.1 23.5-12.5L23.5-12.5Q23.5-14.4 22.5-16.1Q21.5-17.8 18.3-19.8L18.3-19.8L12.4-23.5Q8.4-26.1 6.2-29.6Q4-33.1 4-38L4-38Q4-44.2 7.9-48.1Q11.8-52 18.2-52L18.2-52Q24.9-52 28.7-48.1Q32.4-44.1 32.8-36.9L32.8-36.9L23.4-36.9Q23.1-40.4 21.9-41.9Q20.6-43.4 18.5-43.4L18.5-43.4Q16.4-43.4 15.2-42.2Q13.9-41 13.9-38.7L13.9-38.7Q13.9-36.9 15.0-35.3Q16-33.6 18.8-31.8L18.8-31.8L25.2-27.8Q28.9-25.5 31.2-21.7Q33.4-17.9 33.4-13L33.4-13Q33.4-6.7 29.4-2.9Q25.4 1 18.3 1ZM54.2 1L54.2 1Q47 1 43.5-2.5Q40-5.9 40-12.9L40-12.9L40-60.6L51.4-65.6L51.4-13Q51.4-10.5 52.8-9.3Q54.1-8.1 57-8.1L57-8.1Q58.1-8.1 59.0-8.3Q60-8.5 60.7-8.9L60.7-8.9L60.7-0.1Q59.7 0.5 58.0 0.8Q56.2 1 54.2 1ZM60.4-41.9L33.4-41.9L33.4-51L60.4-51L60.4-41.9ZM75.6 0L64.2 0L64.2-51L75.1-51L75.1-39.1L75.6-39.1L75.6 0ZM75.6-30.3L75.6-30.3L74-38.8Q75.7-45.8 78.6-48.9Q81.5-52 85.6-52L85.6-52Q86.7-52 87.6-51.7L87.6-51.7L87.6-40.3Q87.3-40.4 86.7-40.5Q86.1-40.5 85.2-40.5L85.2-40.5Q80.8-40.5 78.2-38Q75.6-35.5 75.6-30.3ZM123.3 0L112.8 0Q112.2-1.8 111.9-4.0Q111.7-6.1 111.7-8.5L111.7-8.5L111.2-8.5L111.2-36.6Q111.2-40.1 109.9-41.7Q108.7-43.3 106.3-43.3L106.3-43.3Q103.6-43.3 102.2-41.3Q100.8-39.3 100.8-35.8L100.8-35.8L90.7-35.8Q90.7-42.9 95.1-47.5Q99.5-52 107.2-52L107.2-52Q114.4-52 118.3-48Q122.3-44 122.3-36.7L122.3-36.7L122.3-8.5Q122.3-6.4 122.5-4.3Q122.7-2.1 123.3 0L123.3 0ZM100.6 1L100.6 1Q95.8 1 92.7-2.5Q89.6-6 89.6-12L89.6-12Q89.6-17.4 92.1-21.2Q94.7-24.9 101-28L101-28L113.9-34.5L113.9-25.7L106.9-22Q103.6-20.3 102.1-18.2Q100.6-16 100.6-13.2L100.6-13.2Q100.6-10.5 101.9-9.1Q103.3-7.7 105.5-7.7L105.5-7.7Q108-7.7 109.6-9.5Q111.2-11.2 111.2-13.9L111.2-13.9L112.2-7.6Q110.7-3.2 107.7-1.1Q104.7 1 100.6 1ZM145.8 1L145.8 1Q138.6 1 135.1-2.5Q131.6-5.9 131.6-12.9L131.6-12.9L131.6-60.6L143-65.6L143-13Q143-10.5 144.3-9.3Q145.7-8.1 148.6-8.1L148.6-8.1Q149.7-8.1 150.6-8.3Q151.6-8.5 152.3-8.9L152.3-8.9L152.3-0.1Q151.3 0.5 149.5 0.8Q147.8 1 145.8 1ZM152-41.9L125.0-41.9L125.0-51L152-51L152-41.9ZM166.7 1L166.7 1Q163.3 1 160.7-0.5Q158.1-1.9 156.8-4.8Q155.4-7.6 155.4-11.6L155.4-11.6L155.4-51L166.8-51L166.8-14.1Q166.8-11.3 168.1-9.9Q169.4-8.4 171.7-8.4L171.7-8.4Q173.9-8.4 175.5-9.7Q177.1-10.9 178-13.0Q178.9-15 178.9-17.3L178.9-17.3L180.4-9.4Q178.5-4.5 175-1.8Q171.5 1 166.7 1ZM190.4 0L179.5 0L179.5-9.5L178.9-9.5L178.9-51L190.4-51L190.4 0ZM208.9 0L197.5 0L197.5-72L208.9-72L208.9 0ZM233.3 0L221.8 0L221.8-36.4Q221.8-39.7 220.5-41.2Q219.2-42.6 216.6-42.6L216.6-42.6Q214.2-42.6 212.4-41.4Q210.7-40.1 209.8-38.1Q208.9-36 208.9-33.5L208.9-33.5L207.4-41.4Q209.4-46.5 213.0-49.3Q216.6-52 221.7-52L221.7-52Q227.1-52 230.2-48.6Q233.3-45.1 233.3-39L233.3-39L233.3 0Z"/></svg>`;
 
+  let _root = null; // the panel's shadow root
+  let _pointerDown = false, // a press inside the panel is in progress: live redraws wait for it
+    _dragging = false;
+  const mountPanel = () => (_root = buildPanel());
   function buildPanel() {
     const host = document.createElement('div');
     host.id = 'vc-host';
@@ -7060,8 +7074,7 @@
     CHART_MIN_H = 300,
     DOCK_MIN_W = 520, // a chart area narrower or shorter than this (Vest's stacked layout in a small window) can't hold
     DOCK_MIN_H = 440; // the panel without squashing it: it floats until the chart is big enough, then docks back
-  let _dragging = false,
-    _placeKey = '';
+  let _placeKey = '';
   const clampPx = (v, lo, hi) => Math.max(lo, Math.min(hi, v)) || lo;
   function loadDock() {
     const d = store.get(DOCK_KEY, {}) || {};
@@ -7245,6 +7258,7 @@
   // chart forgets on every load. With the setting on, it's switched on once per chart load; showing the marks again from
   // the chart's menu is respected until the next load.
   let _marksDone = null; // the chart frame the marks were handled for
+  const resetChartMarks = () => (_marksDone = null);
   function hideChartMarks(f) {
     if (!S.hideMarks || !f || _marksDone === f) return;
     try {
@@ -7494,11 +7508,12 @@
     }
     return false;
   }
-  setInterval(() => {
-    const panel = _root && _root.querySelector('.panel');
-    if (!panel || _dragging) return;
-    panel.classList.toggle('aside', chartPopupOver(panel.getBoundingClientRect())); // fading doesn't move it
-  }, 200);
+  const watchChartPopups = () =>
+    setInterval(() => {
+      const panel = _root && _root.querySelector('.panel');
+      if (!panel || _dragging) return;
+      panel.classList.toggle('aside', chartPopupOver(panel.getBoundingClientRect())); // fading doesn't move it
+    }, 200);
   // With the theme on: the Volume indicator Vest adds by itself when the chart loads (only on a chart with no other
   // indicators) is removed, once per chart load. One the trader adds afterwards from Indicators stays.
   const AUTO_VOLUME_MS = 20000; // Vest adds it as the chart becomes ready: looked for this long after the chart appears
@@ -7528,24 +7543,27 @@
     host.style.display = show ? '' : 'none';
     if (show) place();
   }
-  window.addEventListener('popstate', showOnThisPage);
-  window.addEventListener('resize', () => place());
-  setInterval(() => {
-    if (!_root) return;
-    showOnThisPage();
-    if (_dragging) return;
-    removeAutoVolume(chartFrame());
-    hideChartMarks(chartFrame());
-    hideSessionShading(chartFrame());
-    themeChart(chartFrame());
-    const f = chartFrame(),
-      r = f && f.getBoundingClientRect();
-    const key = r ? [r.left, r.top, r.width, r.height].map(Math.round).join() : 'none';
-    if (key !== _placeKey) {
-      _placeKey = key;
-      place();
-    }
-  }, 400);
+  // Keep the panel placed on the chart as Vest's layout and pages change, and the chart tweaks applied.
+  function watchPlacement() {
+    window.addEventListener('popstate', showOnThisPage);
+    window.addEventListener('resize', () => place());
+    setInterval(() => {
+      if (!_root) return;
+      showOnThisPage();
+      if (_dragging) return;
+      removeAutoVolume(chartFrame());
+      hideChartMarks(chartFrame());
+      hideSessionShading(chartFrame());
+      themeChart(chartFrame());
+      const f = chartFrame(),
+        r = f && f.getBoundingClientRect();
+      const key = r ? [r.left, r.top, r.width, r.height].map(Math.round).join() : 'none';
+      if (key !== _placeKey) {
+        _placeKey = key;
+        place();
+      }
+    }, 400);
+  }
 
   function setView(v) {
     if (v !== 'trade') stopPick(true);
@@ -9813,7 +9831,7 @@
           } else if (o === 'hidemarks') {
             S.hideMarks = !S.hideMarks;
             saveOpts();
-            _marksDone = null; // switched on: hide them now
+            resetChartMarks(); // switched on: hide them now
             render();
           }
         }),
@@ -10528,7 +10546,7 @@
     });
     loadDock();
     applyTheme();
-    _root = buildPanel();
+    mountPanel();
     setOpen(S.dock.open || !S.ack); // a first run opens fully, for the risk terms
     loadPlans();
     renderHealth();
@@ -10540,6 +10558,13 @@
     watchPurchaseWindow();
     LOG(`v${VERSION} loaded.`);
   };
+  installRequestHooks();
+  installFeedTap();
+  startFollowingVestMarket();
+  openTabChannel();
+  watchForInstallReturn();
+  watchChartPopups();
+  watchPlacement();
   if (document.readyState === 'loading') window.addEventListener('DOMContentLoaded', boot);
   else boot();
 })();
