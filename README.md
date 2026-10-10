@@ -132,6 +132,12 @@ question names it so you can decline. Settings → Support turns the switch off.
 The script runs in your browser tab and uses the Vest session you're already logged into. Your orders go to Vest and
 nowhere else. The only outside request is to this repository, to see if a newer version exists.
 
+## Building from source
+
+The script is written as modules under `src/` and bundled into the single userscript you install. With Node 18 or
+later: `npm install`, then `npm run build` writes `dist/vest-copier.user.js`, and `npm test` checks it loads cleanly.
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) explains how the code is laid out.
+
 ## Terms
 
 Use it on your own accounts and pass it along unchanged, both free. Selling it, renaming it or releasing an edited
