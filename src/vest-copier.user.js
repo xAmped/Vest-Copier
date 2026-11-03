@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vest Copier
 // @namespace    vestcopier
-// @version      0.41.2
+// @version      0.41.3
 // @description  Copies a master Vest account's trades to your other Vest accounts, live, and adds a points-based order panel.
 // @author       xAmped
 // @license      STRATUH Copier License — free to use, no selling; see LICENSE
@@ -38,7 +38,7 @@
     })(),
   };
 
-  const VERSION = '0.41.2';
+  const VERSION = '0.41.3';
   // Where this script runs from, read off its own first stack frame (each script manager names it differently): the
   // diagnostics use it to tell the copier's own errors from Vest's. Null when the stack shows no address.
   const OWN_SRC = (() => {
@@ -5072,7 +5072,7 @@
     if (before.length) S.log = [...before, ...S.log].slice(0, LOG_MAX);
   }
   // The risk acknowledgement is versioned: raising TERMS_VERSION asks everyone to accept the new terms once.
-  const TERMS_VERSION = 3; // 3 (v0.39): the support code is part of the terms
+  const TERMS_VERSION = 4; // 3 (v0.39): the support code is part of the terms; 4 (v0.41.3): the code is a separate yes/no
   function loadAck() {
     const a = store.get(ACK_KEY, null);
     S.ack = !!(a && typeof a === 'object' && a.v >= TERMS_VERSION);
@@ -5627,20 +5627,88 @@
   });
 
   // ───────────────────────── support (the author's code) ─────────────────────────
-  // The copier is free; in return its terms (TERMS_VERSION 3) say it enters the author's code AMPED in Vest's purchase
-  // window. Accepting the terms turns that on, whatever was answered before (and tries Vest's own referral-join call,
-  // the one behind its "Have a Referral Code?" dialog). Settings → Support the copier still turns it off afterwards,
-  // and that is kept. Every switch at checkout is announced in the log.
+  // The copier is free, and the author's code AMPED pays for its upkeep. The trader chooses, in the panel: a plain
+  // yes/no the first time and again after updates (Jay, 2026-11-02; Vest's terms §6B ask for care with referral credit).
+  // The copier works the same either way, and an unanswered question changes nothing.
+  // - Yes: AMPED goes into Vest's code box when it appears, in place of another code if it saves at least as much. They
+  //   confirm once at the next checkout, and after that a one-line note fades by itself, so no swap is ever silent. A
+  //   code the trader typed or picked stays. Yes also tries Vest's referral-join call (Vest refuses an account that
+  //   already has an affiliate, so it takes no one's credit).
+  // - No: the box is left alone and nothing is linked.
+  // Nothing here holds a purchase up: the copier only ever acts on the box, and any doubt leaves it as it was.
   const SUPPORT_CODE = 'AMPED';
-  const SUPPORT_DEBUG = false; // test builds: log each step of the purchase-window switch in the activity log
+  const SUPPORT_PCT = 5; // what the code gives, as the panel says it; checked against what Vest shows when it's applied
+  const SUPPORT_DEBUG = false; // test builds: log each step of the code in the activity log
   const supportStep = (msg) => SUPPORT_DEBUG && logEvent('info', '[code test] ' + msg);
-  const SUPPORT_KEY = 'vc-support'; // { answered: 'yes' | 'manual' | 'no' | 'had-code', at, apply? }
-  // 'had-code' (already using a code) isn't a real answer: re-check it, so only accounts on AMPED stay unasked.
-  const supportAnswer = () => {
-    const a = (store.get(SUPPORT_KEY, null) || {}).answered || null;
-    return a === 'had-code' ? null : a;
+  const SUPPORT_KEY = 'vc-support'; // { choice: 'yes' | 'no', confirmed, askedFor: version, askedAt, at }; older saves: { answered, apply }
+  // Before v0.41.3 accepting the terms turned the code on. That isn't a yes to this question: only `choice` counts.
+  // The answer is kept in memory too: with storage full an answer still counts in this tab. Another tab's newer one wins.
+  let _supportHere = null;
+  const supportSaved = () => {
+    const v = store.get(SUPPORT_KEY, null) || {};
+    return _supportHere && (v.at || '') < _supportHere.at ? _supportHere : v;
   };
-  const saveSupport = (answered) => store.set(SUPPORT_KEY, { answered, at: new Date().toISOString() });
+  function saveSupport(next) {
+    _supportHere = next;
+    store.set(SUPPORT_KEY, next);
+  }
+  const supportOn = () => supportSaved().choice === 'yes';
+  function setSupportChoice(choice) {
+    const v = supportSaved();
+    const now = new Date().toISOString();
+    saveSupport({ ...v, choice, confirmed: false, askedFor: VERSION, askedAt: now, at: now });
+    diag('support', { outcome: 'choice', choice });
+    if (choice === 'yes' && v.choice !== 'yes') joinReferral();
+  }
+  // The one confirmation at checkout, after a yes. Either button counts; ignoring it doesn't, so it shows again.
+  const codeConfirmed = () => !!supportSaved().confirmed;
+  function confirmCode() {
+    saveSupport({ ...supportSaved(), confirmed: true, at: new Date().toISOString() });
+  }
+  // The question: never asked for, or a new version since the last answer, at most once a week (updates can come in
+  // bursts). It takes the panel the way the terms do, so it waits for the terms, and while copying or in a position:
+  // getting out never waits behind it.
+  const CODE_ASK_GAP_MS = 7 * 24 * 3600 * 1000;
+  // Not read yet counts as in a position: a tab reloaded mid-trade mustn't lose its controls to the question.
+  const maybeInPosition = () => {
+    const ids = Object.keys(S.byId || {});
+    return !ids.length || ids.some((id) => !S.acctState[id] || S.acctState[id].positions.some((p) => p.qty > 0));
+  };
+  function codeAskDue() {
+    if (!S.ack || S.armed || S.arming || maybeInPosition()) return false;
+    const v = supportSaved();
+    if (v.choice !== 'yes' && v.choice !== 'no') return true;
+    return v.askedFor !== VERSION && Date.now() - (Date.parse(v.askedAt) || 0) >= CODE_ASK_GAP_MS;
+  }
+  function renderCodeAsk(body) {
+    if (body.dataset.view === 'code-ask') return;
+    body.dataset.view = 'code-ask';
+    body.scrollTop = 0;
+    body.innerHTML = `
+      <div class="rules codeask">
+        <div class="rules-h big">Use code ${SUPPORT_CODE}?</div>
+        <ul class="rules-list">
+          <li>${SUPPORT_CODE} gives you ${SUPPORT_PCT}% off Vest purchases and pays me a commission, which keeps the copier
+            free. <b>The copier works the same either way.</b></li>
+          <li><b>With Yes,</b> the copier puts ${SUPPORT_CODE} in Vest's code box at checkout, including in place of another
+            code if ${SUPPORT_CODE} saves you at least as much. You'll confirm it at your next checkout and see a short
+            note after that. You can type another code any time.</li>
+          <li><b>If your Vest account has no code yet,</b> Yes also links it to ${SUPPORT_CODE} permanently.</li>
+          <li><b>You can change this any time</b> in Settings → Support the copier, and you'll be asked again after updates.
+            Turned off, or with the copier removed, Vest goes back to your account's own code the next time it loads, unless
+            your account was linked to ${SUPPORT_CODE}.</li>
+        </ul>
+        <div class="rules-btns"><button class="armbtn" data-act="code-yes">Yes, use ${SUPPORT_CODE}</button>
+          <button class="ghostbtn" data-act="code-no">No thanks</button></div>
+      </div>`;
+    const answer = (choice) => {
+      setSupportChoice(choice);
+      logEvent('info', choice === 'yes' ? `Code ${SUPPORT_CODE} on. Thank you!` : `Code ${SUPPORT_CODE} off.`);
+      render();
+    };
+    body.querySelector('[data-act="code-yes"]').onclick = () => answer('yes');
+    body.querySelector('[data-act="code-no"]').onclick = () => answer('no');
+  }
   // The account's attached referral code, '' when none, or null when it can't be read (then nothing is offered).
   async function attachedRefCode() {
     try {
@@ -5654,12 +5722,9 @@
       return null;
     }
   }
-  // On accepting the terms (`accepted`): the code is on, whatever was answered before. On each load after that: on unless
-  // the switch was turned off since. An account already using AMPED hides the bottom bar's code link.
-  async function supportOnTerms(accepted = false) {
-    if (!S.ack) return;
-    if (accepted || !supportAnswer()) acceptSupport();
-    if (!userTokenOk()) return;
+  // An account already using AMPED hides the bottom bar's code link.
+  async function supportOnTerms() {
+    if (!S.ack || !userTokenOk()) return;
     const code = await attachedRefCode();
     if (code && code.toUpperCase() === SUPPORT_CODE) {
       const link = _root && _root.querySelector('[data-act="code"]');
@@ -5672,13 +5737,10 @@
       () => true,
       () => false,
     );
-  async function acceptSupport() {
-    saveSupport('yes');
-    logEvent(
-      'ok',
-      `Thank you! ${SUPPORT_CODE} will be used in Vest's purchase window from now on (Settings → Support to turn off).`,
-    );
-    // Also try Vest's referral link, which only some accounts accept; the purchase window covers everyone else.
+  // Vest's referral link, which only an account with no affiliate accepts, and which can't be undone. Only on a yes.
+  async function joinReferral() {
+    // Test builds carry someone else's code: never send it from one.
+    if (SUPPORT_DEBUG) return supportStep('referral link: skipped in a test build');
     try {
       const headers = {
         Accept: 'application/json',
@@ -5699,14 +5761,10 @@
     }
   }
 
-  // ── Using the code in Vest's purchase window, for users who said Yes. Each time the window's discount box appears,
-  // its code is switched to AMPED the way a person would do it: clear the applied code (✕), type AMPED, press Enter.
-  // Vest validates and applies it. If Vest refuses it (for example on the code owner's own account), the previous
-  // code is put back. It acts once per opening, so a code the user picks by hand afterwards is left alone, and every
-  // switch is announced in the activity log.
-  // Vest has more than one discount box. The purchase window's is an editable field (styled to show its code in
+  // ── Vest's code boxes. Vest has more than one. The purchase window's is an editable field (styled to show its code in
   // capitals) holding the applied code: type another code + Enter, and on success Vest redraws the box with it. The
-  // account-builder screen's shows "CODE 5%" read-only with a ✕ to clear it first.
+  // account-builder screen's shows "CODE 5%" read-only with a ✕ to clear it first. The box is also on the Get Funded
+  // page, below the plans. Vest fills in the account's code on each page load and doesn't save a switch.
   const isDiscountBox = (el) =>
     el instanceof HTMLInputElement &&
     // purchase window ("pl-3! not-placeholder-shown:uppercase") or the account-builder side panel (the "!" variant).
@@ -5717,38 +5775,149 @@
       (el.getAttribute('role') === 'combobox' &&
         /\brounded-full\b/.test(el.className) &&
         /\bw-32\b/.test(el.className)));
-  const supportApplies = () => {
-    const v = store.get(SUPPORT_KEY, null) || {};
-    return (v.answered === 'yes' || v.answered === 'manual') && v.apply !== false;
-  };
-  function setSupportApply(on) {
-    const v = store.get(SUPPORT_KEY, null) || {};
-    store.set(SUPPORT_KEY, { ...v, apply: on });
+  const boxesNow = () => [...document.querySelectorAll('input')].filter(isDiscountBox);
+  const shown = (el) => el.isConnected && el.getClientRects().length > 0;
+  const boxNow = () => boxesNow().find(shown) || null;
+  const boxCode = (box) => (box.readOnly ? box.value.trim().split(/\s+/)[0] || '' : box.value.trim()).toUpperCase();
+  // The discount Vest shows for the applied code: "CODE 5%" in a read-only box, otherwise the text beside the box
+  // ("5% Discount", "5% Code Applied!"). null when none can be read.
+  function boxPct(box) {
+    const pctAt = (t) => /^(\d+(?:\.\d+)?)\s*%/.exec(t);
+    if (box.readOnly) {
+      const m = /(\d+(?:\.\d+)?)\s*%/.exec(box.value);
+      if (m) return +m[1];
+    }
+    let at = box;
+    for (let i = 0; i < 4 && at.parentElement; i++) {
+      at = at.parentElement;
+      for (const c of at.children) {
+        if (c.contains(box)) continue;
+        const t = c.textContent.trim();
+        const m = t.length < 40 && pctAt(t);
+        if (m) return +m[1];
+      }
+    }
+    return null;
   }
+
+  // `codeVisit`: what the trader did during this visit to a code box (it ends when no box is left). `_codesKept`: codes
+  // they typed, picked or put back; they stay until the page reloads, because a window reopened is the same purchase.
+  const codeVisit = { chose: false, first: null, busy: false, set: null, late: null };
+  const _codesKept = new Set();
   const _seenBoxes = new WeakSet();
+  const _debugSeen = new WeakSet();
   let _boxScan = null;
   function watchPurchaseWindow() {
+    // Pressing or typing in a box, or picking from its list, makes it the trader's for this visit.
+    const touched = (e) => {
+      if (!e.target || !e.target.closest) return;
+      if (codeVisit.busy && !e.isTrusted) return; // the copier's own typing; a person's counts even while it works
+      const group = e.target.closest('[data-slot="input-group"]');
+      if (
+        isDiscountBox(e.target) ||
+        (group && [...group.querySelectorAll('input')].some(isDiscountBox)) ||
+        (e.target.closest('[role="option"], [role="listbox"]') && boxesNow().length)
+      )
+        codeVisit.chose = true;
+    };
+    for (const type of ['pointerdown', 'keydown', 'input']) document.addEventListener(type, touched, true);
     new MutationObserver(() => {
-      if (_boxScan || !supportApplies()) return;
+      if (_boxScan || !supportOn()) return;
       _boxScan = setTimeout(() => {
         // the page changes constantly (prices); look at most a few times a second
         _boxScan = null;
-        for (const el of document.querySelectorAll('input[placeholder], input[role="combobox"]')) {
-          if (SUPPORT_DEBUG && !_seenBoxes.has(el) && el.closest('[role="dialog"]')) {
-            _seenBoxes.add(el); // test builds: report every input in a dialog, to see what the purchase window holds
+        let any = false;
+        for (const el of document.querySelectorAll('input')) {
+          if (SUPPORT_DEBUG && !_debugSeen.has(el) && el.closest('[role="dialog"]')) {
+            _debugSeen.add(el); // test builds: report every input in a dialog, to see what the purchase window holds
             supportStep(
-              `dialog input: placeholder="${el.placeholder}" role=${el.getAttribute('role')} value="${el.value}" match=${isDiscountBox(el)}`,
+              `dialog input: placeholder="${el.placeholder}" role=${el.getAttribute('role')} value="${el.value}" match=${isDiscountBox(el)} pct=${isDiscountBox(el) ? boxPct(el) : '-'}`,
             );
-            if (!isDiscountBox(el)) continue;
-            useSupportCode(el).catch((e) => supportStep('error: ' + e.message));
-            continue;
           }
-          if (!isDiscountBox(el) || _seenBoxes.has(el)) continue;
+          if (!isDiscountBox(el)) continue;
+          any = true;
+          if (_seenBoxes.has(el)) continue;
           _seenBoxes.add(el);
-          useSupportCode(el).catch((e) => diag('support', { outcome: 'apply-error', error: e.message }));
+          useCodeInBox(el).catch((e) => diag('support', { outcome: 'apply-error', error: e.message }));
         }
+        if (!any && !codeVisit.busy) Object.assign(codeVisit, { chose: false, first: null, set: null, late: null });
       }, 250);
     }).observe(document.documentElement, { childList: true, subtree: true });
+  }
+  const CODE_SETTLE_MS = 800;
+  const CODE_READ_MS = 200;
+  // A box seen for the first time. Vest redraws a box when a code applies, so a redrawn box comes here too: a code the
+  // trader typed or picked is recorded as theirs, and is never replaced.
+  async function useCodeInBox(input) {
+    await sleep(CODE_SETTLE_MS); // let the window finish opening and Vest fill in the account's code
+    if (!shown(input) || codeVisit.busy) return;
+    const was = boxCode(input);
+    supportStep(`discount box found: current code "${was || '(none)'}"`);
+    if (codeVisit.first === null) codeVisit.first = was;
+    if (was === SUPPORT_CODE && codeVisit.late) {
+      // Vest answered after the copier gave up on it: say so, with the way back
+      const late = codeVisit.late;
+      codeVisit.late = null;
+      codeVisit.set = SUPPORT_CODE;
+      logEvent('ok', `Purchase window: discount code set to ${SUPPORT_CODE} (was ${late}).`);
+      diag('support', { outcome: 'applied-late', replaced: late });
+      return showCodeNote(late);
+    }
+    if (was === SUPPORT_CODE || was === codeVisit.set) return;
+    // changed since the box first showed, or since the copier put a code in, and not by the copier: typed, or picked
+    // from a list (some of Vest's lists are plain buttons, so a press can't always be seen)
+    if (codeVisit.chose || was !== codeVisit.first || codeVisit.set) {
+      if (was) _codesKept.add(was);
+      return;
+    }
+    if (!supportOn() || _codesKept.has(was)) return;
+    const wasPct = boxPct(input);
+    if (was && wasPct !== null && wasPct > SUPPORT_PCT) return; // theirs saves more: not even tried
+    codeVisit.busy = true;
+    try {
+      if ((await putCode(input, SUPPORT_CODE)) !== 'applied') {
+        if (codeVisit.chose) return; // they typed or picked while it ran: nothing to report
+        if (was) codeVisit.late = was; // Vest can answer later than the copier waits
+        logEvent('info', `Purchase window: Vest didn't accept ${SUPPORT_CODE} here${was ? `, so ${was} stays` : ''}.`);
+        diag('support', { outcome: 'apply-refused', kept: was || null });
+        return;
+      }
+      codeVisit.set = SUPPORT_CODE;
+      if (!was) {
+        logEvent('ok', `Purchase window: the empty code box now has ${SUPPORT_CODE}.`);
+        diag('support', { outcome: 'applied', replaced: null });
+        return showCodeNote(null);
+      }
+      await sleep(CODE_READ_MS); // Vest's text beside the box follows the redraw
+      const now = boxNow();
+      const nowPct = now ? boxPct(now) : null;
+      if (codeVisit.chose) return; // they typed or picked while this ran: theirs, whatever it says
+      if (wasPct === null || nowPct === null || nowPct < wasPct) {
+        // less off, or no way to tell: theirs goes back
+        const back = now ? await putCode(now, was) : 'refused';
+        codeVisit.set = was;
+        logEvent(
+          back === 'applied' ? 'info' : 'warn',
+          back === 'applied'
+            ? `Purchase window: ${was} stays (${SUPPORT_CODE} wouldn't save you at least as much).`
+            : `Purchase window: couldn't put ${was} back. Check the code before you pay.`,
+        );
+        diag('support', {
+          outcome: nowPct === null || wasPct === null ? 'unsure' : 'worse',
+          was,
+          wasPct,
+          nowPct,
+          back,
+        });
+        if (back !== 'applied') showCodeNote(null, was, true);
+        return;
+      }
+      logEvent('ok', `Purchase window: discount code set to ${SUPPORT_CODE} (was ${was}).`);
+      diag('support', { outcome: 'applied', replaced: was, wasPct, nowPct });
+      showCodeNote(was);
+    } finally {
+      codeVisit.busy = false;
+    }
   }
   const waitFor = async (cond, ms) => {
     for (let t = 0; t < ms; t += 100) {
@@ -5766,28 +5935,21 @@
     input.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true, cancelable: true }),
     );
-  async function useSupportCode(input) {
-    await sleep(300); // let the window finish opening
-    if (!input.isConnected) return;
-    if (input.readOnly) return useSupportCodeReadOnly(input);
-    const before = input.value.trim().toUpperCase();
-    supportStep(`discount box found: current code "${before || '(none)'}"`);
-    if (before === SUPPORT_CODE) return;
+  // Put a code in Vest's box the way a person would. 'applied', or 'refused' with the box showing the code it had.
+  function putCode(input, want) {
+    return input.readOnly ? putCodeReadOnly(input, want) : putCodeEditable(input, want);
+  }
+  async function putCodeEditable(input, want) {
+    const before = boxCode(input);
     // Applied = Vest redrew the box (the old field is gone) and the new one holds the code without an error flag.
     const applied = () =>
-      !input.isConnected &&
-      [...document.querySelectorAll('input')].some(
-        (el) =>
-          isDiscountBox(el) &&
-          el.value.trim().toUpperCase() === SUPPORT_CODE &&
-          el.getAttribute('aria-invalid') !== 'true',
-      );
+      !input.isConnected && boxesNow().some((el) => boxCode(el) === want && el.getAttribute('aria-invalid') !== 'true');
     const refused = () => input.isConnected && input.getAttribute('aria-invalid') === 'true';
-    typeInto(input, SUPPORT_CODE);
-    supportStep(`typed ${SUPPORT_CODE}: box now "${input.value}"`);
+    typeInto(input, want);
+    supportStep(`typed ${want}: box now "${input.value}"`);
     pressEnter(input);
     let ok = await waitFor(() => applied() || refused(), 3000);
-    if (!applied() && !refused() && input.isConnected) {
+    if (!applied() && !refused() && input.isConnected && !codeVisit.chose) {
       // Enter didn't take: click the box's Use button instead
       const group = input.closest('[data-slot="input-group"]') || input.parentElement;
       const use = [...group.querySelectorAll('button')].find((b) => /^\s*use\s*$/i.test(b.textContent));
@@ -5795,58 +5957,123 @@
       if (use) use.click();
       ok = await waitFor(() => applied() || refused(), 5000);
     }
-    if (applied()) {
-      logEvent('ok', `Purchase window: discount code set to ${SUPPORT_CODE}${before ? ` (was ${before})` : ''}.`);
-      diag('support', { outcome: 'applied', replaced: before || null });
-      return;
-    }
+    if (applied()) return 'applied';
     // Refused (or no answer): Vest kept the previous code applied; show it in the box again.
     supportStep(
       `not applied: aria-invalid=${input.getAttribute('aria-invalid')} connected=${input.isConnected} answered=${ok}`,
     );
-    if (input.isConnected) typeInto(input, before);
-    logEvent(
-      'info',
-      `Purchase window: Vest didn't accept ${SUPPORT_CODE} here${before ? `, so ${before} stays` : ''}.`,
-    );
-    diag('support', { outcome: 'apply-refused', kept: before || null });
+    if (input.isConnected && !codeVisit.chose) typeInto(input, before);
+    return 'refused';
   }
   // The account-builder screen's box: "CODE 5%" read-only, with a ✕ to clear it before typing another code.
-  async function useSupportCodeReadOnly(input) {
-    const codeOf = () => (input.value.trim().split(/\s+/)[0] || '').toUpperCase();
-    const applied = () => input.readOnly && !!codeOf();
-    const before = applied() ? codeOf() : '';
+  async function putCodeReadOnly(input, want) {
+    const applied = () => input.readOnly && !!boxCode(input);
+    const before = applied() ? boxCode(input) : '';
     supportStep(`read-only discount box found: current code "${before || '(none)'}"`);
-    if (before === SUPPORT_CODE) return;
     const clearApplied = async () => {
       const x = (input.closest('[data-slot="input-group"]') || input.parentElement).querySelector('button');
       supportStep(x ? 'clicking ✕ to remove the applied code' : 'no ✕ button found next to the box');
       if (x) x.click();
       return waitFor(() => !input.readOnly, 1500);
     };
-    const enter = async (code) => {
-      typeInto(input, code);
+    const enter = async (c) => {
+      typeInto(input, c);
       pressEnter(input);
-      const ok = await waitFor(() => applied() && codeOf() === code, 5000);
-      supportStep(`entered ${code}: ${ok ? 'applied' : 'not applied'}`);
+      const ok = await waitFor(() => applied() && boxCode(input) === c, 5000);
+      supportStep(`entered ${c}: ${ok ? 'applied' : 'not applied'}`);
       return ok;
     };
-    if (before && !(await clearApplied())) return supportStep('stopped: the applied code could not be removed');
-    if (await enter(SUPPORT_CODE)) {
-      logEvent('ok', `Purchase window: discount code set to ${SUPPORT_CODE}${before ? ` (was ${before})` : ''}.`);
-      diag('support', { outcome: 'applied', replaced: before || null });
-      return;
+    if (before && !(await clearApplied())) {
+      supportStep('stopped: the applied code could not be removed');
+      return 'refused';
     }
-    if (before) {
+    if (codeVisit.chose) return 'refused'; // they typed or picked meanwhile: theirs, so nothing more goes in
+    if (await enter(want)) return 'applied';
+    if (before && !codeVisit.chose) {
       if (input.readOnly) await clearApplied();
-      await enter(before);
+      if (!codeVisit.chose) await enter(before);
     }
-    logEvent(
-      'info',
-      `Purchase window: Vest didn't accept ${SUPPORT_CODE} here${before ? `, so ${before} was put back` : ''}.`,
-    );
-    diag('support', { outcome: 'apply-refused', restored: before || null });
+    return 'refused';
   }
+
+  // ── The note after the code goes in: a layer of its own, because Vest's purchase window covers the panel (and the
+  // panel hides off the Trade page). Inside Vest's window when there is one: anything outside it would close it.
+  const CODE_LAYER_CSS = `
+    :host { all: initial; position: fixed; inset: 0; z-index: 2147483000; pointer-events: none; display: block; }
+    * { box-sizing: border-box; font-family: 'Geist', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; }
+    .note { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); width: min(380px, calc(100% - 24px));
+      padding: 14px 16px; background: #141416; border: 1px solid rgba(255, 255, 255, 0.16); color: #f0f0f1; pointer-events: auto;
+      font-size: 13px; line-height: 1.45; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5); }
+    .btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    button { cursor: pointer; font-size: 13px; font-weight: 500; height: 32px; padding: 0 14px; white-space: nowrap;
+      background: #18181b; border: 1px solid rgba(255, 255, 255, 0.16); color: #f0f0f1; }
+    button:hover { background: #202024; }
+    button.go { background: #c8f542; border-color: #c8f542; color: #0c0c0d; font-weight: 600; }
+    button.go:hover { background: #d4f96a; }
+    button:disabled { opacity: 0.55; cursor: default; }`;
+  let _codeNoteT = null;
+  const closeCodeNote = () => {
+    clearTimeout(_codeNoteT);
+    const host = document.getElementById('vc-code');
+    if (host) host.remove();
+  };
+  // Says what went in: the confirmation with its buttons, or once confirmed a line that fades by itself. `was`: the code
+  // it replaced. `stuck`: their code couldn't be put back.
+  function showCodeNote(was, stuckCode = null, stuck = false) {
+    closeCodeNote();
+    const near = boxNow();
+    const host = document.createElement('div');
+    host.id = 'vc-code';
+    // Events stop here, so Vest's window doesn't read a press in the note as a press outside it.
+    for (const type of ['pointerdown', 'mousedown', 'mouseup', 'click', 'keydown', 'keyup', 'focusin', 'focusout'])
+      host.addEventListener(type, (e) => e.stopPropagation());
+    const root = host.attachShadow({ mode: 'open' });
+    root.innerHTML = `<style>${CODE_LAYER_CSS}</style>`;
+    ((near && near.closest('[role="dialog"]')) || document.body || document.documentElement).appendChild(host);
+    const card = document.createElement('div');
+    card.className = 'note';
+    card.setAttribute('role', 'status');
+    const short = !stuck && codeConfirmed();
+    card.innerHTML = stuck
+      ? `<b>Couldn't put ${esc(stuckCode)} back.</b> Check the code before you pay.<div class="btns"><button data-c="ok">OK</button></div>`
+      : short
+        ? `<b>Code ${SUPPORT_CODE} is on.</b> Type another code to change it.`
+        : `<b>Code ${SUPPORT_CODE} is on: ${SUPPORT_PCT}% off.</b> ${was ? `It replaced ${esc(was)} and pays` : 'It pays'} me a commission, which keeps the
+           copier free. You can type another code any time, or turn this off in Settings.
+           <div class="btns"><button class="go" data-c="ok">${was ? `Keep ${SUPPORT_CODE}` : 'OK'}</button>
+           ${was ? `<button data-c="back">Use ${esc(was)} this time</button>` : ''}</div>`;
+    root.appendChild(card);
+    const on = (c, f) => {
+      const b = card.querySelector(`[data-c="${c}"]`);
+      if (b) b.onclick = f;
+    };
+    on('ok', () => {
+      if (!stuck) confirmCode();
+      closeCodeNote();
+    });
+    on('back', async () => {
+      card.querySelectorAll('button').forEach((b) => (b.disabled = true));
+      confirmCode();
+      _codesKept.add(was);
+      const box = boxNow();
+      codeVisit.busy = true;
+      const r = box ? await putCode(box, was).finally(() => (codeVisit.busy = false)) : 'refused';
+      if (!box) codeVisit.busy = false;
+      codeVisit.set = was;
+      logEvent(
+        r === 'applied' ? 'info' : 'warn',
+        r === 'applied'
+          ? `Purchase window: ${was} is back, as you chose.`
+          : `Purchase window: couldn't put ${was} back. Check the code before you pay.`,
+      );
+      diag('support', { outcome: 'put-back', was, result: r });
+      if (r === 'applied') closeCodeNote();
+      else showCodeNote(null, was, true);
+    });
+    if (!stuck) _codeNoteT = setTimeout(closeCodeNote, short ? CODE_NOTE_SHORT_MS : CODE_NOTE_MS);
+  }
+  const CODE_NOTE_MS = 30000;
+  const CODE_NOTE_SHORT_MS = 6000;
 
   // ── The STRATUH theme, introduced once: what changed on Vest's page and chart, Keep or Back to Vest's colours, and
   // where to change it later. Shown once the terms (and the one-time support question) are out of the way, and only
@@ -5856,7 +6083,11 @@
     const bar = _root && _root.querySelector('.themeintro');
     if (!bar) return;
     const due =
-      S.ack && S.theme && !store.get(THEME_INTRO_KEY, null) && document.documentElement.classList.contains('dark');
+      S.ack &&
+      S.theme &&
+      !codeAskDue() &&
+      !store.get(THEME_INTRO_KEY, null) &&
+      document.documentElement.classList.contains('dark');
     bar.hidden = !due;
     if (!due || bar.dataset.ready) return;
     bar.dataset.ready = '1';
@@ -10029,7 +10260,7 @@
           <div class="log" aria-live="polite"></div>
         </div>
         <div class="reportbar">
-          <button class="codebtn" data-act="code" title="Click to copy the code" hidden>Use code <b>${SUPPORT_CODE}</b><span class="off"> · 5% off</span></button>
+          <button class="codebtn" data-act="code" title="Click to copy the code. It pays me a commission, which keeps the copier free." hidden>Use code <b>${SUPPORT_CODE}</b><span class="off"> · 5% off</span></button>
           <button class="health" data-act="health" title="Vest's build, this version and the API budget. Click for the status card and the site check." aria-label="Status" aria-expanded="false"><span class="dot gray"></span><span class="hsum">Starting…</span></button>
         </div>
         <div class="scard cx-card" hidden>
@@ -10201,7 +10432,11 @@
     on('[data-act="clearlog"]', () => clearLog());
     on('[data-act="code"]', () =>
       copySupportCode().then((ok) =>
-        toast(ok ? `Code ${SUPPORT_CODE} copied: 5% off at Vest's checkout.` : `Code: ${SUPPORT_CODE}`),
+        toast(
+          ok
+            ? `Code ${SUPPORT_CODE} copied: 5% off at Vest's checkout. It pays me a commission, which keeps the copier free.`
+            : `Code: ${SUPPORT_CODE}`,
+        ),
       ),
     );
     // shown unless this account already uses the code
@@ -10559,7 +10794,9 @@
       y = clampPx(want.y, B.t, B.b - Math.min(320, B.b - B.t));
       panel.style.maxHeight = Math.max(PANEL_MIN_H, B.b - y) + 'px';
     } else {
-      panel.style.maxHeight = Math.max(PANEL_MIN_H, Math.min(saved.h || Infinity, B.b - B.t)) + 'px';
+      // the terms and the code question ignore a panel made small: nothing to scroll past or miss
+      const roomy = !S.ack || codeAskDue();
+      panel.style.maxHeight = Math.max(PANEL_MIN_H, Math.min((!roomy && saved.h) || Infinity, B.b - B.t)) + 'px';
       y = clampPx(want.y, B.t, B.b - panel.offsetHeight);
     }
     Object.assign(panel.style, { left: x + 'px', top: y + 'px', right: 'auto' });
@@ -11049,7 +11286,7 @@
   function showOnThisPage() {
     const host = _root && _root.host;
     if (!host) return;
-    const show = !S.tradeOnly || onTradePage() || !S.ack || !!(S.orphan && S.orphan.list.length);
+    const show = !S.tradeOnly || onTradePage() || !S.ack || codeAskDue() || !!(S.orphan && S.orphan.list.length);
     if ((host.style.display !== 'none') === show) return;
     host.style.display = show ? '' : 'none';
     if (show) place();
@@ -11394,13 +11631,16 @@
     const view = currentView(),
       sheet = !gate && SHEETS[view] ? view : null;
     panel.classList.toggle('sheet', !!sheet);
-    panel.classList.toggle('first', !gate && view === 'rules' && !S.ack);
+    const ask = !gate && codeAskDue(); // the code question takes the panel, like the terms before it
+    panel.classList.toggle('first', ask || (!gate && view === 'rules' && !S.ack));
     _root.querySelector('#sheett').textContent = sheet ? SHEETS[sheet] : '';
     // the Trade, Share, Help and first-run views keep their DOM between renders (typing, a ticked box)
-    const keeps = !gate && (S.tradeOpen || S.supportOpen || S.shareOpen || (S.rulesOpen && !S.settingsOpen && !S.ack));
+    const keeps =
+      ask || (!gate && (S.tradeOpen || S.supportOpen || S.shareOpen || (S.rulesOpen && !S.settingsOpen && !S.ack)));
     if (!keeps || S.siteOpen) body.dataset.view = '';
     if (!gate && !S.siteOpen) delete body.dataset.check;
     if (gate) renderGate(body, gate);
+    else if (ask) renderCodeAsk(body);
     else if (S.siteOpen) renderSiteCheck(body);
     else if (S.shareOpen) renderShare(body);
     else if (S.supportOpen) renderSupportTab(body);
@@ -15283,9 +15523,7 @@
     else if (o === 'autoflat') toggleAutoFlatten();
     else if (o === 'capfit') toggleCapFit();
     else if (o === 'supportapply') {
-      const on = !supportApplies();
-      if (on && !['yes', 'manual'].includes((store.get(SUPPORT_KEY, null) || {}).answered)) saveSupport('yes');
-      setSupportApply(on);
+      setSupportChoice(supportOn() ? 'no' : 'yes');
       render();
     } else if (o === 'updates') {
       S.checkUpdates = !S.checkUpdates;
@@ -15366,10 +15604,10 @@
         <div class="set-h">Support the copier</div>
         ${option(
           'supportapply',
-          supportApplies(),
-          `Enter code ${SUPPORT_CODE} at checkout`,
-          '5% off Vest purchases. Keeps the copier free.',
-          `Switches the discount code in Vest's purchase window to <b>${SUPPORT_CODE}</b> (5% off) each time it opens. Thank you for supporting the free copier.`,
+          supportOn(),
+          `Use code ${SUPPORT_CODE} at checkout`,
+          `${SUPPORT_PCT}% off Vest purchases. It pays me a commission, which keeps the copier free.`,
+          `On, the copier puts <b>${SUPPORT_CODE}</b> in Vest's code box at checkout, in place of another code if it saves you at least as much. You confirm it at your next checkout and see a short note after that. A code you type or pick stays. If your account has no code yet, turning this on links it to ${SUPPORT_CODE} permanently. You're asked again after updates.`,
         )}
         <div class="set-row"><button class="ghostbtn" data-act="copy-code">${ICON.copy} Copy code ${SUPPORT_CODE}</button></div>
       </div>`;
@@ -15491,10 +15729,10 @@
         </ul>
         <div class="rules-h">Free, with my code</div>
         <ul class="rules-list">
-          <li>STRATUH Copier is free. In return, whenever Vest's purchase window opens, it enters my code
-            <b>${SUPPORT_CODE}</b> (5% off your purchase) in place of any code already there, and the activity log says
-            when it does. Accepting these terms turns this on, even if you turned it off before. You can still type
-            another code at checkout, and <b>Settings → Support the copier</b> turns it off.</li>
+          <li>STRATUH Copier is free, and it works the same with or without my code. <b>${SUPPORT_CODE}</b> gives you
+            ${SUPPORT_PCT}% off Vest purchases and pays me a commission, which keeps the copier free.</li>
+          <li><b>You choose.</b> After this, the copier asks whether to use ${SUPPORT_CODE}, and asks again after updates.
+            Nothing happens at checkout until you say yes, and <b>Settings → Support the copier</b> changes it any time.</li>
         </ul>
         <div class="rules-terms">Full terms: <a href="${REPO_URL}/blob/main/DISCLAIMER.md" target="_blank" rel="noopener">Disclaimer</a>
           · <a href="${REPO_URL}/blob/main/LICENSE" target="_blank" rel="noopener">License</a></div>`;
@@ -15528,7 +15766,7 @@
       render();
       if (S.ackThenArm) arm();
       S.ackThenArm = false;
-      supportOnTerms(true); // just accepted: the code is on
+      supportOnTerms();
     };
   }
 

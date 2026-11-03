@@ -2,6 +2,11 @@
 
 Newest first. To update, click **Install** on the update row that appears in the panel whenever there's a newer version.
 
+## v0.41.3
+Minor improvements.
+
+- You'll be asked to read and accept the updated terms once.
+
 ## v0.41.2
 Your targets follow your position when you add or reduce.
 

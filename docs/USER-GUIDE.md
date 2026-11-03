@@ -78,7 +78,7 @@ their own browser.
   (saves one file with the whole log and the diagnostics) and **Clear**. The panel remembers whether you left it open. When the line is a problem,
   **Get help** sits next to it.
 - **Bottom bar:** the AMPED code on the left (click to copy it); on the right a coloured dot with your **version** and,
-  while copying, your **time to Vest** (e.g. `v0.41.2 · 64ms`): the copier makes a small read to Vest every 20 s, which
+  while copying, your **time to Vest** (e.g. `v0.41.3 · 64ms`): the copier makes a small read to Vest every 20 s, which
   also keeps its connection ready for your next copy. The dot: lime under 80 ms (good), grey 80-200 ms (OK), amber over
   200 ms (slow: followers' fills may land a tick or more from yours in fast markets), red when Vest isn't answering;
   grey with just the version when you're not copying. While Vest has updated its site, the bar shows that instead (amber
@@ -343,7 +343,7 @@ is put away until you're flat again.
 - **Only on the Trade page** (on by default) — hides the panel on Vest's other pages (Portfolio, Markets,
   Affiliate…). It keeps running and copying there, and shows on any page when something needs you (followers waiting
   on Flatten / Keep, or the first-run risk terms).
-- **Check for updates**, **Check now** and a GitHub link, and **Enter code AMPED at checkout** (§12). **Theme, chart
+- **Check for updates**, **Check now** and a GitHub link, and **Use code AMPED at checkout** (§12). **Theme, chart
   and text size** opens Appearance.
 
 **⋯ → Appearance** holds how things look:
@@ -488,12 +488,20 @@ and exactly what **Cap-to-fit** solves by sizing each account to what it can act
 
 ## 12. The AMPED code
 
-The copier is free; in return it uses my code **AMPED** (5% off your Vest purchases, and it helps keep the copier
-maintained). It's in the terms you accept on first use, and accepting them turns it on: the copier sets AMPED in Vest's
-purchase window each time it opens, replacing any other code there, and notes it in the activity log. If Vest refuses
-AMPED, your previous code is put back. Accepting the terms turns it on, even if you turned it off under an earlier
-version. You can still type another code at checkout, and **Settings → Support the copier** turns it off (and on
-again) and has a **Copy code AMPED** button; **Help** has the code too.
+The copier is free, and it works the same with or without my code. **AMPED** gives you 5% off Vest purchases and pays me
+a commission. The panel asks whether to use it, and asks again after updates (at most once a week, and never while
+you're copying or in a position).
+
+- **Yes:** the copier puts AMPED in Vest's code box at checkout. If another code is on, AMPED replaces it when AMPED saves
+  you at least as much. At your next checkout you confirm it once: **Keep AMPED**, or use your code that time. After
+  that, a short note fades by itself, and you're only asked again after an update.
+- **Your own code stays:** a code you type or pick is never replaced, and clicking in an empty box first leaves it to you.
+- **An account with no code yet:** Yes also links it to AMPED permanently. Vest doesn't let that link change.
+- **No:** the copier leaves Vest's code box alone and links nothing.
+
+**Settings → Support the copier** turns it on or off any time and has a **Copy code AMPED** button; **Help** has the code
+too. Turned off, or with the copier removed, Vest goes back to your account's own code the next time it loads, unless your
+account was linked to AMPED. Past purchases don't change.
 
 ## 13. Troubleshooting
 

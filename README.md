@@ -164,10 +164,12 @@ cancelled; trades already open keep copying their exits, and Flatten all always 
 The copier doesn't cost anything. I keep it running in my spare time, so if you were going to buy a Vest evaluation anyway,
 code **AMPED** takes 5% off and sends a small commission my way.
 
-It's part of the terms you accept when you first open the panel (and again when the terms change): from then on, the
-copier enters AMPED in the discount field of Vest's checkout window whenever it opens, replacing any code that was
-there, and logs the change. You can still type another code at checkout, and Settings → Support the copier turns it
-off.
+It's your call, and the copier works the same either way. The panel asks whether to use the code, and asks again after
+updates. Say yes and the copier puts AMPED in Vest's discount field at checkout, including over another code if you'd
+save at least as much. You confirm it at your next checkout and see a short note after that. Anything you type or
+pick yourself stays. If your Vest account has no code at all, yes also links it to AMPED for good, because Vest doesn't
+let that link change. Say no and the copier leaves the field alone. Settings → Support the copier changes your answer
+any time.
 
 ## Privacy
 
