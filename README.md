@@ -156,8 +156,8 @@ the page reloads with the new version (while copying, it asks first: **Reload no
 
 If a version turns out to have a problem, I can pause new trades from here while the fix ships. The panel shows
 **Paused** with a short note, usually asking you to install the newest version. Stop orders waiting in the tab are
-cancelled; trades already open keep copying their exits, and Flatten all always works. Now and then a short note
-(Vest maintenance, a heads-up before news) can show under the header too; × dismisses it.
+cancelled; trades already open keep copying their exits, and Flatten all always works. A one-line message
+(Vest maintenance, a heads-up before news) sometimes shows under the header too; × dismisses it.
 
 ## About the AMPED code
 

@@ -2,6 +2,15 @@
 
 Newest first. To update, click **Install** on the update row that appears in the panel whenever there's a newer version.
 
+## v0.41.4
+The copier works when your PC's clock is wrong, and a load that fails tells you why.
+
+- **A wrong PC clock no longer stops your accounts from loading.** With the clock hours off (often the wrong time zone with the time set by hand), the panel said "No active accounts found" even with accounts on Vest. The copier now goes by Vest's time for your session and for checking fills. When your clock is off by a minute or more the log says so once, for example "Your PC clock is 5 hours fast. The copier is using Vest's time."
+- **Setting your clock right needs no reload.** The copier notices the change within a second. Today's P&L, the Share cards and the times in the log still follow your PC's clock, so it's worth setting right: in Windows, Settings → Time & language → Date & time, pick your time zone and turn on Set time automatically.
+- **If your accounts don't load, the panel keeps saying why and keeps trying by itself.** It used to switch to "No active accounts found" a moment later, and wait for you to press Reload accounts.
+- **A report you're typing in Help is no longer cleared** when your accounts finish loading.
+- **Fixes:** the fill line could read "Fills 1/0 confirmed" when your master's own fill couldn't be checked.
+
 ## v0.41.3
 Minor improvements.
 

@@ -46,7 +46,7 @@ cancels the followers' copies without placing new ones, so leave limits alone un
 minutes (this check stays on even with update checks off), and the pause lifts on its own. If GitHub can't be
 reached, the copier keeps working as it was.
 
-**Notices:** now and then a short note may show under the panel's header (planned Vest maintenance, a heads-up before
+**Notices:** a one-line message sometimes shows under the panel's header (planned Vest maintenance, a heads-up before
 big news). Click × to dismiss it; it won't come back, but a new notice will.
 
 **Sharing with a friend:** the userscript contains **no personal information** — no tokens, keys,
@@ -78,7 +78,7 @@ their own browser.
   (saves one file with the whole log and the diagnostics) and **Clear**. The panel remembers whether you left it open. When the line is a problem,
   **Get help** sits next to it.
 - **Bottom bar:** the AMPED code on the left (click to copy it); on the right a coloured dot with your **version** and,
-  while copying, your **time to Vest** (e.g. `v0.41.3 · 64ms`): the copier makes a small read to Vest every 20 s, which
+  while copying, your **time to Vest** (e.g. `v0.41.4 · 64ms`): the copier makes a small read to Vest every 20 s, which
   also keeps its connection ready for your next copy. The dot: lime under 80 ms (good), grey 80-200 ms (OK), amber over
   200 ms (slow: followers' fills may land a tick or more from yours in fast markets), red when Vest isn't answering;
   grey with just the version when you're not copying. While Vest has updated its site, the bar shows that instead (amber
@@ -489,7 +489,7 @@ and exactly what **Cap-to-fit** solves by sizing each account to what it can act
 ## 12. The AMPED code
 
 The copier is free, and it works the same with or without my code. **AMPED** gives you 5% off Vest purchases and pays me
-a commission. The panel asks whether to use it, and asks again after updates (at most once a week, and never while
+a commission. The panel asks before using it, and asks again after updates (at most once a week, and never while
 you're copying or in a position).
 
 - **Yes:** the copier puts AMPED in Vest's code box at checkout. If another code is on, AMPED replaces it when AMPED saves
@@ -509,7 +509,12 @@ Questions or setup help: ask in the [Discord](https://discord.gg/Aa69y9KnM3).
 
 - **Panel didn't appear** — confirm the script is enabled in Tampermonkey and you're on
   `next.vestmarkets.com`; refresh.
-- **"Couldn't capture your Vest session"** — click around Vest for a second, then **⋯ → Reload accounts**.
+- **"Couldn't capture your Vest session"** — make sure you're logged in to Vest. The copier keeps trying by itself and
+  loads your accounts once it sees your session; **⋯ → Reload accounts** tries right away.
+- **"Your PC clock is 5 hours fast" (or slow) in the log** — your PC's clock or time zone is set wrong. Copying still
+  works: the copier goes by Vest's time. Today's P&L, the Share cards and the times in the log follow your PC, so set
+  it right: in Windows, Settings → Time & language → Date & time, pick your time zone and turn on Set time
+  automatically. No reload needed.
 - **Breakeven stays grey** — price isn't clear of your entry yet (the bid, for a long, or the ask, for a short, 2 ticks
   past it; 4 ticks when Vest's order book isn't coming through), the stop is already at or past breakeven, or the
   position has no stop. Hover the button for which.

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vest Copier
 // @namespace    vestcopier
-// @version      0.41.3
+// @version      0.41.4
 // @description  Copies a master Vest account's trades to your other Vest accounts, live, and adds a points-based order panel.
 // @author       xAmped
 // @license      STRATUH Copier License — free to use, no selling; see LICENSE
@@ -38,7 +38,7 @@
     })(),
   };
 
-  const VERSION = '0.41.3';
+  const VERSION = '0.41.4';
   // Where this script runs from, read off its own first stack frame (each script manager names it differently): the
   // diagnostics use it to tell the copier's own errors from Vest's. Null when the stack shows no address.
   const OWN_SRC = (() => {
@@ -160,6 +160,132 @@
   // new Map([["SPX-USD-PERP",5n],["NDX-USD-PERP",2n],["RTY-USD-PERP",5n]])). A mini is 10 micros. Orders still send units.
   const MICRO_UNITS = { 'NDX-USD-PERP': 2, 'SPX-USD-PERP': 5, 'RTY-USD-PERP': 5 };
 
+  // ───────────────────────── Vest's clock ─────────────────────────
+  // Vest's tokens expire by Vest's clock and its fill history is asked for by time, so neither may be judged by the PC's
+  // clock: one set 5 hours fast made every login token look expired, and no account ever loaded (a user's report,
+  // 2026-11-21). Vest's own page corrects its clock from this same public endpoint. Read at load, every CLOCK_SYNC_MS,
+  // each time the accounts are loaded, with each poll while a session was seen that looks expired and no account is
+  // loaded, and at once when the PC's clock is set to another time (watchClock). An answer that fails or isn't a
+  // believable time changes nothing: until the first good one the difference is 0, the PC's clock as before. After the
+  // PC's clock has moved and until Vest's time is read again, the difference is in doubt (`_clockDoubt`): nothing is
+  // decided on a fill that wasn't found by it.
+  const CLOCK_PATH = '/v3/exchangeInfo/ntp',
+    CLOCK_SYNC_MS = 5 * 60000,
+    CLOCK_TIMEOUT_MS = 3000,
+    CLOCK_SAY_MS = 60000, // off by a minute or more: said once in the log
+    CLOCK_MIN_MS = 1.6e12, // 2020 to 2100: anything else isn't a time in milliseconds
+    CLOCK_MAX_MS = 4.1e12,
+    CLOCK_WATCH_MS = 1000, // how often the PC's clock is looked at for a change
+    CLOCK_JUMP_MS = 2000, // it moved this much against the page's steady clock: it was set to another time
+    CLOCK_JUMP_TRIES = 6, // reads of Vest's time after that, until one answers...
+    CLOCK_JUMP_RETRY_MS = 5000; // ...each this long after the one before failed
+  let _clockOffset = 0, // Vest's time minus the PC's, in ms
+    _clockRun = null, // the read in flight (one at a time)
+    _clockSaid = false,
+    _clockNoted = null, // the difference last recorded in the diagnostics
+    _clockUnread = false,
+    _clockDrift = Date.now() - performance.now(), // the PC's clock minus the page's steady one, at the last look
+    _clockDoubt = false, // the PC's clock moved and Vest's time hasn't answered since: the difference may be off by it
+    _clockTries = 0; // reads left in the run that follows a move (one run at a time)
+  const vestNow = () => Date.now() + _clockOffset;
+  // How far off, in words, to the minute: "12 minutes", "5 hours", "1 hour 30 minutes", "3 days 4 hours".
+  const clockSpan = (ms) => {
+    const min = Math.round(ms / 60000),
+      d = Math.floor(min / 1440),
+      h = Math.floor((min % 1440) / 60),
+      m = min % 60;
+    return [d && plural(d, 'day'), h && plural(h, 'hour'), !d && m && plural(m, 'minute')].filter(Boolean).join(' ');
+  };
+  // A read that gave no time: nothing changes, the difference stays as it was. Recorded once, and only while there has
+  // been no good read, as a fixed word: never Vest's answer or an error's own text, which would go into a file the
+  // trader shares.
+  function clockUnread(why) {
+    if (!_clockUnread && _clockNoted == null) {
+      _clockUnread = true;
+      diag('clock', { outcome: 'unread', why });
+    }
+    return false;
+  }
+  async function readClock() {
+    const ctl = typeof AbortController === 'function' ? new AbortController() : null,
+      timer = ctl && setTimeout(() => ctl.abort(), CLOCK_TIMEOUT_MS);
+    let why = 'network';
+    try {
+      const t0 = performance.now(),
+        wall0 = Date.now();
+      const r = await _fetch(API + CLOCK_PATH, { cache: 'no-store', ...(ctl ? { signal: ctl.signal } : {}) });
+      if (!r.ok) return clockUnread('http-' + r.status);
+      why = 'not-json';
+      const j = await r.json();
+      const rtt = performance.now() - t0,
+        ts = j && typeof j.timestamp === 'number' ? j.timestamp : NaN; // a number of ms, nothing else
+      if (!(ts > CLOCK_MIN_MS && ts < CLOCK_MAX_MS)) return clockUnread('not-a-time');
+      // longer than its own time limit allows (the PC slept with the read on its way): the answer is old
+      if (rtt > 2 * CLOCK_TIMEOUT_MS) return clockUnread('too-slow');
+      // the PC's clock moved, or the PC slept, with this read on its way: the answer is from before and the clock it
+      // is set against from after. Not a measurement, and no end to the doubt: the next read is a fresh one
+      if (Math.abs(Date.now() - wall0 - rtt) >= CLOCK_JUMP_MS) {
+        watchClock();
+        return clockUnread('clock-moved');
+      }
+      // Vest's answer was made about half the round trip ago (Vest's page corrects the same way)
+      _clockOffset = Math.round(ts - (Date.now() - rtt / 2));
+      _clockDoubt = false;
+      // recorded on the first good read and when it moves by a second or more, never once per read
+      if (_clockNoted == null || Math.abs(_clockOffset - _clockNoted) >= 1000) {
+        _clockNoted = _clockOffset;
+        diag('clock', { offsetMs: _clockOffset, rttMs: Math.round(rtt) });
+      }
+      if (!_clockSaid && Math.abs(_clockOffset) >= CLOCK_SAY_MS) {
+        _clockSaid = true;
+        // Vest's time behind the PC's: the PC is ahead (fast)
+        logEvent(
+          'warn',
+          `Your PC clock is ${clockSpan(Math.abs(_clockOffset))} ${_clockOffset < 0 ? 'fast' : 'slow'}. The copier is using Vest's time.`,
+        );
+      }
+      return true;
+    } catch {
+      return clockUnread(ctl && ctl.signal.aborted ? 'timeout' : why);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+  // Read Vest's clock: true when it answered with a time. Never rejects: a caller may wait on it, and a failed read
+  // only leaves the difference as it was.
+  function syncClock() {
+    if (!_clockRun)
+      _clockRun = readClock()
+        .catch(() => false)
+        .finally(() => {
+          _clockRun = null;
+        });
+    return _clockRun;
+  }
+  // The PC's clock set to another time while the page is open (a trader told theirs is wrong corrects it): the
+  // difference read before is off by that much, and a fill looked up by it would be looked for hours away. So the
+  // difference is in doubt from here, and Vest's time is read again at once, then a few times more while that fails
+  // (one run of reads, however often the clock moves). Told by the PC's clock moving against the page's own steady
+  // clock; a PC waking from sleep can look the same, and then the read costs nothing. Looked at every CLOCK_WATCH_MS,
+  // when the tab is shown again, and right before a fill is looked up (a hidden tab's timers run late).
+  function watchClock() {
+    const drift = Date.now() - performance.now(),
+      moved = drift - _clockDrift;
+    _clockDrift = drift;
+    if (Math.abs(moved) < CLOCK_JUMP_MS) return;
+    _clockDoubt = true;
+    diag('clock', { outcome: 'moved', movedMs: Math.round(moved) });
+    const running = _clockTries > 0;
+    _clockTries = CLOCK_JUMP_TRIES;
+    if (!running) rereadClock();
+  }
+  function rereadClock() {
+    syncClock().then((ok) => {
+      if (ok || --_clockTries <= 0) _clockTries = 0;
+      else setTimeout(rereadClock, CLOCK_JUMP_RETRY_MS);
+    });
+  }
+
   // ───────────────────────── jwt / token capture ─────────────────────────
   // The page's own tokens are read from its requests; nothing is stored. A user token (no accountId claim) lists
   // accounts and mints short-lived account tokens; an account token identifies which account an order is for.
@@ -184,7 +310,9 @@
     if (c.userId && !c.accountId && c.exp) userToken = t;
   };
   const acctIdFromAuth = (auth) => (auth ? decodeJwt(bearer(auth)).accountId || null : null);
-  const userTokenOk = () => userToken && decodeJwt(userToken).exp * 1000 > Date.now() + 5000;
+  // While the difference is in doubt (the PC's clock just moved), a session that was seen isn't called expired here:
+  // Vest answers 401 if it is. Calling a good one expired stopped every read (balances, the Trade tab's position).
+  const userTokenOk = () => userToken && (_clockDoubt || decodeJwt(userToken).exp * 1000 > vestNow() + 5000);
 
   // ───────────────────────── request hooks (token capture + master detection) ─────────────────────────
   const ORDER_RE = /\/v3\/positions\/(open|append|reduce|close|cancel-order|stop-loss|take-profit)(\?|$)/;
@@ -989,7 +1117,7 @@
   // `margin`: renew a token this close to expiring (the keep-warm tick renews early, so an order never waits on one).
   const mintAccountToken = (id, margin = TOKEN_REFRESH_MARGIN_MS) => {
     const c = acctTokens[id];
-    if (c && c.exp - margin > Date.now()) return Promise.resolve(c);
+    if (c && c.exp - margin > vestNow()) return Promise.resolve(c);
     return (minting[id] =
       minting[id] ||
       (async () => {
@@ -1086,7 +1214,7 @@
   async function fetchEquities() {
     try {
       // the last half hour at one point a minute: the freshest the series gets (a 2-day window gave ~6-minute points)
-      const now = Date.now();
+      const now = vestNow();
       const r = await api(`/v3/trading-performance/series?from=${now - 30 * 60000}&to=${now}&points=30`);
       const latestTs = {},
         out = {};
@@ -1381,7 +1509,12 @@
   // about since this read began keeps the feed's newer state.
   let _lastFullRead = 0;
   async function refreshBalances() {
-    if (!userTokenOk()) return;
+    if (!userTokenOk()) {
+      // a session was seen and looks expired, with no account loaded: perhaps by the PC's clock alone. Vest's is read
+      // again, and the load goes on at once if the session is good by it (never with no session seen: no read helps)
+      if (userToken && !Object.keys(S.byId).length) syncClock().then(() => userTokenOk() && refreshBalances());
+      return;
+    }
     if (!Object.keys(S.byId).length) return loadFirstAccounts();
     if (_balBusy) {
       _balAgain = true; // one more read right after this one, so a fill during a read isn't missed
@@ -1452,7 +1585,16 @@
     if (!_root || S.arming) return;
     try {
       const r = await api('/v3/capital/accounts/active');
-      if (!((r && r.accounts) || []).length || Object.keys(S.byId).length) return;
+      if (Object.keys(S.byId).length) return;
+      if (!((r && r.accounts) || []).length) {
+        // Vest answered this session and lists none: after a load that failed, that is what the Copier tab says now
+        if (_loadFailed) {
+          _loadFailed = false;
+          _loadNote = null;
+          render();
+        }
+        return;
+      }
       await refresh();
     } catch {
       /* best effort: nothing to do if this fails */
@@ -1765,14 +1907,21 @@
     if (ff) return ff.missing ? null : { price: ff.price, at: ff.at, src: 'feed' };
     try {
       const { token } = await mintAccountToken(accountId);
-      const nowS = Math.floor(Date.now() / 1000),
+      // The PC's clock just moved (watchClock) and Vest's time hasn't answered since: the window below may be hours
+      // off, so a fill not found in it is unknown, never "didn't fill" (that verdict drops a follower from its trade
+      // or takes an add back). Vest's time is asked for, never waited on: this runs inside a trade's queue too, where
+      // a close would wait behind it. A later look (fill checks look three times) has the answer.
+      watchClock();
+      const doubt = _clockDoubt;
+      if (doubt) syncClock();
+      const nowS = Math.floor(vestNow() / 1000),
         win = EXEC_WINDOW_S;
       const q = `account_id=${encodeURIComponent(accountId)}&symbol=${encodeURIComponent(symbol)}&from=${nowS - win}&to=${nowS + win}&limit=${EXEC_PAGE}`;
       const r = await api(`/v3/executions?${q}`, token);
       if (!r || !Array.isArray(r.items)) return undefined; // a changed response shape is not "no fill"
       const it = r.items.find((x) => x.id === orderId);
       if (it) return { price: parseFloat(it.price), at: it.executedAt };
-      return r.items.length >= EXEC_PAGE ? undefined : null; // a full page may have pushed it out: unknown
+      return doubt || r.items.length >= EXEC_PAGE ? undefined : null; // a full page may have pushed it out: unknown
     } catch {
       return undefined;
     }
@@ -1963,7 +2112,7 @@
         pts: slipSum / slipN,
         gapMs: gaps.length ? Math.round(gaps.reduce((a, b) => a + b, 0) / gaps.length) : null,
       });
-    const n = placed.length - unknown.length;
+    const n = placed.length - unknownPlaced.length; // followers whose fill was checked (the master isn't one of them)
     if ((quiet || asMaster) && !filled)
       logEvent('info', "↳ the followers' copies didn't fill either: nothing is open.");
     else if (noFill.length) logEvent('warn', `Fills ${filled}/${n} — not filled: ${noFill.join(', ')}.`);
@@ -6348,7 +6497,7 @@
       });
       await probe('fills', async () => {
         if (!tok) return ['fail', 'Not checked: no account token'];
-        const now = Math.floor(Date.now() / 1000);
+        const now = Math.floor(vestNow() / 1000);
         const q = `account_id=${encodeURIComponent(testId)}&symbol=${encodeURIComponent(sym)}&from=${now - 86400}&to=${now}&limit=5`;
         const r = await api(`/v3/executions?${q}`, tok);
         if (!Array.isArray(r.items)) return ['fail', 'No items list'];
@@ -11512,7 +11661,7 @@
   function renderCopier(body) {
     const rows = Object.values(S.byId);
     if (!rows.length) {
-      body.innerHTML = `<div class="empty">No active accounts found.</div>`;
+      body.innerHTML = _loadNote || `<div class="empty">No active accounts found.</div>`;
       return;
     }
     if (S.armed || S.arming) S.editing = false;
@@ -18237,24 +18386,71 @@
     last.className = 'loglast ' + (e0 ? e0.level : '');
   }
 
+  // What the Copier tab says while no account is loaded (waiting for the session, loading, or why the load failed),
+  // kept so a redraw can't replace it with "No active accounts found", which is only true after a load that found none.
+  let _loadNote = null,
+    _loadRun = 0,
+    _loadFailed = false;
   async function refresh() {
+    const run = ++_loadRun;
     renderHealth();
     const body = _root.querySelector('.body');
     const show = (html) => {
+      if (run !== _loadRun) return; // a newer load is in charge
+      _loadNote = html;
+      // written only where the Copier tab is what's on screen: another tab, a sheet, the site check or the code
+      // question stays as it is (a report being typed in Help was wiped by a load finishing), and the Copier tab draws
+      // the note when it's next shown
+      if (currentView() !== 'accounts' || siteGate() || codeAskDue()) return;
       body.dataset.view = '';
       body.innerHTML = html;
     };
+    // A load that failed: its message stays, it's said once in the log, and the 20 s poll loads the accounts by itself
+    // once the session is valid and Vest lists one (refreshBalances -> loadFirstAccounts -> here).
+    const failed = (html, reason, error = null) => {
+      if (run !== _loadRun) return; // a newer load is in charge
+      show(html);
+      // a Reload that failed with accounts on screen: they come back with the next redraw, and the reason isn't kept
+      // for a day they're all gone (then "No active accounts found" is what's true)
+      const have = Object.keys(S.byId).length > 0;
+      if (have) _loadNote = null;
+      if (!_loadFailed) {
+        _loadFailed = true;
+        // no session yet is the usual state of a page not logged in: said plainly, not as a problem
+        if (reason === 'no-session')
+          logEvent(
+            'info',
+            "Waiting for your Vest session: your accounts load by themselves once you're logged in to Vest.",
+          );
+        else logEvent('warn', `Couldn't load your accounts (${error}).${have ? '' : ' Trying again by itself.'}`);
+        // for a report: was a session seen, and how long past its expiry did it look by the clock in use
+        diag('accounts_failed', {
+          reason,
+          error,
+          tokenSeen: !!userToken,
+          tokenExpiredMs: userToken ? Math.round(vestNow() - decodeJwt(userToken).exp * 1000) : null,
+          clockOffsetMs: _clockOffset,
+        });
+      }
+      startBalancePoll();
+    };
+    // not written to the panel here: a Reload with accounts on screen leaves them there
+    _loadNote = '<div class="empty">Waiting for your Vest session…</div>';
+    await syncClock(); // the session is judged by Vest's clock
     try {
       await waitForUserToken();
     } catch {
-      return show(
+      return failed(
         `<div class="empty">Couldn't capture your Vest session.<br>Click around the site, then click Reload accounts (↻).</div>`,
+        'no-session',
       );
     }
     show(`<div class="empty">Loading accounts…</div>`);
     readScreen();
     try {
       await buildRegistry();
+      _loadNote = null;
+      _loadFailed = false;
       dropClaimReview(); // it named the accounts as they were
       render();
       logEvent('info', `Loaded ${Object.keys(S.byId).length} active accounts.`);
@@ -18280,7 +18476,7 @@
         render();
       } else supportOnTerms();
     } catch (e) {
-      show(`<div class="empty">Failed to load accounts: ${esc(e.message)}</div>`);
+      failed(`<div class="empty">Failed to load accounts: ${esc(e.message)}</div>`, 'error', e.message);
     }
   }
 
@@ -18327,6 +18523,10 @@
     initBuild();
     setInterval(autoSiteCheck, 1000); // Vest updated: the site check runs by itself
     loadAllSymbolRules();
+    syncClock();
+    setInterval(syncClock, CLOCK_SYNC_MS);
+    setInterval(watchClock, CLOCK_WATCH_MS);
+    document.addEventListener('visibilitychange', () => !document.hidden && watchClock()); // a hidden tab's timers run late
     diag('session', {
       version: VERSION,
       build: fingerprint() || null,
