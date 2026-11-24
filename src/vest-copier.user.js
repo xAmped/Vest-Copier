@@ -1483,7 +1483,8 @@
         const r = await (
           await _fetch(`${API}/v3/ticker/latest?symbols=${need.map(encodeURIComponent).join(',')}`)
         ).json();
-        for (const t of r.tickers || []) if (parseFloat(t.markPrice) > 0) out[t.symbol] = parseFloat(t.markPrice);
+        for (const t of r.tickers || [])
+          if (parseFloat(t.markPrice) > 0 && /^[A-Za-z0-9_-]+$/.test(t.symbol)) out[t.symbol] = parseFloat(t.markPrice);
       } catch {
         /* best effort: nothing to do if this fails */
       }
