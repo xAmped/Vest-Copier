@@ -78,7 +78,7 @@ their own browser.
   (saves one file with the whole log and the diagnostics) and **Clear**. The panel remembers whether you left it open. When the line is a problem,
   **Get help** sits next to it.
 - **Bottom bar:** the AMPED code on the left (click to copy it); on the right a coloured dot with your **version** and,
-  while copying, your **time to Vest** (e.g. `v0.41.4 · 64ms`): the copier makes a small read to Vest every 20 s, which
+  while copying, your **time to Vest** (e.g. `v0.41.5 · 64ms`): the copier makes a small read to Vest every 20 s, which
   also keeps its connection ready for your next copy. The dot: lime under 80 ms (good), grey 80-200 ms (OK), amber over
   200 ms (slow: followers' fills may land a tick or more from yours in fast markets), red when Vest isn't answering;
   grey with just the version when you're not copying. While Vest has updated its site, the bar shows that instead (amber
@@ -488,14 +488,15 @@ and exactly what **Cap-to-fit** solves by sizing each account to what it can act
 
 ## 12. The AMPED code
 
-The copier is free, and it works the same with or without my code. **AMPED** gives you 5% off Vest purchases and pays me
-a commission. The panel asks before using it, and asks again after updates (at most once a week, and never while
+The copier is free, and it works the same with or without my code. **AMPED** gives you at least 5% off Vest purchases and pays
+me a commission. The panel asks before using it, and asks again after updates (at most once a week, and never while
 you're copying or in a position).
 
-- **Yes:** the copier puts AMPED in Vest's code box at checkout. If another code is on, AMPED replaces it when AMPED saves
-  you at least as much. At your next checkout you confirm it once: **Keep AMPED**, or use your code that time. After
-  that, a short note fades by itself, and you're only asked again after an update.
-- **Your own code stays:** a code you type or pick is never replaced, and clicking in an empty box first leaves it to you.
+- **Yes:** the copier puts AMPED in Vest's code box each time you open a purchase window. If another code is on, AMPED
+  replaces it. At your next checkout you confirm it once: **Keep AMPED**, or use your code that time. After that, a
+  short note fades by itself, and you're only asked again after an update.
+- **To use another code:** type it or pick it. It stays for that purchase window, and clicking in an empty box first
+  leaves it to you. The next time you open a purchase window, AMPED goes back in.
 - **An account with no code yet:** Yes also links it to AMPED permanently. Vest doesn't let that link change.
 - **No:** the copier leaves Vest's code box alone and links nothing.
 

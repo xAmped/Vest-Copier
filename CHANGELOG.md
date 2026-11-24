@@ -2,6 +2,9 @@
 
 Newest first. To update, click **Install** on the update row that appears in the panel whenever there's a newer version.
 
+## v0.41.5
+Minor improvements.
+
 ## v0.41.4
 The copier works when your PC's clock is wrong, and a load that fails tells you why.
 

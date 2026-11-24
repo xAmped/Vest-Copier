@@ -34,11 +34,12 @@ is yours to check. Nothing in this project is financial or trading advice.
 
 ## Referral code
 
-STRATUH Copier is free, and it works the same with or without the author's code **AMPED**, which takes 5% off Vest
-purchases and pays the author a commission. The panel asks before using it, and asks again after updates.
+STRATUH Copier is free, and it works the same with or without the author's code **AMPED**, which takes at least 5% off
+Vest purchases and pays the author a commission. The panel asks before using it, and asks again after updates.
 
-- **Yes:** the copier puts AMPED in Vest's code box at checkout, in place of another code if AMPED saves you at least as
-  much. You confirm it at your next checkout and see a short note after that. A code you type or pick stays.
+- **Yes:** the copier puts AMPED in Vest's code box each time you open a purchase window, in place of another code. You
+  confirm it at your next checkout and see a short note after that. A code you type or pick stays for that purchase
+  window.
 - If your Vest account has no code yet, Yes also links it to AMPED permanently. Vest doesn't let that link change.
 - **No:** the copier leaves Vest's code box alone and links nothing.
 - **Settings → Support the copier** changes this any time. Turned off, or with the copier removed, Vest goes back to your
