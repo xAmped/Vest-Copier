@@ -4,16 +4,17 @@
 [![downloads](https://img.shields.io/github/downloads/xAmped/Vest-Copier/total?style=flat-square&label=downloads&labelColor=0c0c0d&color=c8f542)](https://github.com/xAmped/Vest-Copier/releases)
 [![discord](https://img.shields.io/badge/discord-join-c8f542?style=flat-square&labelColor=0c0c0d)](https://discord.gg/Aa69y9KnM3)
 [![price](https://img.shields.io/badge/price-free-c8f542?style=flat-square&labelColor=0c0c0d)](LICENSE)
+[![website](https://img.shields.io/badge/website-stratuh.com-c8f542?style=flat-square&labelColor=0c0c0d)](https://stratuh.com)
 
 Trade one Vest account and your other accounts take the same trade, live. It's a Tampermonkey userscript that runs
 inside the [Vest Markets](https://next.vestmarkets.com) page, part of STRATUH, my trading tools. It used to be called
 Vest Copier: same script, same install link, new look.
 
-[![Watch the 10-minute tutorial video](docs/tutorial/img/tutorial-video.jpg)](https://youtu.be/mFJGsJ0IInY)
+[![Watch the 5-minute video](https://i.ytimg.com/vi/2halihW34fc/maxresdefault.jpg)](https://youtu.be/2halihW34fc)
 
 [![Install vest-copier.user.js](https://img.shields.io/badge/install-vest--copier.user.js-c8f542?style=for-the-badge&labelColor=0c0c0d)](https://github.com/xAmped/Vest-Copier/releases/latest/download/vest-copier.user.js)
 
-New here? Start with the [10-minute tutorial video](https://youtu.be/mFJGsJ0IInY), the [tutorial](https://xamped.github.io/Vest-Copier/tutorial/) or the
+New here? Start at [stratuh.com](https://stratuh.com) and the [5-minute video](https://youtu.be/2halihW34fc), or the
 [one-page quick start](docs/Vest-Copier-Quick-Start.pdf). Every button is in the [user guide](docs/USER-GUIDE.md).
 
 <table>
@@ -81,7 +82,7 @@ minutes:
    **Stop copying** stops; positions stay as they are.
 
 > [!TIP]
-> Stuck? Watch the [tutorial video](https://youtu.be/mFJGsJ0IInY) or ask in the [Discord](https://discord.gg/Aa69y9KnM3).
+> Stuck? Watch the [video](https://youtu.be/2halihW34fc) or ask in the [Discord](https://discord.gg/Aa69y9KnM3).
 
 ## The panel
 
