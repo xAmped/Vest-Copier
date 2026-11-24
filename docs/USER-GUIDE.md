@@ -57,54 +57,59 @@ their own browser.
 
 ## 2. The panel at a glance
 
-- **Header:** the STRATUH logo, a **state** (lime **Copying**, grey **Not copying**, amber **Needs you**, red **Check
-  failed**; grey **Checking Vest** while the site check runs), the **⋯** menu and minimise (`–`).
-- **The status block:** one sentence saying what's happening ("Copying Account 11 to 4 followers"), a line under it
-  saying what last happened ("Last copy 4 of 4 filled · 19:07", or how many copies today), then **Start copying** /
-  **Stop copying** and **Flatten all**. They're there on every tab.
-- **Tabs:** **Copier**, **Trade** and **P&L**.
-- **⋯ menu:** **Docked on chart** (click to float the panel anywhere, and again to dock it), **Reload accounts**,
-  **Settings**, **Appearance**, **Help and rules** and **Report a problem**. Settings, Appearance and Help open over the
-  panel; the arrow at the top
-  left brings you back.
-- **Copier tab:** your **master** on top, then the **followers**, then any account that isn't copied under **Left out**,
+Since v0.42 the copier lives **inside Vest's page**, in two places:
+
+- **The copier bar, in Vest's header** (the empty middle of the top bar): the STRATUH mark, **Copying live** (lime) or
+  **Copying off**, your master and followers as number tiles (11 → 12 14 15 16), the last copy, **Today** (your P&L
+  across your accounts since Vest's trading day began), your time to Vest, **Turn on / Turn off**, **Flatten all** and
+  **Menu**. Click the state or the tiles to open **Accounts**. When the window gets narrower the bar drops the least
+  important parts first (last copy, the word STRATUH, the tiles, Today and the time to Vest, Turn on / off); copying on
+  or off, Flatten all and Menu always stay. With no room left in Vest's header, the bar's line moves to the top of the
+  order panel.
+- **The order panel, in Vest's order card** (the right-hand column, where Vest's own Market / Limit / Scale form is). A
+  switch on top picks **Vest's form** or **STRATUH**; STRATUH is first, and the panel remembers your pick. With
+  STRATUH picked, Vest's form is hidden under the panel (nothing of Vest's is removed: pick Vest's form to use it, for
+  Scale orders, a size in USD or changing your leverage). The panel has three tabs, **Trade**, **Bracket** and
+  **Size** (section 6).
+- **Menu** (in the bar): **Accounts** (your master, followers and who's left out, with **Turn on copying** and
+  **Flatten all** on top), **P&L and Share**, **Settings**, **Appearance**, **Help and rules**, **Report a problem**,
+  **Reload accounts** and **Float the panel instead**. Each opens in the order panel; **‹ Trade** at its top left
+  brings you back.
+- **Accounts:** your **master** on top, then the **followers**, then any account that isn't copied under **Left out**,
   with the reason. One line each: the account's number in a square and its name (the one you gave it on Vest, else
-  "Account 07"; the log and saved files say both, Account 07 ("Swing")) (an **Eval** or **Instant** tag when it isn't a funded
-  account), the **room left** to its floor with a small meter, and a dot: lime in a trade while copying, grey flat, hollow not copied,
-  red when Vest says it can't trade. Hover a row for its balance and floor (the **daily floor** on plans with a daily loss
-  limit, when it's the higher one today). A follower with **less than 30% of its drawdown left** shows "Only $310 to its
-  floor" in amber: it still copies, it's just a heads-up. **Edit** changes the master, followers and sizing.
-- **Footer:** the latest activity line. Click it to open the log (the last six lines; scroll for more), with **Download**
-  (saves one file with the whole log and the diagnostics) and **Clear**. The panel remembers whether you left it open. When the line is a problem,
-  **Get help** sits next to it.
+  "Account 07"; the log and saved files say both, Account 07 ("Swing")) (an **Eval** or **Instant** tag when it isn't a
+  funded account), the **room left** to its floor with a small meter, and a dot: lime in a trade while copying, grey
+  flat, hollow not copied, red when Vest says it can't trade. Hover a row for its balance and floor (the **daily floor**
+  on plans with a daily loss limit, when it's the higher one today). A follower with **less than 30% of its drawdown
+  left** shows "Only $310 to its floor" in amber: it still copies, it's just a heads-up. **Edit** changes the master,
+  followers and sizing (only while copying is off).
+- **Footer:** the latest activity line. Click it to open the log (the last six lines; scroll for more), with
+  **Download** (saves one file with the whole log and the diagnostics) and **Clear**. When the line is a problem, **Get
+  help** sits next to it.
 - **Bottom bar:** the AMPED code on the left (click to copy it); on the right a coloured dot with your **version** and,
-  while copying, your **time to Vest** (e.g. `v0.41.5 · 64ms`): the copier makes a small read to Vest every 20 s, which
+  while copying, your **time to Vest** (e.g. `v0.42.0 · 64ms`): the copier makes a small read to Vest every 20 s, which
   also keeps its connection ready for your next copy. The dot: lime under 80 ms (good), grey 80-200 ms (OK), amber over
   200 ms (slow: followers' fills may land a tick or more from yours in fast markets), red when Vest isn't answering;
-  grey with just the version when you're not copying. While Vest has updated its site, the bar shows that instead (amber
-  while the check runs, red if it failed and copying is off). Click it for the **status card**: the time to Vest in
-  big numbers with its level, the last 5 minutes as bars against the 80 and 200 ms lines and how steady it is,
+  grey with just the version when you're not copying. While Vest has updated its site, the bar shows that instead
+  (amber while the check runs, red if it failed and copying is off). Click it for the **status card**: the time to Vest
+  in big numbers with its level, the last 5 minutes as bars against the 80 and 200 ms lines and how steady it is,
   **Last copy** (how far your followers filled from you on the last copied trade, in points, and how long after),
   **Test connection** (about 10 quick checks, copying or not, then one plain verdict, kept until you close the card),
   **Run site check**, and Vest's build, your version, the API budget and Vest's slowest answer today. None of it
   promises a fill: it says what your connection means for copies.
 - **Alerts** show above the footer only when they apply: followers left in a trade without the master (**Flatten** /
-  **Keep it**), a new version, Vest's screen on another account while copying, the theme's first-time bar, and short messages.
+  **Keep it**), a new version, Vest's screen on another account while copying, the theme's first-time bar, and short
+  messages.
 
-**Where it sits.** The panel is docked on Vest's chart: it starts on the left, just right of the chart's drawing
-tools, and stays inside the chart whatever you resize (the window, Vest's order book or its positions list). Drag the header
-to move it; drag the bottom-right corner to resize. Its spot is remembered relative to the chart. **⋯ → Docked on
-chart** floats it anywhere in the window instead, and docks it back. On a Vest page without a chart it floats. In a
-small window, where Vest stacks its layout and the chart gets too small to hold the panel, it floats on its own (top
-left by default, or your floating spot) and docks back when the chart is big enough. Vest's menus and dialogs (market
-selector, Add Account, settings) open above the panel. The chart's own menus (timeframe, chart settings, indicators) are
-drawn inside the chart, so the panel fades out of their way while one is open over it.
-
-**Minimised,** it's a small pill: the logo, the state and one button. While copying it shows the open P&L and
-**Flatten** (one click, like Flatten all); when ready, **Start**; when something needs you, **Open** (and the account's
-name). Click anywhere else on it to open the panel, or press and move to drag it. A red edge means something needs you
-(followers waiting on Flatten / Keep, Vest's live feed lost while copying, copying off after a site check, or Vest not
-answering: "No answer"); amber means Vest updated its site and the check is running, or Vest is slow (with the time). Position, size and open or minimised are all remembered.
+**The floating panel.** Where Vest's order card isn't there (Vest's other pages, a window narrower than 768 px, or Vest
+changing its page), the copier falls back to the floating panel of earlier versions, docked on Vest's chart, with the
+same Trade, Bracket and Size tabs. **Menu › Float the panel instead** (or Settings › **In Vest's order card**, off)
+keeps it floating; the floating panel's **⋯** menu has **Back in Vest's order card**. Floating, it's docked on Vest's
+chart: drag the header to move it, the bottom-right corner to resize it, and **⋯ → Docked on chart** floats it
+anywhere in the window. **Minimised,** it's a small pill: the logo, the state and one button (while copying the open P&L
+and **Flatten**; when ready, **Start**; when something needs you, **Open**). A red edge means something needs you,
+amber that Vest updated its site and the check is running, or Vest is slow. Position, size and open or minimised are
+all remembered.
 
 ---
 
@@ -159,14 +164,14 @@ account even after their balances drift apart.
 
 ## 5. Using it, step by step
 
-1. Your accounts load by themselves (**⋯ → Reload accounts** if not). The first time, the Copier tab opens on **Choose
+1. Your accounts load by themselves (**Menu › Reload accounts** if not). The first time, Accounts opens on **Choose
    accounts**.
 2. Pick your **master** (the round button) and tick each **follower** (the box), then **Done**.
    - Cap-to-fit (the default) sizes each follower to its own equity, so sizes can differ. In strict 1:1, followers
      must be the master's size and type.
-   - To change them later, **Edit** on the Copier tab (only while not copying).
+   - To change them later, **Edit** in Accounts (only while not copying).
 3. Set your leverage on Vest the way you'll trade for the session.
-4. Click **Start copying** (from any tab). On first use, read the risk terms, tick the box and click **Accept and
+4. Click **Turn on** in the bar (or **Turn on copying** in Accounts). On first use, read the risk terms, tick the box and click **Accept and
    continue**.
    - It flat-checks everyone, syncs follower leverage to your master, and (with Cap-to-fit) refreshes equity for a fresh
      sizing baseline.
@@ -175,42 +180,102 @@ account even after their balances drift apart.
 5. **Trade the master normally.** Watch the log: you'll see `MASTER opened …` then `↳ OPENED …` per follower, and a
    one-line fill summary (e.g. `Fills 9/9 confirmed · avg slip 0.20 pt · max 0.50 pt`). The line under the status sentence shows the
    last copy ("4 of 4 filled").
-6. **Stop copying** when you're done (always available, even mid-session). While copying, the master, followers and
+6. **Turn off** when you're done (always available, even mid-session). While copying, the master, followers and
    Cap-to-fit are locked: stop to change them. Copy from one Vest tab only; the copier warns when it's open in a second
    tab and won't start while another tab is copying. A page reload stops copying (the log says so): start again to keep
    copying.
 
 ---
 
-## 6. Trade tab (points-based order panel)
+## 6. The order panel: Trade, Bracket and Size
 
-Open **Trade** (top tabs). It trades your selected **master** in the **market Vest is showing**: switch Vest's chart
-to ES and the tab switches to ES. Each market keeps its own size, stop and targets, since points mean different money
-on ES and NQ; the first time you open a market, the log reminds you to check them. While copying, followers copy
-every order like any other master order.
+It trades your selected **master** in the **market Vest is showing**: switch Vest's chart to ES and the panel switches
+to ES. Each market keeps its own size, stop and targets, since points mean different money on ES and NQ; the first
+time you open a market, the log reminds you to check them. While copying, followers copy every order like any other
+master order.
 
-**Top: margin and risk bars.**
+**On top of every tab:**
 
-- **Margin:** how much of Vest's buying power (its 100%) your position uses, and how many contracts are left.
-- **Risk:** what your stop would lose, fees included, against the room left before your floor.
-- They share one line above the setup. The striped part previews the order you're about to send; a bar turns amber
-  near the limit and red past it. Both use the **tightest account** (hover them to see which): while copying in strict
-  1:1, the master or a follower, whichever has less.
+- **Your setup** (the bar with the market tag): what your next order is, in one line (`3 mic · SL 20 · TP 20/40/60 ·
+  BE TP1`). Click it for your **saved setups** on this market: pick one and its size, stop, targets, split and
+  breakeven are all set at once. **Save as…** (none saved yet) names a new one in the menu; once you change a saved
+  setup a white dot shows by its name and **Save** keeps the change. **Rename or delete** is one level deeper; delete
+  asks for a second click. Setups are kept in this browser.
+- **The sync line:** what copying is doing, in one line. Plain while all is well (**Copies to 4 · in sync**, or in a
+  trade **4 of 4 match**), amber when something differs (a follower's size or stop, a follower missing from the trade
+  for more than a few seconds, a follower left in a trade without you), plain grey when copying is off. Click it for
+  Accounts.
 
-**Setup.**
+**Trade tab.** Top to bottom, in the order you use it:
 
-- **Order:** *Market*, *Limit* or *Stop*. With Limit or Stop, Buy and Sell pick the price on the chart (below).
+- **Where you are:** flat, with the price and **Today**, and a dim preview of your bracket in dollars (stop and
+  targets for the next order); in a trade, the side, size, entry and live P&L, with a bar drawn to scale with your
+  stop, entry, the price now and your targets. The two take the same space, so nothing below moves when you get in.
+- **Quantity buttons:** five sizes, then what they count (**mic**, **mini**, **ct** for contracts, **% max**, **$
+  risk** or **Max**; click it to change). The values are yours to set on the **Size** tab. In a trade they're dimmed:
+  they size your next entry.
+- **BUY MKT / SELL MKT:** a market order with your stop and targets attached as native Vest legs (they work on Vest's
+  side even if your tab closes); right after the fill, the stop and targets are re-placed exactly your points from your
+  **fill** price. The line under each word says what it sends ("3 mic"). **In a trade, the same side adds and the
+  other side reduces,** by the share picked under **Add or reduce** (below): "add 1 mic", "reduce 1 mic". It never
+  reverses a position. If your position changes between pressing and letting go (a target fills, say), nothing is sent
+  and the panel says so: click again.
+- **Buy bid / Sell ask:** joins the book: a buy limit at the bid, or a sell limit at the ask, with your stop and targets
+  (flat, and only while Vest's order book is coming through).
+- **The crosshair** between them: **Buy limit**, **Sell limit**, **Buy stop** or **Sell stop**, then one click on Vest's
+  chart places it at that price (details below), or type the price and press **Place**. **Esc** or **Cancel** stops,
+  and so does leaving the Trade tab or switching to Vest's form: a click on the chart never places an order the panel
+  isn't showing.
+- **Flatten** closes your position on this market (and the followers', while copying). **Cancel all** cancels your
+  waiting limits and stop entries on this market (and the followers' copies). **BE** moves your stop to breakeven
+  (below). Each one is dim when it has nothing to act on.
+- **Risk and room** (flat): what a stop-out at your stop costs, and the room left before your floor.
+- **Add or reduce** (in a trade): pick **25**, **50** or **100**% of your position, or **MAX**, then **Add** or
+  **Reduce** right under the chips, or use BUY / SELL above.
+  - **Add** grows the position by that share (MAX = the largest add that fits Vest's buying power and keeps a
+    stop-out above the floor). A chip that can't be added shows why ("over margin", "past floor"), and the line under
+    the buttons shows the new size, average and stop-out cost.
+  - **Reduce** takes that share off at market (100 = all of it, like Flatten; MAX is for adds only).
+  - Both use Vest's own orders ("add to position" and "reduce"), and while copying, the copier does the same to each
+    follower, by the same share of its own position.
+- **Waiting and working** (under the buttons): your resting limits and stop entries on this market, each with an **×**,
+  and the **Breakeven watch**.
+
+**Bracket tab:** your stop and targets for the next order, one per row.
+
+- **Stop loss:** its points from your entry and what it costs at your size; the switch takes the stop off (nothing
+  sizes from it then, and a warning names the price where the account fails, since nothing closes the trade for you).
+- **Take profit:** each target's points, with what it makes and its size; **×** removes one, **+ Add a target** (the
+  last row, up to 5) adds one. **Split** (on the Take profit line, with two or more targets): **Even**, **More on
+  TP1** (heaviest first, to bank early) or **More on the last** (to let it run), each showing the sizes it makes.
+- **Move stop to breakeven:** **Off**, **After TP1** or **At + points** (then how far in profit), and **Stop goes to
+  entry +** that many points (0 = exact breakeven).
+- **The line at the bottom:** what a stop-out costs with fees, and the room left to your floor; amber when the stop
+  would take the account past its floor before it fills.
+- In a trade, the Bracket tab is for your next entry: move this trade's stop and targets on the chart, or add one with
+  **+ Add stop** / **+ Add target** there.
+
+**Size tab:** what the quantity buttons count (**Micros**, **Minis**, **% of max** or **Risk $** on NQ, ES and RTY;
+**Contracts**, **% of max**, **Risk $** or **Max** elsewhere), each with what one is worth ("1 micro of NQ = $2 a
+point"), their five values (click a number to change it; each kind keeps its own, **Defaults** puts them back), and
+what you can open: Vest's leverage, the most you can open now and the margin in use. Leverage is Vest's own: change it
+on Vest's form.
+
+The details below still hold; where they mention the old controls, the Trade, Bracket and Size tabs above have them.
+
+**More detail.**
+
 - **Size:** *Qty*, *Risk $* (risk ÷ stop points → contracts; $1 per point per contract on Vest's perps), *%* or *Max*.
   Max is the most the account can open right now, worked out the way Vest's own ticket works out its 100% (free cash ×
   leverage, less room for the fee and the spread). Copying in strict 1:1, Max is the smallest of the master's and every
   follower's, since they all copy the same size. **%** is a share of Max: type 25 and the order is a quarter of what
-  the account can open, no maths. Picking **Stop** switches the size to %. Risk $ needs a stop, so it's greyed out
-  while the stop is off.
-- **Minis and micros (NQ, ES, RTY):** a row under Size picks **Units**, **Micros** or **Minis**, like Vest's own order
+  the account can open, no maths. Risk $ needs a stop, so it's refused while the stop is off.
+- **Minis and micros (NQ, ES, RTY):** the quantity buttons can count **Micros** or **Minis**, like Vest's own order
   form (it starts on whatever you chose there). One NQ micro is 2 units ($2 a point) and a mini 20; an ES or RTY micro
-  is 5 units and a mini 50. Sizes stay whole micros or minis: Risk $ and Max round down to whole ones, and so does the
-  target split. Orders still go to Vest in units, so followers copy exactly as before. Each market remembers its choice.
-- **The price ladder:** one table, top to bottom: your targets (farthest first), the entry, the stop, and the **fail**
+  is 5 units and a mini 50. **% of max, Risk $ and Max count in contracts** (units), so a small account's share is
+  never rounded down to nothing. Orders still go to Vest in units, so followers copy exactly as before. Each market
+  remembers its choice.
+- **Fail and pass prices** (the floating panel's ladder had them as rows): your targets (farthest first), the entry, the stop, and the **fail**
   price (where the account's equity reaches its floor: the drawdown floor, or the daily-loss floor when that's higher).
   On an evaluation there's a **pass** row too (where it reaches the target). It shows one side at a time, since a buy and a
   sell put the stop and targets on opposite sides and fail at different prices: point at **Buy** and it shows "If you
@@ -221,11 +286,11 @@ every order like any other master order.
   stop off (it reads *None*; **+ stop** puts it back with the same points), and **×** on a target removes it, every one
   if you like. Without a stop, Auto BE is off and a warning names the price where the account fails, since nothing
   closes the trade for you. Followers copy the trade the same way.
-- **Bracket on the chart** (on by default; the **Lines** switch at the end of the Order row, or
-  Appearance turns it off): your entry, stop, targets and fail price are
+- **Bracket on the chart** (on by default; Appearance turns it off): your entry, stop, targets and fail price are
   drawn on Vest's chart, while the Trade tab is open, as dashed lines for the side you point at, and follow the price and your points. Drag the stop
-  or a target line to set its points. In Limit or Stop mode they appear once you've clicked Buy or Sell and follow the
-  pointer, so you see where everything lands before you click. They're a preview: nothing is sent, and they go away
+  or a target line to set its points. Placing a limit or stop entry, the bracket follows the pointer instead, so you
+  see where everything lands before you click; while a limit or stop entry waits on that market, the market bracket
+  isn't drawn (Appearance › **Hide it while a limit waits**, on by default). They're a preview: nothing is sent, and they go away
   once you're in the trade (Vest draws the real ones).
 - **Targets:** the line under the ladder says how the size splits across them ("Split back-loaded · 2.5 / 5 / 7.5").
   **Change** picks **Start** (heaviest first), **Even** or **End** (heaviest last); **+ target** adds one, × removes
@@ -248,21 +313,21 @@ every order like any other master order.
 
 **Bottom: the buttons.**
 
-- **Buy / Sell** (Order: Market) send a market order with the stop and targets attached as native Vest legs (they work
+- **BUY / SELL MKT** send a market order with the stop and targets attached as native Vest legs (they work
   on Vest's side even if your tab closes). Right after the fill, the stop and targets are re-placed exactly your points
   from your **fill** price.
-- **Buy limit / Sell limit** (Order: Limit): click **Buy limit** or **Sell limit**, then **one click on Vest's chart places it**
+- **Buy limit / Sell limit** (the crosshair): pick **Buy limit** or **Sell limit**, then **one click on Vest's chart places it**
   at that price (a click, not a drag; panning the chart never places anything). Or type the price and press
   **Place**. **Esc** or **Cancel** stops. Buy limits go under the market and sell limits over it; a click on the
   wrong side is refused and you can click again. The stop and targets go in with the order and Vest activates them
-  when it fills. Limits open a new trade; Auto BE stays with market orders (use **Breakeven** once a limit fills).
-- **Buy stop / Sell stop** (Order: Stop): Vest itself only has market and limit orders, so the copier keeps these. A
+  when it fills. Limits open a new trade; Auto BE stays with market orders (use **BE** once a limit fills).
+- **Buy stop / Sell stop** (the crosshair): Vest itself only has market and limit orders, so the copier keeps these. A
   buy stop sits over the market, a sell stop under it; pick the level the same way (one click on the chart, or type
   it). When the price (the middle of Vest's order book, as Vest's own stops use) reaches it, the copier sends a market
   order with your stop and targets, and while copying the followers copy it.
   - **Both sides at once:** one buy stop and one sell stop can wait together on a market; the first to trigger
     cancels the other (handy around news).
-  - **Slip** (a row under Order while Stop is picked; optional, in points): instead of a market order, it sends a limit that fills at the level plus the
+  - **Slip** (shown while you place a stop entry; optional, in points): instead of a market order, it sends a limit that fills at the level plus the
     slip or better, right away, or not at all. Blank: a market order, which always fills, wherever the price is. With a slip, the stop
     is measured from the level and the targets from the level plus the slip, so neither ends up closer than you set.
   - The size, stop and targets are the ones set when you placed it (a % size is worked out when it fires).
@@ -281,15 +346,13 @@ every order like any other master order.
   Vest can't change them on a waiting limit; its own drag of the limit does the
   same cancel and re-place). While copying, the followers' copies do the same. For that split second the limit is off
   the book.
-- **Fits your screen:** on the Trade tab the panel grows to the bottom of the chart (or the window when floating), and the buttons stay pinned in
-  view while you scroll the form.
+- **Fits your screen:** in Vest's order card the panel takes the card's height and scrolls inside it; floating, it
+  grows to the bottom of the chart (or the window).
 
-**In a trade.** The position becomes the screen: a card with side, size, live P&L, average entry, how many accounts are
-in it (and their total in 1:1), a **bar drawn to scale** with your stop, entry, the price now and your targets as they
-sit on Vest, and a risk bar for what's left before your floor. The setup for a new trade (size, stop, targets, Auto BE)
-is put away until you're flat again.
+**In a trade.** The top of the Trade tab shows the position (side, size, entry, live P&L and its bar), BUY / SELL
+add and reduce, and **Add or reduce** opens under Flatten, Cancel all and BE.
 
-- **+ Add stop** and **+ Add target** (above Breakeven and Close): **+ Add stop** shows only when the trade has no
+- **+ Add stop** and **+ Add target** (on the Bracket tab in a trade): **+ Add stop** shows only when the trade has no
   stop, in amber. Click one, then click Vest's chart where it goes (a dashed line follows the pointer), or press
   **Enter** (or the button again) for your saved points from the average entry; **Esc** cancels. Up to 5 targets.
   Adding a target splits the position across all of them by the split you placed the trade with (Start, Even or End;
@@ -301,19 +364,12 @@ is put away until you're flat again.
 - **Right-click on Vest's chart** in a trade does the same at the price you clicked: **Add stop loss @ price** on the
   stop side, **Add take profit @ price** on the other. With no trade on that market (or a stop already there for the
   stop side), the menu is Vest's usual one.
-- **Breakeven** moves the stop to your **average entry** (an average between ticks rounds toward profit to the nearest
+- **BE** moves the stop to your **average entry** (an average between ticks rounds toward profit to the nearest
   tick, so it never locks a loss). It's offered once price is clear of the entry, since Vest refuses a stop the price
   has already passed (Vest triggers stops on the mid; the panel checks the bid or ask, a little stricter, so Vest always
   accepts it); hover it for the reason when it's grey.
-- **Close** closes the master's position; while copying, the copier closes the followers.
-- **Scale in or out:** open **Add or reduce**, pick **25**, **50** or **100**% of your position, or **MAX**, then
-  **Add** or **Reduce** right under the chips.
-  - **Add** grows the position by that share (MAX = the largest add that fits Vest's buying power and keeps a
-    stop-out above the floor). A chip that can't be added shows why ("over margin", "past floor"), and the line under
-    the buttons shows the new size, average and stop-out cost.
-  - **Reduce** takes that share off at market (100 = all of it, like Close; MAX is for adds only).
-  - Both use Vest's own orders ("add to position" and "reduce"), and while copying, the copier does the same to each follower,
-    by the same share of its own position.
+- **Flatten** closes the master's position; while copying, the copier closes the followers.
+- **Scale in or out:** see **Add or reduce** above.
 - **Your stop stays exactly where it is** when you add or reduce, including a stop you moved to breakeven. A stop
   covers the whole position, whatever its size.
 - **Your targets keep their prices, and their sizes follow the position.** With two or more targets, once Vest confirms
@@ -325,11 +381,11 @@ is put away until you're flat again.
   does the same across its own position once its own add or reduce has filled; a target you placed on a follower
   yourself is never touched. Adds and reduces on Vest's own order form leave your targets as they are.
 - To move a stop or target, drag it on Vest's chart.
-- The other direction is replaced by Close: the panel doesn't reverse a position in one click.
+- The panel doesn't reverse a position in one click: Flatten, then the other side.
 
 ## 7. Settings
 
-**⋯ → Settings.** Each setting shows one line under its name; the **?** next to it opens the full explanation.
+**Menu › Settings.** Each setting shows one line under its name; the **?** next to it opens the full explanation.
 
 - **Fast mode** (on by default) — copies each order the *instant* you send yours (entries, closes, reduces, adds,
   stops and targets), for the most simultaneous fills. Trade-off: followers act *before* Vest confirms your master
@@ -340,17 +396,22 @@ is put away until you're flat again.
   the trade.
 - **Cap-to-fit size** (on by default) — equity-scaled sizing and different-size followers (see §4). Also in **Edit**
   on the Copier tab.
+- **In Vest's order card** (on by default) — the order panel takes Vest's order card (with the Vest's form | STRATUH
+  switch) and the copier's line sits in Vest's header. Off: the floating panel, as before. A window narrower than
+  768 px always floats.
 - **Only on the Trade page** (on by default) — hides the panel on Vest's other pages (Portfolio, Markets,
   Affiliate…). It keeps running and copying there, and shows on any page when something needs you (followers waiting
   on Flatten / Keep, or the first-run risk terms).
 - **Check for updates**, **Check now** and a GitHub link, and **Use code AMPED at checkout** (§12). **Theme, chart
   and text size** opens Appearance.
 
-**⋯ → Appearance** holds how things look:
+**Menu › Appearance** holds how things look:
 
 - **Text size:** *Regular*, *Large* or *Larger*. The whole panel grows, so nothing gets cramped; it stays docked on
   the chart.
 - **Bracket on the chart** (on by default) — the dashed preview of your entry, stop and targets (§6).
+- **Hide it while a limit waits** (on by default) — while a limit or stop entry waits on the market, or while you're
+  placing one, only that order's lines are drawn, not the market bracket.
 - **Hide marks on bars** (on by default) — hides Vest's buy and sell marks on the chart each time it loads, the same
   as the chart's right-click **Hide marks on bars**, which Vest forgets on every refresh. Show them again from that
   menu whenever you want; the copier leaves them shown until the next load.
@@ -379,7 +440,7 @@ when they're on.
   copying** if you want to stop). Orders you place on the master while it's flattening aren't copied, because Flatten
   all closes them too. It acts on *all* loaded accounts, not just the selected group, so an unrelated manual trade would
   be closed too.
-- **Stop copying** — stops copying immediately. It does **not** close positions; use Flatten all for that.
+- **Turn off** (copying) — stops copying immediately. It does **not** close positions; use Flatten all for that.
 - **Fill confirmation** — after each entry, the copier checks that every follower actually filled, from Vest's
   live feed (about a tenth of a second) or, if that's quiet, Vest's fill history. A follower that was accepted but
   didn't fill (usually too small for the trade) is flagged loudly and dropped from tracking, so later stops/closes
@@ -511,7 +572,7 @@ Questions or setup help: ask in the [Discord](https://discord.gg/Aa69y9KnM3).
 - **Panel didn't appear** — confirm the script is enabled in Tampermonkey and you're on
   `next.vestmarkets.com`; refresh.
 - **"Couldn't capture your Vest session"** — make sure you're logged in to Vest. The copier keeps trying by itself and
-  loads your accounts once it sees your session; **⋯ → Reload accounts** tries right away.
+  loads your accounts once it sees your session; **Menu › Reload accounts** tries right away.
 - **"Your PC clock is 5 hours fast" (or slow) in the log** — your PC's clock or time zone is set wrong. Copying still
   works: the copier goes by Vest's time. Today's P&L, the Share cards and the times in the log follow your PC, so set
   it right: in Windows, Settings → Time & language → Date & time, pick your time zone and turn on Set time
@@ -521,13 +582,13 @@ Questions or setup help: ask in the [Discord](https://discord.gg/Aa69y9KnM3).
   position has no stop. Hover the button for which.
 - **Can't tick a follower** — it's a different size/type than the master. Pick **Cap-to-fit** under Sizing in Edit,
   or pick matching accounts.
-- **Start copying doesn't start** — the log says why: a follower in the opposite direction, a follower in a trade the
+- **Turn on doesn't start copying** — the log says why: a follower in the opposite direction, a follower in a trade the
   master isn't, or a waiting order on any account. Fix that account on Vest, then start. (Same trade on master and followers is fine
   — it's adopted.)
 - **An order didn't fill** — the log says which account (master included). Vest accepted it but didn't execute
   it, usually because there wasn't enough margin for that size. A follower that misses an entry is dropped from
   tracking; one that misses an add keeps its original position.
-- **Something looks wrong** — **⋯ → Report a problem** (or **Get help** next to a problem). Describe what happened and
+- **Something looks wrong** — **Menu › Report a problem** (or **Get help** next to a problem). Describe what happened and
   click **Save report & open issue**: it saves one report file (activity log, diagnostics, settings, balances;
   account ids replaced by names) and opens a GitHub issue with your description filled in. Drag the file in and
   submit (a free GitHub account is needed).

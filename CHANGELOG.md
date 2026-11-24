@@ -2,6 +2,34 @@
 
 Newest first. To update, click **Install** on the update row that appears in the panel whenever there's a newer version.
 
+## v0.42.0
+The copier moves into Vest's page: a bar in Vest's header and an order panel in Vest's order card.
+
+- **A copier bar in Vest's header.** Copying live or off, who copies to whom (11 → 12 14 15 16), the last copy, today's
+  P&L, your time to Vest, Turn on / Turn off, Flatten all and Menu, in the empty middle of Vest's top bar. On a
+  narrower window it drops the least important parts first; copying on or off, Flatten all and Menu always stay.
+- **The order panel takes Vest's order card.** A switch on top picks Vest's form or STRATUH (STRATUH first, and it
+  remembers). Vest's form is one click away for Scale orders, a size in USD or changing your leverage. Where Vest's
+  card isn't there (a window under 768 px, Vest's other pages), it's the floating panel as before; Menu › Float the
+  panel instead keeps it floating.
+- **Trade, Bracket and Size.** Trade: quantity buttons, BUY / SELL at market, Buy bid / Sell ask, limits and stop
+  entries from the crosshair (one click on the chart), Flatten, Cancel all and BE. Bracket: your stop, targets and
+  breakeven, one row each, with what each costs or makes. Size: what the buttons count (micros, minis, contracts, a %
+  of the max or dollars at risk), their values, and what the account can open.
+- **Saved setups.** Size, stop, targets, split and breakeven under one name per market. Pick one and it's all set;
+  change it and Save keeps the change.
+- **In a trade, BUY and SELL add and reduce** by the share you pick under Add or reduce (25, 50, 100% or Max). They
+  never reverse a position. If your position changes while you're pressing (a target fills), nothing is sent.
+- **One line says whether copying is in sync,** and turns amber naming the account when a follower's size or stop
+  differs, or a follower's copy is missing from the trade.
+- **Turn on copying from Accounts too,** next to your master and followers.
+- **% of max, Risk $ and Max count in contracts.** With micros picked before, a small account's share could round down
+  to no size at all.
+- **The market bracket steps aside for a limit.** While you place a limit or stop entry, or one waits on the market,
+  the chart shows that order's lines only (Appearance › Hide it while a limit waits).
+- **Calmer colours:** lime for live, buy and gain, red for sell, stop and danger, amber only when something needs you;
+  small grey text is easier to read.
+
 ## v0.41.5
 Minor improvements.
 

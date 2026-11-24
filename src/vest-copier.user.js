@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vest Copier
 // @namespace    vestcopier
-// @version      0.41.5
+// @version      0.42.0
 // @description  Copies a master Vest account's trades to your other Vest accounts, live, and adds a points-based order panel.
 // @author       xAmped
 // @license      STRATUH Copier License — free to use, no selling; see LICENSE
@@ -38,7 +38,10 @@
     })(),
   };
 
-  const VERSION = '0.41.5';
+  const VERSION = '0.42.0';
+  // The next-panel test build (tools/copy-next.sh turns this on in the copy it puts on the review share): its own
+  // name in Tampermonkey, never offered the public release as an update.
+  const NEXT = false;
   // Where this script runs from, read off its own first stack frame (each script manager names it differently): the
   // diagnostics use it to tell the copier's own errors from Vest's. Null when the stack shows no address.
   const OWN_SRC = (() => {
@@ -1698,6 +1701,7 @@
   // Redraw the Accounts or P&L list with the live numbers, at most every LIVE_RENDER_MS, and never between a press and its
   // release (the redraw would swallow the click). The Trade tab updates itself on every tick already.
   function liveRender() {
+    renderBar(); // the header's Today follows every re-priced account, whatever the panel shows (it redraws only on change)
     const view = currentView();
     if (view !== 'accounts' && view !== 'summary') return;
     const wait = LIVE_RENDER_MS - (Date.now() - _liveRenderAt);
@@ -5245,6 +5249,7 @@
     S.themeDown = o.themeDown === 'red' ? 'red' : 'mono'; // shorts and losses on Vest's page: grey (STRATUH's look) or red
     S.textSize = TEXT_ZOOM[o.textSize] ? o.textSize : 'regular'; // the panel's size: regular, large, larger
     S.chartBracket = o.chartBracket !== false; // the Trade tab draws the bracket on Vest's chart (on by default)
+    S.limitClean = o.limitClean !== false; // a limit or stop entry waiting on the market: no market bracket (on by default)
   }
   function saveOpts() {
     const o = {
@@ -5259,6 +5264,7 @@
       themeDown: S.themeDown,
       textSize: S.textSize,
       chartBracket: S.chartBracket,
+      limitClean: S.limitClean,
     };
     diag('settings', o);
     store.set(OPTS_KEY, o);
@@ -5558,7 +5564,7 @@
   const updateAvailable = () => !!(S.update && S.update.latest && cmpVersion(S.update.latest, VERSION) > 0);
   let _updateNoteTimer = null;
   async function checkForUpdate(manual = false) {
-    if (!S.checkUpdates && !manual) return;
+    if (NEXT || (!S.checkUpdates && !manual)) return;
     clearTimeout(_updateNoteTimer);
     S.update.manual = manual; // "Checking…" and "Up to date" show only for Check now
     S.update.state = 'checking';
@@ -10217,6 +10223,1377 @@
       min-width: 34px;
       margin-right: 3px;
     }
+
+    /* ───── the next panel (brand/local/inline-panel): colour pass, Vest's page, the Sierra-style face ───── */
+    .panel,
+    .hbar,
+    .hmenu {
+      --faint: #85858c; /* small grey text at 5:1 (was #6b6b73, 3.6:1) */
+      --dis: #4f4f56; /* disabled only */
+    }
+    .hbar,
+    .hmenu {
+      --bg: #0c0c0d;
+      --s1: #121214;
+      --s2: #18181b;
+      --s3: #202024;
+      --hair: rgba(255, 255, 255, 0.06);
+      --line: rgba(255, 255, 255, 0.09);
+      --line2: rgba(255, 255, 255, 0.16);
+      --text: #f0f0f1;
+      --dim: #a1a1a8;
+      --accent: #c8f542;
+      --ink: #0c0c0d;
+      --accent-dim: rgba(200, 245, 66, 0.1);
+      --danger: #ff5a4f;
+      --danger-dim: rgba(255, 90, 79, 0.1);
+      --danger-line: rgba(255, 90, 79, 0.42);
+      --warn: #f5b942;
+      --warn-dim: rgba(245, 185, 66, 0.1);
+      --warn-line: rgba(245, 185, 66, 0.4);
+      --sans: 'Geist', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', Consolas, Menlo, monospace;
+      font-family: var(--sans);
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+    }
+    /* the panel over Vest's order card */
+    .panel.col {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      box-shadow: none;
+      background: #0f0f11;
+    }
+    .panel.col > .hdr,
+    .panel.col > .status,
+    .panel.col > .tabs,
+    .panel.col > .grip,
+    .panel.col > .menu {
+      display: none !important;
+    }
+    .panel:not(.col) > .colhead {
+      display: none;
+    }
+    .panel.col-vest > :not(.colhead),
+    .panel.col-vest .colbar,
+    .panel.col-vest .colback {
+      display: none !important;
+    }
+    .panel.col.col-vest.nobar .colbar {
+      display: flex !important; /* no room in Vest's header: copying, Flatten all and Menu stay above Vest's form */
+    }
+    .panel.col-vest {
+      border-color: transparent;
+      background: transparent;
+    }
+    .colhead {
+      flex: none;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 0 0 6px;
+    }
+    .colsw {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      height: 30px;
+      margin: 0;
+      border-bottom: 1px solid var(--line);
+      background: #0f0f11;
+    }
+    .panel.col-vest .colsw {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      height: 32px;
+    }
+    .colsw button {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      background: none;
+      border: 0;
+      color: var(--faint);
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .colsw button.on {
+      color: var(--text);
+      box-shadow: inset 0 -2px var(--text);
+    }
+    .panel.col-vest .colsw button.on {
+      box-shadow: none;
+      background: var(--s3);
+    }
+    .colbar {
+      display: none;
+      align-items: center;
+      gap: 6px;
+      padding: 0 8px;
+    }
+    .panel.nobar .colbar {
+      display: flex;
+    }
+    .colback {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--hair);
+    }
+    .colbk {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 28px;
+      padding: 0 11px 0 8px;
+      border-radius: 3px;
+      border: 1px solid var(--line2);
+      background: var(--s2);
+      color: var(--text);
+      font: 500 12px var(--sans);
+      cursor: pointer;
+    }
+    .colbk:hover {
+      background: var(--s3);
+    }
+    .colbk .chev {
+      font-size: 15px;
+      line-height: 1;
+      color: var(--dim);
+      margin-top: -2px;
+    }
+    .colback[hidden] {
+      display: none;
+    }
+    .colt {
+      font: 600 13px var(--sans);
+      color: var(--text);
+    }
+    /* the copier bar in Vest's header */
+    .hbar {
+      position: fixed;
+      z-index: 45;
+      height: 30px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      overflow: hidden;
+      white-space: nowrap;
+      font-size: 12px;
+    }
+    .hbar[hidden] {
+      display: none;
+    }
+    .hb-mark {
+      display: flex;
+      align-items: center;
+    }
+    .hb-word {
+      font-family: var(--mono);
+      font-weight: 600;
+      font-size: 11px;
+      letter-spacing: 0.16em;
+      padding-right: 10px;
+      border-right: 1px solid var(--line);
+    }
+    .hb-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 24px;
+      padding: 0 4px;
+      border: 0;
+      background: none;
+      color: var(--dim);
+      font: 500 12px var(--sans);
+      cursor: pointer;
+      border-radius: 3px;
+    }
+    .hb-chip .d,
+    .hb-conn .d,
+    .nf-sync .d {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--faint);
+      display: inline-block;
+      flex: none;
+    }
+    .hb-chip.live {
+      color: var(--accent);
+    }
+    .hb-chip.live .d {
+      background: var(--accent);
+    }
+    .hb-chip.warn {
+      color: var(--warn);
+      background: var(--warn-dim);
+      padding: 0 8px;
+    }
+    .hb-chip.warn .d {
+      background: var(--warn);
+    }
+    .hb-chip.bad {
+      color: var(--danger);
+      background: var(--danger-dim);
+      padding: 0 8px;
+    }
+    .hb-chip.bad .d {
+      background: var(--danger);
+    }
+    .hb-chip .sh {
+      display: none;
+    }
+    .hbar[data-l='1'] .hb-chip .lg {
+      display: none;
+    }
+    .hbar[data-l='1'] .hb-chip .sh {
+      display: inline;
+    }
+    .hb-tiles {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      background: none;
+      border: 0;
+      padding: 0;
+      cursor: pointer;
+    }
+    .hbar .tile {
+      display: inline-grid;
+      place-items: center;
+      min-width: 20px;
+      height: 18px;
+      padding: 0 3px;
+      border-radius: 2px;
+      font: 600 10.5px var(--mono);
+      background: var(--s3);
+      color: var(--dim);
+    }
+    .hbar .tile.m {
+      background: var(--accent);
+      color: var(--ink);
+    }
+    .hbar .arr {
+      color: var(--faint);
+      font-size: 11px;
+      margin: 0 1px;
+    }
+    .hb-meta {
+      color: var(--faint);
+      font: 400 11px var(--mono);
+    }
+    .hb-sp {
+      flex: 1;
+    }
+    .hb-lead {
+      flex: 1 1 0;
+      min-width: 0;
+    }
+    .hb-info,
+    .hb-live,
+    .hb-acts {
+      display: contents;
+    }
+    .hb-div {
+      flex: none;
+      width: 1px;
+      height: 18px;
+      margin: 0 6px;
+      background: var(--line2);
+    }
+    .hb-pl {
+      font: 500 12px var(--mono);
+    }
+    .hb-pl.pos {
+      color: var(--accent);
+    }
+    .hb-pl.neg {
+      color: var(--danger);
+    }
+    .hb-conn {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      color: var(--dim);
+      font: 400 11px var(--mono);
+    }
+    .hb-conn.good .d {
+      background: var(--accent);
+    }
+    .hb-conn.slow .d,
+    .hb-conn.ok .d {
+      background: var(--warn);
+    }
+    .hb-conn.down .d {
+      background: var(--danger);
+    }
+    .hb-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      height: 26px;
+      padding: 0 11px;
+      border-radius: 3px;
+      border: 1px solid var(--line2);
+      background: var(--s2);
+      color: var(--text);
+      font: 500 11.5px var(--sans);
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .hb-btn.go {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: var(--ink);
+    }
+    .hb-btn.red {
+      color: var(--danger);
+      border-color: var(--danger-line);
+      background: var(--danger-dim);
+    }
+    .hb-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .hbar .y23 {
+      display: none;
+    }
+    .hbar[data-l='4'] .x5,
+    .hbar[data-l='3'] .x5,
+    .hbar[data-l='3'] .x4,
+    .hbar[data-l='2'] .x5,
+    .hbar[data-l='2'] .x4,
+    .hbar[data-l='2'] .x3,
+    .hbar[data-l='1'] .x5,
+    .hbar[data-l='1'] .x4,
+    .hbar[data-l='1'] .x3,
+    .hbar[data-l='1'] .x2 {
+      display: none;
+    }
+    .hbar[data-l='3'] .y23,
+    .hbar[data-l='2'] .y23 {
+      display: inline-flex;
+    }
+    .hmenu {
+      position: fixed;
+      z-index: 46;
+      min-width: 240px;
+      padding: 6px;
+      background: #141417;
+      border: 1px solid var(--line2);
+      border-radius: 6px;
+      box-shadow: 0 18px 48px rgba(0, 0, 0, 0.6);
+      display: flex;
+      flex-direction: column;
+    }
+    .hmenu[hidden] {
+      display: none;
+    }
+    .hmi {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 9px;
+      background: none;
+      border: 0;
+      border-radius: 3px;
+      color: var(--text);
+      font: 400 12.5px var(--sans);
+      text-align: left;
+      cursor: pointer;
+    }
+    .hmi:hover {
+      background: var(--s2);
+    }
+    .hmi i {
+      margin-left: auto;
+      font-style: normal;
+      font-size: 11px;
+      color: var(--faint);
+    }
+    /* the face */
+    .trade.nf {
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      padding: 8px 10px 12px;
+    }
+    .nf-setup {
+      position: relative;
+    }
+    .nf-sbtn {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 38px;
+      padding: 5px 8px;
+      background: var(--s2);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      color: var(--text);
+      cursor: pointer;
+      text-align: left;
+    }
+    .nf-mkt {
+      font: 600 9.5px var(--mono);
+      letter-spacing: 0.06em;
+      padding: 3px 4px;
+      border-radius: 2px;
+      background: var(--s3);
+      color: var(--dim);
+      flex: none;
+    }
+    .nf-sname {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .nf-sname b {
+      font-weight: 600;
+      font-size: 12.5px;
+    }
+    .nf-sname b.edited {
+      color: var(--dim);
+    }
+    .nf-sname i {
+      font: normal 400 10.5px var(--mono);
+      color: var(--faint);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .nf-car {
+      color: var(--faint);
+      font-size: 10px;
+      margin-left: 2px;
+    }
+    .nf-smenu,
+    .nf-umenu,
+    .nf-pmenu {
+      position: absolute;
+      z-index: 5;
+      left: 0;
+      right: 0;
+      top: calc(100% + 4px);
+      background: #141417;
+      border: 1px solid var(--line2);
+      border-radius: 6px;
+      box-shadow: 0 18px 48px rgba(0, 0, 0, 0.6);
+      padding: 6px;
+      display: flex;
+      flex-direction: column;
+    }
+    .nf-umenu,
+    .nf-pmenu {
+      position: relative;
+      top: 0;
+      margin-top: -3px;
+      box-shadow: none;
+    }
+    .nf-smenu[hidden],
+    .nf-umenu[hidden],
+    .nf-pmenu[hidden] {
+      display: none;
+    }
+    .nf-pmenu {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px;
+    }
+    .nf-pmenu button {
+      height: 28px;
+      border-radius: 3px;
+      border: 1px solid var(--line);
+      background: var(--s1);
+      color: var(--text);
+      font: 500 11.5px var(--sans);
+      cursor: pointer;
+    }
+    .nf-pmenu [data-pk^='long'] {
+      color: var(--accent);
+    }
+    .nf-pmenu [data-pk^='short'] {
+      color: var(--danger);
+    }
+    .nf-pnote {
+      grid-column: 1 / -1;
+      font-size: 10.5px;
+      color: var(--faint);
+      padding: 2px 2px 0;
+    }
+    .nf-mh {
+      font: 500 9.5px var(--mono);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--faint);
+      padding: 6px 6px 5px;
+    }
+    .nf-mi {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 6px;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    .nf-mi:hover,
+    .nf-mi.on {
+      background: var(--s2);
+    }
+    .nf-mt {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .nf-mt b {
+      font-weight: 500;
+      font-size: 12px;
+    }
+    .nf-mt i {
+      font: normal 400 10.5px var(--mono);
+      color: var(--faint);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .nf-mx {
+      background: none;
+      border: 0;
+      color: var(--faint);
+      cursor: pointer;
+      padding: 2px 5px;
+      font-size: 12px;
+    }
+    .nf-mx:hover {
+      color: var(--text);
+    }
+    .nf-mempty {
+      font-size: 11.5px;
+      color: var(--faint);
+      padding: 4px 6px 8px;
+      line-height: 1.45;
+    }
+    .nf-msep {
+      height: 1px;
+      background: var(--hair);
+      margin: 5px 2px;
+    }
+    .nf-ma {
+      text-align: left;
+      padding: 7px 6px;
+      background: none;
+      border: 0;
+      border-radius: 3px;
+      color: var(--dim);
+      font: 400 12px var(--sans);
+      cursor: pointer;
+    }
+    .nf-ma:hover:not(:disabled),
+    .nf-ma.on {
+      background: var(--s2);
+      color: var(--text);
+    }
+    .nf-ma:disabled {
+      color: var(--dis);
+      cursor: default;
+    }
+    .nf-sync {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 22px;
+      padding: 3px 8px;
+      border: 1px solid var(--hair);
+      border-radius: 3px;
+      font-size: 11px;
+      color: var(--dim);
+    }
+    .nf-sync .r {
+      margin-left: auto;
+      font: 400 10.5px var(--mono);
+      color: var(--faint);
+      white-space: nowrap;
+    }
+    .nf-sync.ok .d {
+      background: var(--accent);
+    }
+    .nf-sync.off .d {
+      background: transparent;
+      border: 1px solid var(--faint);
+    }
+    .nf-sync.warn {
+      background: var(--warn-dim);
+      border-color: var(--warn-line);
+      color: var(--warn);
+    }
+    .nf-sync.warn .d {
+      background: var(--warn);
+    }
+    .nf-sync.warn .r {
+      color: rgba(245, 185, 66, 0.75);
+    }
+    .nf-tabs {
+      display: flex;
+      border-bottom: 1px solid var(--hair);
+      margin: 0 -10px;
+      padding: 0 10px;
+    }
+    .nf-tabs button {
+      flex: 1;
+      background: none;
+      border: 0;
+      padding: 4px 0 7px;
+      color: var(--faint);
+      font: 400 12px var(--sans);
+      cursor: pointer;
+    }
+    .nf-tabs button.on {
+      color: var(--text);
+      box-shadow: inset 0 -2px var(--text);
+    }
+    .nf-pane {
+      display: none;
+      flex-direction: column;
+      gap: 7px;
+      position: relative;
+    }
+    .trade.nf[data-ttab='main'] [data-pane='main'],
+    .trade.nf[data-ttab='targets'] [data-pane='targets'],
+    .trade.nf[data-ttab='set'] [data-pane='set'] {
+      display: flex;
+    }
+    .nf-head {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-height: 44px;
+    }
+    .trade.nf .tr-top {
+      margin: 0;
+      padding: 0;
+      border: 0;
+      font-size: 11px;
+    }
+    .trade.nf .tr-sym {
+      font-size: 11px;
+      color: var(--dim);
+    }
+    .trade.nf .tr-px {
+      font-size: 12px;
+    }
+    .nf-flat {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      font-size: 12.5px;
+    }
+    .nf-flat[hidden] {
+      display: none;
+    }
+    .nf-f {
+      color: var(--dim);
+    }
+    .nf-k {
+      font-size: 10.5px;
+      color: var(--faint);
+      margin-right: 5px;
+    }
+    .nf-flat .pos {
+      color: var(--accent);
+    }
+    .nf-flat .neg {
+      color: var(--danger);
+    }
+    .nf-qty {
+      display: grid;
+      gap: 4px;
+    }
+    .nf-qty .q {
+      height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      border: 1px solid var(--line);
+      border-radius: 3px;
+      background: var(--s1);
+      color: var(--dim);
+      font: 500 12px var(--mono);
+      cursor: pointer;
+      padding: 0 2px;
+    }
+    .nf-qty .q.on {
+      border-color: var(--line2);
+      background: var(--s3);
+      color: var(--text);
+    }
+    .nf-qty .q.wide {
+      cursor: default;
+    }
+    .nf-qty .nf-unit {
+      font: 500 11px var(--sans);
+      color: var(--text);
+      background: var(--s2);
+    }
+    .nf-qty.held .q:not(.nf-unit) {
+      opacity: 0.45;
+    }
+    .trade.nf .tr-go {
+      gap: 5px;
+    }
+    .trade.nf #tr-mgo .tr-buy,
+    .trade.nf #tr-mgo .tr-sell {
+      height: 44px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      font-size: 12.5px;
+      letter-spacing: 0.02em;
+      border-radius: 4px;
+      color: var(--ink);
+    }
+    .trade.nf #tr-mgo small {
+      font: 500 10px var(--mono);
+      opacity: 0.72;
+      letter-spacing: 0;
+    }
+    .nf-row3 {
+      display: grid;
+      grid-template-columns: 1fr 32px 1fr;
+      gap: 5px;
+    }
+    .nf-row3 button,
+    .nf-acts button {
+      height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 3px;
+      border: 1px solid var(--line);
+      background: var(--s1);
+      color: var(--text);
+      font: 500 11.5px var(--sans);
+      cursor: pointer;
+      padding: 0 4px;
+    }
+    .nf-row3 .nf-bid {
+      color: var(--accent);
+    }
+    .nf-row3 .nf-ask {
+      color: var(--danger);
+    }
+    .nf-row3 .nf-pickb {
+      color: var(--dim);
+    }
+    .nf-acts {
+      display: grid;
+      grid-template-columns: 1fr 1fr 56px;
+      gap: 5px;
+    }
+    .nf-acts .tr-close {
+      color: var(--danger);
+      font-weight: 500;
+      width: auto;
+    }
+    .nf-acts .tr-bebtn {
+      font-weight: 600;
+    }
+    .nf-row3 button:disabled,
+    .nf-acts button:disabled {
+      color: var(--dis);
+      cursor: default;
+    }
+    .trade.nf.held .nf-acts .tr-bebtn:not(:disabled) {
+      background: var(--s3);
+      border-color: var(--line2);
+    }
+    .trade.nf .tr-pacts {
+      padding: 8px;
+      background: var(--sunk);
+      border: 1px solid var(--hair);
+      border-radius: 4px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .trade.nf .tr-pacts[hidden] {
+      display: none;
+    }
+    .nf-arh {
+      display: flex;
+      justify-content: space-between;
+      font: 500 9.5px var(--mono);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--faint);
+    }
+    .nf-arh span:last-child {
+      letter-spacing: 0;
+      text-transform: none;
+      font-size: 10.5px;
+    }
+    .trade.nf .tr-addbox {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .trade.nf .tr-chip {
+      padding: 6px 0 5px;
+    }
+    .trade.nf .tr-chip b {
+      font-size: 12px;
+    }
+    .trade.nf .tr-chip span {
+      font-size: 10.5px;
+      color: var(--dim);
+    }
+    .trade.nf .tr-chip:hover:not(:disabled) {
+      border-color: rgba(255, 255, 255, 0.32);
+    }
+    /* picked: white on a lifted grey, both lines readable (the old lime chip's dark text stayed on a dark one) */
+    .trade.nf .tr-chip.on {
+      border-color: rgba(255, 255, 255, 0.4);
+      background: var(--s3);
+      color: var(--text);
+    }
+    .trade.nf .tr-chip.on span {
+      color: var(--text);
+    }
+    .nf-foot {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      font: 400 10.5px var(--mono);
+      color: var(--faint);
+    }
+    .nf-foot b {
+      color: var(--dim);
+      font-weight: 400;
+    }
+    .nf-held[hidden] {
+      display: none;
+    }
+    .nf-held {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .trade.nf.held .tr-setup {
+      display: none;
+    }
+    .nf-qedit {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .nf-qh {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font: 500 9.5px var(--mono);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--faint);
+    }
+    .nf-qh .lnk {
+      text-transform: none;
+      letter-spacing: 0;
+      font-size: 11px;
+    }
+    .nf-qrow {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 4px;
+    }
+    .nf-qrow .tr-in {
+      width: 100%;
+      text-align: center;
+    }
+    .trade.nf .nf-order {
+      display: none;
+    }
+    .trade.nf #tr-addfold {
+      display: none !important;
+    }
+    .trade.nf button *,
+    .hbar button *,
+    .colhead button * {
+      pointer-events: none;
+    }
+    /* round 2: the setup bar with its Save, the bracket and size panes, the compact trade card */
+    .nf-setup {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--s2);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding-right: 4px;
+    }
+    .nf-setup .nf-sbtn {
+      flex: 1;
+      min-width: 0;
+      border: 0;
+      background: none;
+    }
+    .nf-sname b.edited::after {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--text);
+      margin-left: 6px;
+      vertical-align: 2px;
+    }
+    .nf-sname b.edited {
+      color: var(--text);
+    }
+    .nf-ssave {
+      height: 24px;
+      padding: 0 9px;
+      border-radius: 3px;
+      border: 1px solid var(--line2);
+      background: var(--s3);
+      color: var(--text);
+      font: 500 11px var(--sans);
+      cursor: pointer;
+      white-space: nowrap;
+      flex: none;
+    }
+    .nf-ssave[hidden] {
+      display: none;
+    }
+    .nf-scar {
+      width: 22px;
+      height: 28px;
+      border: 0;
+      background: none;
+      color: var(--faint);
+      cursor: pointer;
+      font-size: 11px;
+      flex: none;
+    }
+    .nf-ck {
+      color: var(--accent);
+      margin-left: auto;
+      padding: 0 4px;
+    }
+    .nf-name {
+      display: flex;
+      gap: 6px;
+      padding: 2px 6px 6px;
+    }
+    .nf-name .tr-in {
+      flex: 1;
+      min-width: 0;
+      height: 28px;
+      font-family: var(--sans);
+    }
+    .nf-mb {
+      height: 28px;
+      padding: 0 12px;
+      border-radius: 3px;
+      border: 1px solid var(--line2);
+      background: var(--s3);
+      color: var(--text);
+      font: 500 11.5px var(--sans);
+      cursor: pointer;
+    }
+    .nf-man .nf-mx {
+      font-size: 11px;
+    }
+    .nf-mx.sure {
+      color: var(--danger);
+    }
+    .nf-sync {
+      cursor: pointer;
+    }
+    .nf-head {
+      min-height: 58px;
+    }
+    .nf-prev[hidden] {
+      display: none;
+    }
+    .nf-prev .bk {
+      opacity: 0.55;
+    }
+    .trade.nf .tr-poscard {
+      padding: 0;
+      margin: 0;
+      background: none;
+      border: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .trade.nf .tr-poscard[hidden] {
+      display: none;
+    }
+    .trade.nf .tr-pmeta,
+    .trade.nf .tr-lvls,
+    .trade.nf .tr-prisk {
+      display: none !important;
+    }
+    .trade.nf .tr-setup,
+    .trade.nf [data-pane='set'] > .tr-f,
+    .trade.nf [data-pane='set'] > .tr-ind,
+    .trade.nf [data-pane='set'] > .tr-lims {
+      display: none !important;
+    }
+    .br,
+    .sz,
+    .sz2 {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .br[hidden] {
+      display: none;
+    }
+    .br-sec {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 6px;
+      font: 500 9.5px var(--mono);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--faint);
+      min-height: 18px;
+    }
+    .br-row {
+      display: grid;
+      grid-template-columns: 38px 92px 1fr 18px;
+      align-items: center;
+      gap: 8px;
+      min-height: 30px;
+    }
+    .br-lb {
+      font: 600 11px var(--mono);
+      color: var(--dim);
+    }
+    .br-lb.sl {
+      color: var(--danger);
+    }
+    .br-lb.tp {
+      color: var(--accent);
+    }
+    .br-box {
+      display: flex;
+      align-items: center;
+      height: 28px;
+      border: 1px solid var(--line);
+      border-radius: 3px;
+      background: var(--sunk);
+      padding: 0 8px 0 0;
+    }
+    .br-box:focus-within {
+      border-color: var(--line2);
+    }
+    .br-in {
+      flex: 1;
+      min-width: 0;
+      width: 100%;
+      height: 100%;
+      background: none;
+      border: 0;
+      outline: none;
+      color: var(--text);
+      font: 500 13px var(--mono);
+      padding: 0 8px;
+    }
+    .br-box i {
+      font-style: normal;
+      font-size: 10px;
+      color: var(--faint);
+    }
+    .br-line .br-box {
+      width: 92px;
+      flex: none;
+    }
+    .br-mo {
+      text-align: right;
+      font: 400 11.5px var(--mono);
+      color: var(--dim);
+      white-space: nowrap;
+    }
+    .br-mo b {
+      font-weight: 500;
+    }
+    .br-mo .up {
+      color: var(--accent);
+    }
+    .br-mo .dn {
+      color: var(--danger);
+    }
+    .br-mo i {
+      font-style: normal;
+      color: var(--faint);
+    }
+    .br-x {
+      background: none;
+      border: 0;
+      color: var(--faint);
+      cursor: pointer;
+      font-size: 13px;
+      padding: 0;
+    }
+    .br-x:hover {
+      color: var(--text);
+    }
+    .br-add {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      height: 30px;
+      padding: 0 9px;
+      border: 1px dashed var(--line2);
+      border-radius: 3px;
+      background: none;
+      color: var(--dim);
+      font: 400 12px var(--sans);
+      cursor: pointer;
+      text-align: left;
+    }
+    .br-add i {
+      margin-left: auto;
+      font-style: normal;
+      font-size: 10.5px;
+      color: var(--faint);
+    }
+    .br-add:hover {
+      color: var(--text);
+    }
+    .br-sel {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      height: 24px;
+      padding: 0 8px;
+      border: 1px solid var(--line);
+      border-radius: 3px;
+      background: var(--s2);
+      color: var(--dim);
+      font: 400 11px var(--sans);
+      letter-spacing: 0;
+      text-transform: none;
+      cursor: pointer;
+    }
+    .br-sel b {
+      color: var(--text);
+      font-weight: 500;
+    }
+    .br-split {
+      display: flex;
+      flex-direction: column;
+      padding: 4px;
+      border: 1px solid var(--line2);
+      border-radius: 4px;
+      background: #141417;
+    }
+    .br-opt {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 7px 8px;
+      border: 0;
+      border-radius: 3px;
+      background: none;
+      color: var(--text);
+      font: 400 12px var(--sans);
+      cursor: pointer;
+    }
+    .br-opt i {
+      font: normal 400 11px var(--mono);
+      color: var(--faint);
+    }
+    .br-opt.on,
+    .br-opt:hover {
+      background: var(--s2);
+    }
+    .br-seg {
+      display: flex;
+      border: 1px solid var(--line);
+      border-radius: 3px;
+      overflow: hidden;
+      height: 30px;
+    }
+    .br-seg button {
+      flex: 1;
+      border: 0;
+      border-left: 1px solid var(--line);
+      background: none;
+      color: var(--dim);
+      font: 500 11.5px var(--sans);
+      cursor: pointer;
+      white-space: nowrap;
+      padding: 0 4px;
+    }
+    .br-seg button:first-child {
+      border-left: 0;
+    }
+    .br-seg button.on {
+      background: var(--s3);
+      color: var(--text);
+    }
+    .br-line {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      min-height: 28px;
+      font-size: 12px;
+      color: var(--dim);
+    }
+    .br-line .v {
+      font: 500 12px var(--mono);
+      color: var(--text);
+    }
+    .br-line .v i {
+      font-style: normal;
+      font-weight: 400;
+      color: var(--faint);
+    }
+    .br-none {
+      font-size: 11.5px;
+      color: var(--faint);
+      line-height: 1.45;
+    }
+    .br-warn {
+      font-size: 11.5px;
+      line-height: 1.45;
+      color: var(--warn);
+      padding: 7px 9px;
+      background: var(--warn-dim);
+      border: 1px solid var(--warn-line);
+      border-radius: 3px;
+    }
+    .br-warn[hidden] {
+      display: none;
+    }
+    .br-sum {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      padding-top: 9px;
+      border-top: 1px solid var(--hair);
+      font: 400 10.5px var(--mono);
+      color: var(--faint);
+    }
+    .br-sum b {
+      color: var(--dim);
+      font-weight: 400;
+    }
+    .switch.sm {
+      transform: scale(0.85);
+      transform-origin: right center;
+    }
+    .sz-note {
+      font-size: 11px;
+      line-height: 1.45;
+      color: var(--faint);
+    }
+    .sz-note b {
+      color: var(--dim);
+      font-weight: 500;
+    }
+    .sz-bar {
+      height: 3px;
+      border-radius: 2px;
+      background: var(--s3);
+      overflow: hidden;
+    }
+    .sz-bar i {
+      display: block;
+      height: 100%;
+      background: var(--dim);
+    }
+    .colacc[hidden],
+    .panel.col-vest .colacc {
+      display: none !important;
+    }
+    .colacc,
+    .acc-ctl {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 10px 12px 12px;
+      border-bottom: 1px solid var(--hair);
+    }
+    .acc-say {
+      font-size: 13.5px;
+      font-weight: 500;
+    }
+    .acc-say em {
+      font-style: normal;
+      color: var(--accent);
+    }
+    .acc-sub {
+      font-size: 11px;
+      color: var(--faint);
+    }
+    .acc-btns {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .acc-btns button {
+      height: 38px;
+      border-radius: 4px;
+      font: 600 12.5px var(--sans);
+      cursor: pointer;
+      border: 1px solid var(--line2);
+      background: var(--s2);
+      color: var(--text);
+    }
+    .acc-btns .go {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: var(--ink);
+    }
+    .acc-btns .acc-flat {
+      color: var(--danger);
+      border-color: var(--danger-line);
+      background: var(--danger-dim);
+    }
+    .acc-btns button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .trade.nf .tr-side {
+      background: var(--accent-dim);
+      color: var(--accent);
+    }
+    .trade.nf .tr-side.short,
+    .trade.nf .tr-side.s {
+      background: var(--danger-dim);
+      color: var(--danger);
+    }
+    .trade.nf [data-pane='set'] .tr-row {
+      flex-wrap: wrap;
+      row-gap: 6px;
+    }
+    .nf-optrow {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 12px;
+      color: var(--dim);
+      padding-top: 6px;
+      border-top: 1px solid var(--hair);
+    }
   `;
 
   // STRATUH logo (brand pack, 2026-10-09): the five-bar profile mark, each bar over a muted echo of itself with a soft
@@ -10282,7 +11659,16 @@
     (document.body || document.documentElement).appendChild(host);
     const root = host.attachShadow({ mode: 'open' });
     root.innerHTML = `<style>${CSS}</style>
+      <div class="hbar" hidden></div>
+      <div class="hmenu" role="menu" hidden></div>
       <div class="panel">
+        <div class="colhead">
+          <div class="colsw" role="tablist" aria-label="What Vest's order card shows">
+            <button data-col="vest" role="tab">Vest's form</button><button data-col="st" role="tab">${markSvg(11, 'vc-poc-c')}STRATUH</button></div>
+          <div class="colbar"></div>
+          <div class="colback"><button class="colbk" data-act="totrade" title="Back to the order panel"><span class="chev">‹</span>Trade</button><span class="colt"></span></div>
+          <div class="colacc" hidden></div>
+        </div>
         <div class="hdr">
           <button class="iconbtn back" data-act="back" title="Back" aria-label="Back">${ICON.left}</button><span class="sheett" id="sheett"></span>
           <span class="brand" role="img" aria-label="STRATUH">${BRAND_SVG}</span><span class="sep"></span><span class="title">Copier</span>
@@ -10295,6 +11681,7 @@
         </div>
         <div class="menu" role="menu" hidden>
           <button class="mi" role="menuitemcheckbox" data-act="dock" aria-checked="true">${ICON.dock}<span class="mt">Docked on chart</span><span class="mk">${ICON.check}</span></button>
+          <button class="mi" role="menuitem" data-act="tocol" hidden>${ICON.dock}<span class="mt">Back in Vest's order card</span></button>
           <button class="mi" role="menuitem" data-act="refresh">${ICON.refresh}<span class="mt">Reload accounts</span></button>
           <div class="mhr"></div>
           <button class="mi" role="menuitem" data-tab="settings">${ICON.gear}<span class="mt">Settings</span></button>
@@ -10343,7 +11730,7 @@
           <div class="cx-prog" id="cx-prog" hidden><i></i></div>
           <div class="cx-sep"></div>
           <div class="kv"><span>Vest build</span><span class="htext">Starting…</span></div>
-          <div class="kv"><span>Copier</span><span class="ver">v${VERSION}</span></div>
+          <div class="kv"><span>Copier</span><span class="ver">v${VERSION}${NEXT ? ' next' : ''}</span></div>
           <div class="kv" title="Vest allows 200 requests a second; this is what's left this second"><span>API this second</span><span class="rate" id="rate">—</span></div>
           <div class="kv" title="How long Vest took to answer a follower order (it leaves with the master's own order in fast mode)"><span>Vest's answer, slowest today</span><span id="slowest">—</span></div>
         </div>
@@ -10457,6 +11844,12 @@
     on('[data-act="collapse"]', () => setOpen(false));
     on('[data-act="dock"]', () => toggleDock());
     on('[data-act="refresh"]', () => refresh());
+    on('[data-act="tocol"]', () => {
+      S.colFloat = false;
+      store.set(COL_FLOAT_KEY, false);
+      place();
+      render();
+    });
     on('[data-act="report"]', () => openReport());
     on('[data-act="back"]', () => closeSheet());
     on('[data-act="pillgo"]', () => pillAction());
@@ -10513,6 +11906,7 @@
     );
     // shown unless this account already uses the code
     root.querySelector('[data-act="code"]').hidden = (store.get(SUPPORT_KEY, null) || {}).answered === 'had-code';
+    wireCol(root);
     return root;
   }
 
@@ -10827,6 +12221,7 @@
   function place() {
     const panel = _root && _root.querySelector('.panel');
     if (!panel || !S.dock || _dragging) return;
+    if (placeCol(panel)) return;
     // Text size zooms the panel, which scales its own position and size too: everything below is in its units (the
     // window's pixels ÷ the zoom). Saved spots are in the window's pixels.
     const z = zoomOf(),
@@ -10925,6 +12320,12 @@
   const _bootAt = Date.now();
   function renderDock() {
     if (!_root || !S.dock) return;
+    // floated by choice from the order card: the way back, while Vest's order card is there to go to
+    _root.querySelector('[data-act="tocol"]').hidden = !(
+      S.colFloat &&
+      vestFormCard() &&
+      window.innerWidth >= COL_MIN_W
+    );
     const pin = _root.querySelector('[data-act="dock"]');
     pin.setAttribute('aria-checked', String(S.dock.docked));
     pin.classList.toggle('on', S.dock.docked);
@@ -10980,6 +12381,365 @@
     btn.className = 'pillbtn ' + (p.act || '');
     const hdr = _root.querySelector('.hdr');
     hdr.setAttribute('aria-label', collapsed ? `Open STRATUH Copier (${tag.textContent})` : '');
+  }
+  // ── In Vest's page (the next panel, brand/local/inline-panel): the copier bar sits in the empty middle of Vest's
+  // header, the order panel takes Vest's order card, with a switch above it (Vest's form | STRATUH, STRATUH first).
+  // Nothing of Vest's is moved or removed: the bar and the panel are drawn over the spots (the panel over the card,
+  // which stays in its place, hidden), and a 36px gap is opened above the card for the switch. When Vest's card or
+  // header can't be found, the window is narrower than COL_MIN_W, or the trader picks "float", it's the floating panel
+  // as before. The card is hidden only while the panel is drawn over it.
+  const COL_KEY = 'vc-col', // 'st' | 'vest': what the order card shows
+    COL_FLOAT_KEY = 'vc-col-float'; // true: the floating panel, as before
+  const COL_MIN_W = 768,
+    COLSW_H = 36,
+    BAR_GAP_MIN = 120; // less free room than this in Vest's header: the bar's line goes in the panel instead
+  let _colOn = false,
+    _colSlot = null,
+    _pageCss = null,
+    _barLevel = 5;
+  S.colPick = store.get(COL_KEY, 'st') === 'vest' ? 'vest' : 'st';
+  S.colFloat = store.get(COL_FLOAT_KEY, false) === true;
+  const shownEl = (el) => !!el && el.getClientRects().length > 0;
+  function vestFormCard() {
+    const f = document.querySelector('[data-testid="order-form"]');
+    return shownEl(f) && f.parentElement ? f : null;
+  }
+  function vestHeader() {
+    for (const h of document.querySelectorAll('header'))
+      if (shownEl(h) && h.getBoundingClientRect().width > 600) return h;
+    return null;
+  }
+  function pageCss(on) {
+    if (!_pageCss) {
+      _pageCss = document.createElement('style');
+      _pageCss.id = 'vc-next-page';
+      // only while the copier's panel is on the page: should it go, Vest's form shows again by itself
+      _pageCss.textContent = 'html.vc-hide-form:has(#vc-host) [data-testid="order-form"]{visibility:hidden !important}';
+    }
+    if (!_pageCss.isConnected) (document.head || document.documentElement).appendChild(_pageCss);
+    document.documentElement.classList.toggle('vc-hide-form', !!on);
+  }
+  function dropCol(panel) {
+    if (_colSlot) _colSlot.remove();
+    if (document.documentElement.classList.contains('vc-hide-form')) pageCss(false);
+    const bar = _root && _root.querySelector('.hbar');
+    if (bar) bar.hidden = true;
+    closeHMenu();
+    if (_colOn) {
+      _colOn = false;
+      panel.classList.remove('col', 'col-vest', 'nobar');
+      panel.classList.toggle('collapsed', !S.dock.open); // back to the floating panel as it was left
+      panel.style.height = '';
+      renderDock();
+    }
+    return false;
+  }
+  // Puts the panel over Vest's order card (and the bar in Vest's header); false: not in the column, place it as before.
+  function placeCol(panel) {
+    const card =
+      !S.colFloat && window.innerWidth >= COL_MIN_W && _root && _root.host.style.display !== 'none'
+        ? vestFormCard()
+        : null;
+    if (!card) return dropCol(panel);
+    if (!_colSlot) {
+      _colSlot = document.createElement('div');
+      _colSlot.id = 'vc-colslot';
+      _colSlot.style.cssText = `flex:none;height:${COLSW_H}px;`;
+    }
+    // Vest's form picked with no room in Vest's header: the gap above the card also holds the copier's line
+    const slotH = COLSW_H + (S.colPick === 'vest' && panel.classList.contains('nobar') ? 36 : 0);
+    if (_colSlot.style.height !== slotH + 'px') _colSlot.style.height = slotH + 'px';
+    if (_colSlot.nextElementSibling !== card || !_colSlot.isConnected) card.parentElement.insertBefore(_colSlot, card);
+    if (!_colOn) {
+      _colOn = true;
+      panel.classList.add('col');
+      panel.classList.remove('collapsed');
+      // the order panel is what the card is for: the Trade view, once there's a master to trade on
+      if (currentView() === 'accounts' && S.master) setTimeout(() => setView('trade'), 0);
+      renderColHead();
+      renderBar();
+    }
+    const st = S.colPick === 'st';
+    panel.classList.toggle('col-vest', !st);
+    const z = zoomOf(),
+      zs = z === 1 ? '' : String(z);
+    if (panel.style.zoom !== zs) panel.style.zoom = zs;
+    const a = _colSlot.getBoundingClientRect(),
+      b = card.getBoundingClientRect(),
+      bottom = st ? b.bottom : a.bottom;
+    Object.assign(panel.style, {
+      left: a.left / z + 'px',
+      top: a.top / z + 'px',
+      width: a.width / z + 'px',
+      height: Math.max(slotH, bottom - a.top) / z + 'px',
+      maxHeight: 'none',
+      right: 'auto',
+    });
+    pageCss(st && shownEl(panel)); // Vest's form is hidden only once the panel is drawn over it
+    placeBar(panel);
+    return true;
+  }
+  // The widest empty run in Vest's header, between its own links and buttons (our bar is drawn over it).
+  function headerGap(hd) {
+    const box = hd.getBoundingClientRect();
+    const xs = [...hd.querySelectorAll('a,button,img,svg,input,span,p')]
+      .filter(shownEl)
+      .map((e) => e.getBoundingClientRect())
+      .filter((r) => r.width > 0 && r.height > 0 && r.right > box.left && r.left < box.right)
+      .sort((p, q) => p.left - q.left);
+    let best = { from: 0, to: 0 },
+      edge = box.left;
+    for (const r of xs) {
+      if (r.left - edge > best.to - best.from) best = { from: edge, to: r.left };
+      edge = Math.max(edge, r.right);
+    }
+    if (box.right - edge > best.to - best.from) best = { from: edge, to: box.right };
+    return { left: best.from, width: best.to - best.from, top: box.top, height: box.height };
+  }
+  // The bar folds by priority to fit: last copy, the word STRATUH, the account tiles, Today and the time to Vest, then
+  // Turn on / off. Copying on or off, Flatten all and ··· never fold. No room at all: the panel shows the line.
+  function placeBar(panel) {
+    const bar = _root.querySelector('.hbar'),
+      hd = vestHeader(),
+      g = hd && headerGap(hd);
+    const room = g ? g.width - 32 : 0;
+    const fits = room >= BAR_GAP_MIN;
+    panel.classList.toggle('nobar', !fits);
+    bar.hidden = !fits;
+    if (!fits) return closeHMenu();
+    const z = zoomOf();
+    Object.assign(bar.style, {
+      left: (g.left + 16) / z + 'px',
+      top: (g.top + g.height / 2 - 15 * z) / z + 'px',
+      width: room / z + 'px',
+      zoom: z === 1 ? '' : String(z),
+    });
+    for (let lv = 5; lv >= 1; lv--) {
+      bar.dataset.l = String(lv);
+      if (bar.scrollWidth <= bar.clientWidth + 1) break;
+    }
+    _barLevel = +bar.dataset.l;
+    if (bar.scrollWidth > bar.clientWidth + 1) {
+      // still too wide fully folded: nothing clipped, the panel's own line carries it
+      panel.classList.add('nobar');
+      bar.hidden = true;
+      closeHMenu();
+    }
+  }
+  // the status words and buttons the bar and the panel's own line share
+  function barParts() {
+    const p = pillState(),
+      gate = siteGate();
+    const chip =
+      p.cls === 'live'
+        ? ['live', 'Copying live', 'Live']
+        : p.cls === 'bad'
+          ? ['bad', 'Check failed', 'Check']
+          : p.cls === 'warn'
+            ? ['warn', 'Needs you', 'Needs you']
+            : S.arming
+              ? ['', 'Starting…', 'Starting']
+              : ['off', 'Copying off', 'Off'];
+    const canArm = S.armed ? true : !(S.arming || !!gate || !(S.master && S.followers.size));
+    const arm = S.armed ? 'Turn off' : S.arming ? 'Starting…' : 'Turn on';
+    return { chip, canArm, arm };
+  }
+  let _barDayAt = 0;
+  function renderBar() {
+    const bar = _root && _root.querySelector('.hbar');
+    if (!bar) return;
+    if (!_colOn) {
+      bar.hidden = true;
+      return;
+    }
+    if (Date.now() - _barDayAt > (S.day ? 60000 : 5000)) {
+      _barDayAt = Date.now();
+      Promise.resolve(ensureDay()).then(
+        () => renderBar(),
+        () => {},
+      );
+    }
+    const { chip, canArm, arm } = barParts();
+    const m = S.master && S.byId[S.master],
+      fl = [...S.followers].map((id) => S.byId[id]).filter(Boolean);
+    const tiles = m
+      ? `<span class="tile m" title="${esc(accLabel(S.master))}">${esc(acctNum(m.base))}</span><span class="arr">→</span>`
+      : '';
+    const st = dayStats(),
+      l = st.last;
+    const dt = S.day ? dayTotals() : null;
+    const cs = netState(),
+      last = S.net.samples[S.net.samples.length - 1];
+    const html =
+      // everything sits to the right, next to Vest's own buttons; the lead takes the slack, so a longer bar grows left
+      `<span class="hb-lead"></span><span class="hb-mark">${markSvg(13, 'vc-poc-b')}</span><span class="hb-word x5">STRATUH</span>` +
+      `<button class="hb-chip ${chip[0]}" data-hb="accounts" title="Accounts: the master and its followers"><i class="d"></i><span class="lg">${chip[1]}</span><span class="sh">${chip[2]}</span></button>` +
+      (m
+        ? `<button class="hb-tiles x4" data-hb="accounts">${tiles}${fl.map((r) => `<span class="tile">${esc(acctNum(r.base))}</span>`).join('')}</button>` +
+          `<button class="hb-tiles y23" data-hb="accounts">${tiles}<span class="tile">${fl.length}</span></button>`
+        : '') +
+      (S.armed && l
+        ? `<span class="hb-meta x5">last copy ${l.pending ? 'sending…' : `${l.done} of ${l.of} ${esc(l.verb)}`} · ${hhmm(l.at)}</span>`
+        : '') +
+      `<span class="hb-div x3"></span>` +
+      (dt && dt.known
+        ? `<span class="hb-meta x3">Today</span><span class="hb-pl x3 ${dt.today >= 0 ? 'pos' : 'neg'}">${dt.today >= 0 ? '+' : '−'}${money(Math.abs(dt.today))}</span>`
+        : '') +
+      (cs !== 'off' && cs !== 'none' && last
+        ? `<span class="hb-conn x3 ${cs}"><i class="d"></i>${cs === 'down' ? 'No answer' : last.ms + ' ms'}</span>`
+        : '') +
+      `<button class="hb-btn x2 ${S.armed ? '' : 'go'}" data-hb="arm"${canArm ? '' : ' disabled'}>${arm}</button>` +
+      `<button class="hb-btn red" data-hb="flatall" title="Instantly closes every position and cancels every order on every account. No confirmation. Copying keeps running."${S.flattening ? ' disabled' : ''}>${S.flattening ? 'Flattening…' : 'Flatten all'}</button>` +
+      `<button class="hb-btn hb-more" data-hb="more" aria-haspopup="menu" title="Accounts, P&amp;L, Settings, Help">Menu</button>`;
+    // two parts, each redrawn only when it changes: the words (Today moves with every tick) and the buttons (rarely),
+    // so a live redraw never replaces Turn off, Flatten all or Menu between a press and its release
+    if (!bar.querySelector('.hb-live'))
+      bar.innerHTML = '<span class="hb-info"></span><span class="hb-live"></span><span class="hb-acts"></span>';
+    const cut1 = html.indexOf('<span class="hb-div'),
+      cut2 = html.indexOf('<button class="hb-btn x2');
+    const parts = [
+      [bar.querySelector('.hb-info'), html.slice(0, cut1)],
+      [bar.querySelector('.hb-live'), html.slice(cut1, cut2)],
+      [bar.querySelector('.hb-acts'), html.slice(cut2)],
+    ];
+    let changed = false;
+    for (const [el, h] of parts)
+      if (el.dataset.html !== h) {
+        el.innerHTML = el.dataset.html = h;
+        changed = true;
+      }
+    if (!changed) return;
+    bar.dataset.l = String(_barLevel);
+    const panel = _root.querySelector('.panel');
+    if (panel) placeBar(panel); // the new words may need a different fold
+  }
+  // the panel's own line when the header has no room for the bar, the switch, and the way back to trading
+  function renderColHead() {
+    if (!_root) return;
+    const ch = _root.querySelector('.colhead');
+    ch.querySelectorAll('[data-col]').forEach((b) => {
+      b.classList.toggle('on', b.dataset.col === S.colPick);
+      b.setAttribute('aria-selected', String(b.dataset.col === S.colPick));
+    });
+    const { chip, canArm, arm } = barParts();
+    const html =
+      `<button class="hb-chip ${chip[0]}" data-hb="accounts"><i class="d"></i><span class="lg">${chip[1]}</span></button><span class="hb-sp"></span>` +
+      `<button class="hb-btn ${S.armed ? '' : 'go'}" data-hb="arm"${canArm ? '' : ' disabled'}>${arm}</button>` +
+      `<button class="hb-btn red" data-hb="flatall"${S.flattening ? ' disabled' : ''}>${S.flattening ? 'Flattening…' : 'Flatten all'}</button>` +
+      `<button class="hb-btn hb-more" data-hb="more" aria-haspopup="menu">Menu</button>`;
+    const cb = ch.querySelector('.colbar');
+    if (cb.dataset.html !== html) cb.innerHTML = cb.dataset.html = html;
+    const view = currentView(),
+      gate = siteGate();
+    const names = {
+      accounts: 'Accounts',
+      summary: 'P&L',
+      settings: 'Settings',
+      appearance: 'Appearance',
+      support: 'Help',
+      share: 'Share',
+      rules: 'Rules',
+      site: 'Site check',
+    };
+    const back = ch.querySelector('.colback');
+    back.hidden = !!gate || view === 'trade' || (view === 'rules' && !S.ack);
+    back.querySelector('.colt').textContent = names[view] || '';
+    accountsCtl(!gate && !S.siteOpen && view === 'accounts' && !codeAskDue());
+  }
+  // Accounts in the order card: what copying is doing, Turn on / off and Flatten all on top of the accounts, so picking
+  // them and starting the copier happen in one place (the header bar has the same two)
+  function accountsCtl(show) {
+    const box = _root.querySelector('.colacc');
+    box.hidden = !show || !Object.keys(S.byId).length;
+    if (box.hidden) return;
+    const { canArm } = barParts();
+    const html = `<div class="acc-say">${_root.querySelector('#st-say').innerHTML}</div><div class="acc-sub">${esc(_root.querySelector('#st-sub').textContent)}</div>
+      <div class="acc-btns"><button class="acc-on ${S.armed ? '' : 'go'}" data-hb="arm"${canArm ? '' : ' disabled'}>${S.armed ? 'Turn off copying' : S.arming ? 'Starting…' : 'Turn on copying'}</button>
+      <button class="acc-flat" data-hb="flatall"${S.flattening ? ' disabled' : ''}>${S.flattening ? 'Flattening…' : 'Flatten all'}</button></div>`;
+    if (box.dataset.html !== html) box.innerHTML = box.dataset.html = html;
+  }
+  const HMENU = [
+    ['accounts', 'Accounts', 'the master and its followers'],
+    ['summary', 'P&L and Share', ''],
+    ['settings', 'Settings', 'fast mode, cap-to-fit'],
+    ['appearance', 'Appearance', ''],
+    ['support', 'Help and rules', ''],
+    ['report', 'Report a problem', ''],
+    ['refresh', 'Reload accounts', ''],
+    ['float', 'Float the panel instead', ''],
+  ];
+  function openHMenu(btn) {
+    const menu = _root.querySelector('.hmenu');
+    menu.innerHTML = HMENU.map(
+      ([k, t, sub]) =>
+        `<button class="hmi" data-hm="${k}" role="menuitem"><span>${t}</span>${sub ? `<i>${sub}</i>` : ''}</button>`,
+    ).join('');
+    const r = btn.getBoundingClientRect(),
+      z = zoomOf();
+    menu.style.zoom = z === 1 ? '' : String(z);
+    menu.hidden = false;
+    const w = menu.offsetWidth * z;
+    Object.assign(menu.style, {
+      left: Math.max(8, Math.min(window.innerWidth - w - 8, r.right - w)) / z + 'px',
+      top: (r.bottom + 6) / z + 'px',
+    });
+  }
+  function closeHMenu() {
+    const menu = _root && _root.querySelector('.hmenu');
+    if (menu) menu.hidden = true;
+  }
+  function hbAct(k, btn) {
+    if (k === 'more') {
+      const menu = _root.querySelector('.hmenu');
+      return menu.hidden ? openHMenu(btn) : closeHMenu();
+    }
+    closeHMenu();
+    if (k === 'arm') return S.armed ? disarm() : arm();
+    if (k === 'flatall') return flattenAll(); // acts at once, no confirmation
+    if (k === 'accounts') return setView('accounts');
+  }
+  function wireCol(root) {
+    const onHb = (e) => {
+      const b = e.target.closest('[data-hb]');
+      if (b && !b.disabled) hbAct(b.dataset.hb, b);
+    };
+    root.querySelector('.hbar').addEventListener('click', onHb);
+    root.querySelector('.colbar').addEventListener('click', onHb);
+    root.querySelector('.colacc').addEventListener('click', onHb);
+    root.querySelector('.hmenu').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-hm]');
+      if (!b) return;
+      closeHMenu();
+      const k = b.dataset.hm;
+      if (k === 'report') return openReport();
+      if (k === 'refresh') return refresh();
+      if (k === 'float') {
+        S.colFloat = true;
+        store.set(COL_FLOAT_KEY, true);
+        return place();
+      }
+      setView(k);
+    });
+    root.addEventListener('pointerdown', (e) => {
+      if (!e.target.closest('.hmenu, [data-hb="more"]')) closeHMenu();
+    });
+    document.addEventListener('pointerdown', (e) => !e.composedPath().includes(root.host) && closeHMenu());
+    root.querySelectorAll('.colsw [data-col]').forEach(
+      (b) =>
+        (b.onclick = () => {
+          S.colPick = b.dataset.col;
+          store.set(COL_KEY, S.colPick);
+          if (S.colPick === 'vest') {
+            stopPick(true); // a chart click must never place an order the panel no longer shows
+            if (S.legPick) stopLegPick();
+            clearBracketLines();
+          }
+          if (S.colPick === 'st' && currentView() !== 'trade' && S.master) setView('trade');
+          renderColHead();
+          place();
+        }),
+    );
+    root.querySelector('[data-act="totrade"]').onclick = () => setView('trade');
   }
   // Keep the panel in place as the page changes: the window resizing at once, and Vest's own layout (the chart, the
   // order book, the positions area, a page with no chart) checked a few times a second.
@@ -11375,6 +13135,7 @@
     themeChart(chartFrame());
     themeOrderLines(chartFrame());
     hookChartMenu(chartFrame());
+    if (_colOn || vestFormCard()) return place();
     const f = chartFrame(),
       r = f && f.getBoundingClientRect();
     const key = r ? [r.left, r.top, r.width, r.height].map(Math.round).join() : 'none';
@@ -11728,6 +13489,8 @@
       b.setAttribute('aria-selected', String(b.dataset.tab === view));
     });
     renderLog();
+    renderBar();
+    renderColHead(); // after renderStatus: Accounts' line uses its words
     place();
     renderDock();
     showOnThisPage();
@@ -12074,9 +13837,26 @@
     else if (fresh && t.sizeMode === 'pct' && !(+t.pct > 0 && +t.pct <= 100)) error = 'Use 1 to 100%.';
     else if (fresh && byMax && maxQty === null)
       error = price > 0 ? 'Working out the max size…' : 'Waiting for a live price…';
-    else if (fresh && byMax && !(maxQty > 0))
-      error = `No trading power left on ${accLabel(limitedBy)} for ${meta.label} at ${lev}x.`;
-    else if (fresh && t.sizeMode === 'risk' && !stopOn)
+    else if (fresh && byMax && !(maxQty > 0)) {
+      // less than one of the unit picked (a micro is 2 contracts of NQ) is not the same as none
+      const r = limitedBy && S.byId[limitedBy],
+        raw = r
+          ? maxQtyFor(
+              tradingPower({
+                free: r.free,
+                upnl: limitedBy === master ? live.upnl : r.upnl,
+                leverage: lev,
+                takerFee: fee,
+              }),
+              mpx,
+              meta.step,
+            )
+          : 0;
+      error =
+        raw > 0 && step > meta.step
+          ? `${accLabel(limitedBy)}'s trading power at ${lev}x buys ${fmtQty(raw, sym)} contracts, less than one ${tradeUnit(sym)}: size in contracts, or a bigger share.`
+          : `No trading power left on ${accLabel(limitedBy)} for ${meta.label} at ${lev}x.`;
+    } else if (fresh && t.sizeMode === 'risk' && !stopOn)
       error = 'Risk $ sizes from the stop: add the stop back, or size in Qty or Max.';
     else if (!(qty > 0))
       error = held
@@ -12206,12 +13986,25 @@
     const t = S.trade;
     const seg = (key, opts) =>
       `<div class="seg" data-seg="${key}">${opts.map(([v, l]) => `<button data-v="${v}">${l}</button>`).join('')}</div>`;
+    S.trade.orderType = 'market'; // Buy / Sell send market orders; limits and stop entries come from the ⌖ button
     body.innerHTML = `
-      <div class="trade">
-        <div class="tr-top">
+      <div class="trade nf" data-ttab="${S.ttab || 'main'}">
+        <div class="nf-setup">
+          <button class="nf-sbtn" id="nf-sbtn" aria-haspopup="menu" aria-expanded="false" title="Your saved setups for this market: size, stop, targets, split and breakeven">
+            <span class="nf-mkt" id="nf-mkt"></span><span class="nf-sname"><b id="nf-sname"></b><i id="nf-ssub"></i></span></button>
+          <button class="nf-ssave" id="nf-ssave" hidden></button><button class="nf-scar" id="nf-scar" aria-label="Setups" title="Your setups">▾</button>
+          <div class="nf-smenu" id="nf-smenu" role="menu" hidden></div>
+        </div>
+        <div class="nf-sync" id="nf-sync"></div>
+        <div class="nf-tabs" role="tablist"><button data-ttab="main" role="tab">Trade</button><button data-ttab="targets" role="tab">Bracket</button><button data-ttab="set" role="tab">Size</button></div>
+        <div class="nf-pane" data-pane="main">
+          <div class="nf-head">
+          <div class="tr-top">
           <div class="tr-sym" id="tr-sym"></div>
           <div class="tr-px" id="tr-px">—</div>
         </div>
+            <div class="nf-flat" id="nf-flat"></div>
+            <div class="nf-prev" id="nf-prev"></div>
         <div class="tr-poscard" id="tr-pos" hidden>
           <div class="tr-posbar"><span class="tr-side" id="tr-pside"></span><span class="tr-pq" id="tr-pqty"></span><span class="tr-ppl" id="tr-ppl"></span></div>
           <div class="tr-pmeta"><span id="tr-pavg"></span><span id="tr-ppts"></span></div>
@@ -12220,34 +14013,88 @@
           <div class="tr-prisk" title="What the stop would lose from here, fees included, against the room left before the floor (tightest account)">
             <div class="tr-pn"><span>Risk</span><span id="tr-prisk"></span></div><div class="tr-track"><i id="tr-prnow"></i></div></div>
         </div>
-        <div class="tr-pacts" id="tr-pacts" hidden>
-          <div class="tr-legs" id="tr-legs"><button class="tr-legbtn" id="tr-addsl" title="Add a stop to this trade: click the chart where it goes, or press Enter for your saved stop points">+ Add stop</button><button class="tr-legbtn" id="tr-addtp" title="Add a target: click the chart where it goes, or press Enter for your saved points. The targets split the position by the trade's split">+ Add target</button></div>
-          <div class="tr-go"><button class="tr-bebtn" id="tr-be">Breakeven</button><button class="tr-close" id="tr-close">Close</button></div>
-          <button class="tr-disc" id="tr-addfold" aria-expanded="false"><span>Add or reduce</span>${ICON.right}</button>
+          </div>
+          <div class="nf-qty" id="nf-qty"></div>
+          <div class="nf-umenu" id="nf-umenu" role="menu" hidden></div>
+          <div class="tr-err" id="tr-err"></div>
+          <div class="tr-go" id="tr-mgo"><button class="tr-buy" id="tr-buy">Buy</button><button class="tr-sell" id="tr-sell">Sell</button></div>
+          <div class="nf-row3"><button class="nf-bid" id="nf-bid" title="A buy limit at the best bid, with your stop and targets">Buy bid</button><button class="nf-pickb" id="nf-pickb" aria-haspopup="menu" title="A limit or a stop entry at a price you click on the chart"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="7" cy="7" r="4.2"/><path d="M7 .5v3M7 10.5v3M.5 7h3M10.5 7h3"/></svg></button><button class="nf-ask" id="nf-ask" title="A sell limit at the best ask, with your stop and targets">Sell ask</button></div>
+          <div class="nf-pmenu" id="nf-pmenu" role="menu" hidden>
+            <button data-pk="long|limit">Buy limit</button><button data-pk="short|limit">Sell limit</button><button data-pk="long|stop">Buy stop</button><button data-pk="short|stop">Sell stop</button>
+            <div class="nf-pnote">then click the chart where it goes, or type the price</div></div>
+          <div class="tr-go tr-lgo" id="tr-lgo" hidden>
+            <button class="tr-lbuy" id="tr-lbuy">Buy limit</button><button class="tr-lsell" id="tr-lsell">Sell limit</button></div>
+          <div class="tr-pick" id="tr-pick" hidden>
+            <div class="tr-pickbar"><span id="tr-picktxt"></span><span class="tr-esc">Esc to cancel</span></div>
+            <div class="tr-pickrow"><input class="tr-in" id="tr-lpx" inputmode="decimal" aria-label="Price" placeholder="price">
+              <button class="tr-place" id="tr-place">Place</button><button class="tr-pcancel" id="tr-pcancel">Cancel</button></div>
+
+          </div>
+
+          <div class="tr-f nf-slip" id="tr-sliprow" hidden title="The most a stop order may fill past its price. Blank: a market order, which always fills, wherever the price is.">
+            <span class="tr-k">Slip</span><div class="tr-row"><input class="tr-in sm" id="tr-slip" inputmode="decimal"
+              aria-label="Max slip, in points" placeholder="—" value="${esc(t.slipPts)}"><span class="tr-sliptxt" id="tr-sliptxt"></span></div></div>
+          <div class="nf-acts"><button class="tr-close" id="tr-close" title="Closes this market's position at market (and the followers', while copying)">Flatten</button><button class="nf-cancel" id="nf-cancel" title="Cancels your waiting limits and stop entries on this market (and the followers' copies)">Cancel all</button><button class="tr-bebtn" id="tr-be" title="Moves the stop to the entry price">BE</button></div>
+          <div class="tr-pacts" id="tr-pacts" hidden>
+            <div class="nf-arh"><span>Add or reduce</span><span id="nf-arnow"></span></div>
+            <button class="tr-disc" id="tr-addfold" aria-expanded="true" hidden><span>Add or reduce</span>${ICON.right}</button>
           <div class="tr-addbox" id="tr-addbox" hidden>
             <div class="tr-chips" id="tr-chips"></div>
             <div class="tr-go tr-scale"><button class="tr-buy" id="tr-addbtn">Add</button><button class="tr-redbtn" id="tr-reduce">Reduce</button></div>
             <div class="tr-addpv" id="tr-addpv"></div>
           </div>
-          <div class="tr-copies" id="tr-copies"></div>
+            <div class="tr-copies" id="tr-copies"></div>
+          </div>
+          <div class="tr-warn" id="tr-warn"></div>
+          <div class="tr-who" id="tr-who"></div>
+          <div class="nf-foot" id="nf-foot"></div>
+          <div class="tr-preview" id="tr-preview" hidden></div>
+          <div class="tr-plans" id="tr-stops"></div>
+          <div class="tr-plans" id="tr-plans"></div>
         </div>
-        <div class="tr-lims" id="tr-lims">
-          <div class="tr-lb"><div class="tr-ln"><span class="tr-lk">Margin</span><span class="tr-lt" id="tr-mtxt"></span></div>
-            <div class="tr-track"><i class="pv" id="tr-mpv"></i><i id="tr-mnow"></i></div></div>
-          <div class="tr-lb"><div class="tr-ln"><span class="tr-lk">Risk</span><span class="tr-lt" id="tr-rtxt"></span></div>
-            <div class="tr-track"><i class="pv" id="tr-rpv"></i><i id="tr-rnow"></i></div></div>
-          <div class="tr-tight" id="tr-tight"></div>
+        <div class="nf-pane" data-pane="targets">
+          <div class="br" id="br"></div>
+          <div class="tr-setup" id="tr-setup">
+          <div class="tr-lad side-long" role="table" aria-label="Stop, entry and targets">
+            <div class="tr-lh"><span class="tr-flip" id="tr-lhs">If you buy</span><span id="tr-lhm">pts · qty · $</span><span id="tr-lhb">Buy at</span></div>
+            <div class="tr-lr tr-ps" id="tr-passrow"><span class="tr-sp" id="ls-pass"></span><span class="tr-mid">Pass</span><span class="tr-bp" id="lb-pass"></span></div>
+            <div id="tr-targets"></div>
+            <div class="tr-lr tr-mk" id="tr-mkrow" hidden><span class="tr-sp"></span><span class="tr-mid" id="tr-mk">Price</span><span class="tr-bp" id="lb-mk"></span></div>
+            <div class="tr-lr tr-en"><span class="tr-sp" id="ls-entry"></span><span class="tr-mid" id="tr-entry">Entry</span><span class="tr-bp" id="lb-entry"></span></div>
+            <div class="tr-lr tr-slr" id="tr-slrow"><span class="tr-sp" id="ls-stop"></span><span class="tr-mid"><span class="tr-n sl">STOP</span>
+              <input class="tr-in tr-pt" id="tr-stop" inputmode="decimal" aria-label="Stop, in points" value="${esc(t.stopPts)}">
+              <span class="tr-q" id="tr-stopq"></span><span class="tr-g dn" id="tr-stopcalc"></span>
+              <button class="tr-x" id="tr-stopx" title="Trade without a stop" aria-label="Remove the stop">×</button>
+              <span class="tr-nostop">None <button class="lnk" id="tr-stopon" title="Put the stop back">+ stop</button></span></span><span class="tr-bp" id="lb-stop"></span></div>
+            <div class="tr-lr tr-fl" id="tr-failrow"><span class="tr-sp" id="ls-fail"></span><span class="tr-mid">Fail</span><span class="tr-bp" id="lb-fail"></span></div>
+          </div>
+          <div class="tr-lim" id="tr-stoplim"></div>
+          <div class="tr-fold"><span id="tr-splittxt"></span><button class="lnk" data-fold="split">Done</button><button class="lnk" id="tr-add" title="Add a target">+ target</button></div>
+          <div class="tr-foldbox" data-foldbox="split"><span class="tr-k">Split</span>${seg('scale', [
+            ['start', 'Start'],
+            ['even', 'Even'],
+            ['end', 'End'],
+          ])}</div>
+          <div class="tr-fold"><span id="tr-betxt"></span><button class="lnk" data-fold="be">Done</button></div>
+          <div class="tr-foldbox" data-foldbox="be"><span class="tr-k">Auto BE</span><div class="tr-row">${seg(
+            'beMode',
+            [
+              ['off', 'Off'],
+              ['tp1', 'After TP1'],
+              ['points', '+pts'],
+            ],
+          )}<span class="tr-be">
+            <span id="tr-betrigw">at <input class="tr-in sm" id="tr-betrig" inputmode="decimal" aria-label="Breakeven trigger, in points" value="${esc(t.beTrigger)}"></span>
+            lock <input class="tr-in sm" id="tr-beoff" inputmode="decimal" aria-label="Profit to lock, in points" title="Points of profit beyond the entry (0 = exact breakeven)" value="${esc(t.beOffset)}"></span></div></div>
+          <div class="tr-sum" id="tr-sum"></div>
+          </div>
+          <div class="nf-held" id="nf-held" hidden>
+            <div class="hint">In a trade: drag its stop and targets on the chart, or add one here. The setup above is for your next entry.</div>
+            <div class="tr-legs" id="tr-legs"><button class="tr-legbtn" id="tr-addsl" title="Add a stop to this trade: click the chart where it goes, or press Enter for your saved stop points">+ Add stop</button><button class="tr-legbtn" id="tr-addtp" title="Add a target: click the chart where it goes, or press Enter for your saved points. The targets split the position by the trade's split">+ Add target</button></div>
+          </div>
         </div>
-        <div class="tr-setup" id="tr-setup">
-          <div class="tr-f"><span class="tr-k">Order</span><div class="tr-row">${seg('orderType', [
-            ['market', 'Market'],
-            ['limit', 'Limit'],
-            ['stop', 'Stop'],
-          ])}<button class="tr-lines" id="tr-lines" role="switch" aria-checked="false"
-            title="Show or hide your entry, stop and targets on Vest's chart (same as Appearance → Bracket on the chart)"><span>Lines</span><span class="knob"><i></i></span></button></div></div>
-          <div class="tr-f" id="tr-sliprow" hidden title="The most a stop order may fill past its price. Blank: a market order, which always fills, wherever the price is.">
-            <span class="tr-k">Slip</span><div class="tr-row"><input class="tr-in sm" id="tr-slip" inputmode="decimal"
-              aria-label="Max slip, in points" placeholder="—" value="${esc(t.slipPts)}"><span class="tr-sliptxt" id="tr-sliptxt"></span></div></div>
+        <div class="nf-pane" data-pane="set">
+          <div class="sz" id="sz"></div>
           <div class="tr-f"><span class="tr-k">Size</span><div class="tr-row">${seg('sizeMode', [
             ['qty', 'Qty'],
             ['risk', 'Risk $'],
@@ -12263,56 +14110,22 @@
             <div class="tr-calc" id="tr-sizecalc"></div>
             <div class="tr-lim" id="tr-sizelim"></div>
           </div>
-          <div class="tr-lad side-long" role="table" aria-label="Stop, entry and targets">
-            <div class="tr-lh"><span class="tr-flip" id="tr-lhs">If you buy</span><span id="tr-lhm">pts · qty · $</span><span id="tr-lhb">Buy at</span></div>
-            <div class="tr-lr tr-ps" id="tr-passrow"><span class="tr-sp" id="ls-pass"></span><span class="tr-mid">Pass</span><span class="tr-bp" id="lb-pass"></span></div>
-            <div id="tr-targets"></div>
-            <div class="tr-lr tr-mk" id="tr-mkrow" hidden><span class="tr-sp"></span><span class="tr-mid" id="tr-mk">Price</span><span class="tr-bp" id="lb-mk"></span></div>
-            <div class="tr-lr tr-en"><span class="tr-sp" id="ls-entry"></span><span class="tr-mid" id="tr-entry">Entry</span><span class="tr-bp" id="lb-entry"></span></div>
-            <div class="tr-lr tr-slr" id="tr-slrow"><span class="tr-sp" id="ls-stop"></span><span class="tr-mid"><span class="tr-n sl">STOP</span>
-              <input class="tr-in tr-pt" id="tr-stop" inputmode="decimal" aria-label="Stop, in points" value="${esc(t.stopPts)}">
-              <span class="tr-q" id="tr-stopq"></span><span class="tr-g dn" id="tr-stopcalc"></span>
-              <button class="tr-x" id="tr-stopx" title="Trade without a stop" aria-label="Remove the stop">×</button>
-              <span class="tr-nostop">None <button class="lnk" id="tr-stopon" title="Put the stop back">+ stop</button></span></span><span class="tr-bp" id="lb-stop"></span></div>
-            <div class="tr-lr tr-fl" id="tr-failrow"><span class="tr-sp" id="ls-fail"></span><span class="tr-mid">Fail</span><span class="tr-bp" id="lb-fail"></span></div>
-          </div>
-          <div class="tr-lim" id="tr-stoplim"></div>
-          <div class="tr-fold"><span id="tr-splittxt"></span><button class="lnk" data-fold="split">Change</button><button class="lnk" id="tr-add" title="Add a target">+ target</button></div>
-          <div class="tr-foldbox" data-foldbox="split" hidden><span class="tr-k">Split</span>${seg('scale', [
-            ['start', 'Start'],
-            ['even', 'Even'],
-            ['end', 'End'],
-          ])}</div>
-          <div class="tr-fold"><span id="tr-betxt"></span><button class="lnk" data-fold="be">Change</button></div>
-          <div class="tr-foldbox" data-foldbox="be" hidden><span class="tr-k">Auto BE</span><div class="tr-row">${seg(
-            'beMode',
-            [
-              ['off', 'Off'],
-              ['tp1', 'After TP1'],
-              ['points', '+pts'],
-            ],
-          )}<span class="tr-be">
-            <span id="tr-betrigw">at <input class="tr-in sm" id="tr-betrig" inputmode="decimal" aria-label="Breakeven trigger, in points" value="${esc(t.beTrigger)}"></span>
-            lock <input class="tr-in sm" id="tr-beoff" inputmode="decimal" aria-label="Profit to lock, in points" title="Points of profit beyond the entry (0 = exact breakeven)" value="${esc(t.beOffset)}"></span></div></div>
-          <div class="tr-sum" id="tr-sum"></div>
+          <div class="nf-qedit" id="nf-qedit"></div>
+          <div class="sz2" id="sz2"></div>
+          <div class="tr-f nf-order"><span class="tr-k">Order</span><div class="tr-row">${seg('orderType', [
+            ['market', 'Market'],
+            ['limit', 'Limit'],
+            ['stop', 'Stop'],
+          ])}<button class="tr-lines" id="tr-lines" role="switch" aria-checked="false"
+            title="Show or hide your entry, stop and targets on Vest's chart (same as Appearance → Bracket on the chart)"><span>Lines</span><span class="knob"><i></i></span></button></div></div>
+        <div class="tr-lims" id="tr-lims">
+          <div class="tr-lb"><div class="tr-ln"><span class="tr-lk">Margin</span><span class="tr-lt" id="tr-mtxt"></span></div>
+            <div class="tr-track"><i class="pv" id="tr-mpv"></i><i id="tr-mnow"></i></div></div>
+          <div class="tr-lb"><div class="tr-ln"><span class="tr-lk">Risk</span><span class="tr-lt" id="tr-rtxt"></span></div>
+            <div class="tr-track"><i class="pv" id="tr-rpv"></i><i id="tr-rnow"></i></div></div>
+          <div class="tr-tight" id="tr-tight"></div>
         </div>
-        <div class="tr-warn" id="tr-warn"></div>
-        <div class="tr-action">
-          <div class="tr-err" id="tr-err"></div>
-          <div class="tr-go" id="tr-mgo"><button class="tr-buy" id="tr-buy">Buy</button><button class="tr-sell" id="tr-sell">Sell</button></div>
-          <div class="tr-go tr-lgo" id="tr-lgo" hidden>
-            <button class="tr-lbuy" id="tr-lbuy">Buy limit</button><button class="tr-lsell" id="tr-lsell">Sell limit</button></div>
-          <div class="tr-pick" id="tr-pick" hidden>
-            <div class="tr-pickbar"><span id="tr-picktxt"></span><span class="tr-esc">Esc to cancel</span></div>
-            <div class="tr-pickrow"><input class="tr-in" id="tr-lpx" inputmode="decimal" aria-label="Price" placeholder="price">
-              <button class="tr-place" id="tr-place">Place</button><button class="tr-pcancel" id="tr-pcancel">Cancel</button></div>
-
-          </div>
-          <div class="tr-who" id="tr-who"></div>
         </div>
-        <div class="tr-preview" id="tr-preview" hidden></div>
-        <div class="tr-plans" id="tr-stops"></div>
-        <div class="tr-plans" id="tr-plans"></div>
       </div>`;
     const wrap = body.querySelector('.trade');
     ['keydown', 'keyup', 'keypress'].forEach((ev) => wrap.addEventListener(ev, (e) => e.stopPropagation()));
@@ -12452,6 +14265,7 @@
       if (h) placeTrade(h.side); // same direction while holding: an add
     };
     body.querySelector('#tr-reduce').onclick = () => reduceNow();
+    wireFace(body);
     renderTargets(body);
     followVestMarket();
     watchPrice(t.symbol);
@@ -13595,9 +15409,21 @@
     return !shown || shown === sym;
   }
   // The lines for the ladder as shown: the side pointed at from the price now, or a limit / stop entry from its price.
+  // minimised (the floating panel's pill); the panel in Vest's order card is never minimised
+  // (or, in Vest's order card, Vest's form picked over ours: the panel is out of sight, so is its bracket and its pick)
+  const panelShut = () => (!!S.dock && !S.dock.open && !_colOn) || (_colOn && S.colPick === 'vest');
   function bracketWant(c, pick) {
     if (!S.chartBracket || !S.tradeOpen || c.held || !(c.price > 0) || !chartOnMarket(c.t.symbol)) return [];
-    if (S.dock && !S.dock.open) return [];
+    // placing a limit or a stop entry (the crosshair): only that order's bracket, once the pointer gives it a price
+    if (S.pick && !pick) return [];
+    // a limit or a stop entry already waiting on this market draws its own lines: the market preview would only crowd it
+    if (
+      !pick &&
+      S.limitClean &&
+      (waitingHere(c.t.symbol) || (S.stopEntries || []).some((e) => e.symbol === c.t.symbol))
+    )
+      return [];
+    if (panelShut()) return [];
     // Limit and Stop: nothing until Buy or Sell is picked (then it hangs off the pointer, or the price typed), and only
     // where that order can go (a buy limit under the price, a buy stop over it)
     if (!pick && c.t.orderType !== 'market') return [];
@@ -14091,7 +15917,7 @@
 
   async function placePick() {
     if (!S.pick || !(S.pick.price > 0) || S.placing) return;
-    if (S.dock && !S.dock.open) return stopPick(true); // minimised: never
+    if (panelShut() || !(_root && _root.host.isConnected)) return stopPick(true); // minimised or gone: never
     const { side, price, kind } = S.pick,
       px = priceOf(S.trade.symbol),
       above = (side === 'long') === (kind === 'stop');
@@ -14517,6 +16343,7 @@
           down && d && Math.abs(d.clientX - down.x) <= PICK_CLICK_PX && Math.abs(d.clientY - down.y) <= PICK_CLICK_PX;
         down = null;
         if (!click || last === null || !S.legPick) return;
+        if (!(_root && _root.host.isConnected) || panelShut()) return stopLegPick(); // the panel is gone or hidden
         const k = S.legPick.kind;
         stopLegPick();
         addLeg(k, roundTick(last, SYMBOLS[sym].tick), sym);
@@ -15181,8 +17008,12 @@
       : '';
     const lim = !h && c.t.orderType === 'limit' ? ' limit' : !h && c.t.orderType === 'stop' ? ' stop' : '',
       qw = c.qty > 0 ? (unit === 'units' ? q : uq(c.qty)) : '';
-    $('tr-buy').textContent = h && h.side === 'long' ? `Add ${qw}` : `Buy${lim} ${qw}`.trim();
-    $('tr-sell').textContent = h && h.side === 'short' ? `Add ${qw}` : `Sell${lim} ${qw}`.trim();
+    // the face writes its own words into Buy and Sell (updateFace): rewriting them here on every redraw replaced the
+    // words under the pointer, and a click whose press and release fell either side of a redraw was lost
+    if (!body.querySelector('.trade.nf')) {
+      $('tr-buy').textContent = h && h.side === 'long' ? `Add ${qw}` : `Buy${lim} ${qw}`.trim();
+      $('tr-sell').textContent = h && h.side === 'short' ? `Add ${qw}` : `Sell${lim} ${qw}`.trim();
+    }
     $('tr-buy').hidden = !!h && h.side !== 'long';
     $('tr-sell').hidden = !!h && h.side !== 'short';
     $('tr-buy').disabled = $('tr-sell').disabled = !!c.error || !!c.blocked || busy;
@@ -15203,7 +17034,7 @@
     lines.hidden = false;
     lines.classList.toggle('on', !!S.chartBracket);
     lines.setAttribute('aria-checked', String(!!S.chartBracket));
-    if (c.t.orderType === 'stop') {
+    if (c.t.orderType === 'stop' || (pk && pk.kind === 'stop')) {
       const slip = +c.t.slipPts > 0 ? +c.t.slipPts : 0;
       set('tr-sliptxt', slip ? `pts · within ${slip} or not at all` : 'pts · blank = market');
     }
@@ -15573,6 +17404,857 @@
           }),
       );
     }
+    updateFace(c, body);
+  }
+
+  // ── The next panel's face (brand/local/inline-panel, 2026-11-24): Sierra Chart's Trade Window, made modern. A saved
+  // setup on top, a sync line, Main / Targets / Set; on Main the quantity buttons, Buy / Sell at market, Buy bid / Sell
+  // ask, Flatten / Cancel all / BE, and in a trade Add or reduce. Every button runs an action the Trade tab
+  // already had (placeTrade, startPick, closeNow, reduceNow, breakevenNow, cancelLimitOrder, cancelStopEntry): nothing
+  // here is a new way to send an order. No Reverse (Jay, 2026-11-24).
+  const QBTN_KEY = 'vc-qbtns', // { micro: [1,2,3,5,10], mini, units, pct, risk }: what the quantity buttons say
+    SETUPS_KEY = 'vc-setups', // [{ id, sym, name, d: { sizeMode, unit, qty, pct, risk, stopPts, stopOn, targets, ... } }]
+    SETUP_PICK_KEY = 'vc-setup-pick'; // { sym: id } the setup picked on each market
+  const QBTN_DEFAULT = {
+    micro: [1, 2, 3, 5, 10],
+    mini: [1, 2, 3, 5, 10],
+    units: [1, 2, 3, 5, 10],
+    pct: [10, 25, 50, 100],
+    risk: [50, 100, 200, 300],
+  };
+  const SETUP_FIELDS = [
+    'sizeMode',
+    'unit',
+    'qty',
+    'pct',
+    'risk',
+    'stopPts',
+    'stopOn',
+    'targets',
+    'scale',
+    'beMode',
+    'beTrigger',
+    'beOffset',
+  ];
+  function qbtns() {
+    const q = store.get(QBTN_KEY, {}) || {},
+      out = {};
+    for (const k of Object.keys(QBTN_DEFAULT)) {
+      const v = Array.isArray(q[k]) ? q[k].map(Number).filter((x) => x > 0) : [];
+      out[k] = v.length ? v : QBTN_DEFAULT[k];
+    }
+    return out;
+  }
+  // what the quantity buttons count in: micro | mini | units (contracts) | pct (of max) | risk ($) | max
+  const qKind = () => (S.trade.sizeMode === 'qty' ? tradeUnit() : S.trade.sizeMode);
+  const KIND_NAME = { micro: 'mic', mini: 'mini', units: 'ct', pct: '% max', risk: '$ risk', max: 'Max' };
+  const KIND_LONG = { micro: 'Micros', mini: 'Minis', units: 'Contracts', pct: '% of max', risk: 'Risk $', max: 'Max' };
+  // the size a setup sends, in its own words: "3 mic", "25% of max", "$100 risk", "Max"
+  function sizeWords(d, sym = S.trade.symbol) {
+    if (d.sizeMode === 'pct') return `${+d.pct || 0}% of max`;
+    if (d.sizeMode === 'risk') return `$${+d.risk || 0} risk`;
+    if (d.sizeMode === 'max') return 'Max';
+    const u = MICRO_UNITS[sym] ? d.unit || 'units' : 'units';
+    const n = u === 'units' ? +d.qty || 0 : (+d.qty || 0) / unitStep((SYMBOLS[sym] || {}).step, MICRO_UNITS[sym], u);
+    return `${+n.toFixed(4)} ${KIND_NAME[u]}`;
+  }
+  function setupWords(d, sym) {
+    const tps = (d.targets || []).filter((x) => +x > 0);
+    const be = d.beMode === 'tp1' ? 'BE TP1' : d.beMode === 'points' ? `BE +${+d.beTrigger || 0}` : '';
+    return [
+      sizeWords(d, sym),
+      d.stopOn === false ? 'no stop' : `SL ${+d.stopPts || 0}`,
+      tps.length ? `TP ${tps.join('/')}` : 'no TP',
+      be,
+    ]
+      .filter(Boolean)
+      .join(' · ');
+  }
+  function curSetup() {
+    const d = {};
+    for (const k of SETUP_FIELDS)
+      d[k] = k === 'unit' ? tradeUnit() : k === 'targets' ? [...(S.trade.targets || [])] : S.trade[k];
+    return d;
+  }
+  const sameSetup = (a, b) => SETUP_FIELDS.every((k) => JSON.stringify(a[k]) === JSON.stringify(b[k]));
+  const allSetups = () => (store.get(SETUPS_KEY, []) || []).filter((x) => x && x.id && x.d);
+  const setupsFor = (sym) => allSetups().filter((x) => x.sym === sym);
+  function pickedSetup(sym = S.trade.symbol) {
+    const id = (store.get(SETUP_PICK_KEY, {}) || {})[sym];
+    return setupsFor(sym).find((x) => x.id === id) || null;
+  }
+  function pickSetupId(sym, id) {
+    const m = store.get(SETUP_PICK_KEY, {}) || {};
+    if (id) m[sym] = id;
+    else delete m[sym];
+    store.set(SETUP_PICK_KEY, m);
+  }
+  function applySetup(x) {
+    if (S.placing || S.adjusting) return toast('Wait for the order going through.');
+    for (const k of SETUP_FIELDS) if (k in x.d) S.trade[k] = k === 'targets' ? [...x.d.targets] : x.d[k];
+    if (!MICRO_UNITS[S.trade.symbol]) delete S.trade.unit;
+    saveTrade();
+    pickSetupId(S.trade.symbol, x.id);
+    redrawTrade();
+  }
+  function saveSetupAs(name) {
+    const sym = S.trade.symbol;
+    name = String(name || '')
+      .trim()
+      .slice(0, 32);
+    if (!name) return false;
+    const list = allSetups(),
+      id = 's' + Date.now().toString(36);
+    list.push({ id, sym, name, d: curSetup() });
+    store.set(SETUPS_KEY, list);
+    pickSetupId(sym, id);
+    toast(`Saved "${name}" for ${symLabel(sym)}.`);
+    updateTrade();
+    return true;
+  }
+  function saveSetupChanges() {
+    const x = pickedSetup();
+    if (!x) return;
+    store.set(
+      SETUPS_KEY,
+      allSetups().map((y) => (y.id === x.id ? { ...y, d: curSetup() } : y)),
+    );
+    toast(`Saved the changes to "${x.name}".`);
+    updateTrade();
+  }
+  function renameSetup(id, name) {
+    name = String(name || '')
+      .trim()
+      .slice(0, 32);
+    if (!name) return;
+    store.set(
+      SETUPS_KEY,
+      allSetups().map((y) => (y.id === id ? { ...y, name } : y)),
+    );
+    updateTrade();
+  }
+  function deleteSetup(id) {
+    const x = allSetups().find((y) => y.id === id);
+    if (!x) return;
+    store.set(
+      SETUPS_KEY,
+      allSetups().filter((y) => y.id !== id),
+    );
+    if (pickedSetup(x.sym) === null) pickSetupId(x.sym, null);
+    toast(`Deleted "${x.name}". Your size, stop and targets stay as they are.`);
+    updateTrade();
+  }
+  // redraw the Trade view from scratch (the stop and targets boxes take their values when drawn)
+  function redrawTrade() {
+    const body = _root && _root.querySelector('.body');
+    if (body && body.dataset.view === 'trade') body.dataset.view = '';
+    render();
+  }
+  // the quantity buttons: set the size the way the Set tab's own controls do (their handlers do the work)
+  function pickQty(body, kind, v) {
+    const riskBtn = body.querySelector('[data-seg="sizeMode"] [data-v="risk"]');
+    if (kind === 'risk' && riskBtn && riskBtn.classList.contains('off')) return toast(riskBtn.title);
+    const seg = (k, val) => {
+      const b = body.querySelector(`[data-seg="${k}"] [data-v="${val}"]`);
+      if (b && !b.classList.contains('on')) b.click();
+    };
+    // % of max, Risk $ and Max count in contracts: a micro or mini left from before (hidden here) would round every
+    // share down to whole micros, so a small account's 10% and 100% both came out as nothing
+    if (kind === 'max' || kind === 'pct' || kind === 'risk') {
+      if (MICRO_UNITS[S.trade.symbol]) seg('unit', 'units');
+      seg('sizeMode', kind);
+      if (kind === 'max') return;
+    } else {
+      seg('sizeMode', 'qty');
+      if (MICRO_UNITS[S.trade.symbol]) seg('unit', kind);
+    }
+    const inp = body.querySelector('#tr-size');
+    inp.value = String(v);
+    inp.dispatchEvent(new Event('input'));
+  }
+  function wireFace(body) {
+    S.addOpen = true; // Add or reduce is always open in a trade
+    // a size saved as a share or a risk with micros or minis (from the old panel, or a setup saved that way): contracts
+    if (S.trade.sizeMode !== 'qty' && MICRO_UNITS[S.trade.symbol] && tradeUnit() !== 'units') {
+      const b = body.querySelector('[data-seg="unit"] [data-v="units"]');
+      if (b) b.click();
+    }
+    const wrap = body.querySelector('.trade.nf');
+    const menus = ['#nf-smenu', '#nf-umenu', '#nf-pmenu'];
+    const closeMenus = (except) => menus.forEach((m) => m !== except && (body.querySelector(m).hidden = true));
+    const toggle = (m) => {
+      const el = body.querySelector(m);
+      closeMenus(m);
+      el.hidden = !el.hidden;
+      if (!el.hidden) drawMenus(body);
+    };
+    wrap.addEventListener('pointerdown', (e) => {
+      if (!e.target.closest('.nf-smenu, .nf-umenu, .nf-pmenu, #nf-sbtn, #nf-scar, #nf-ssave, .nf-unit, #nf-pickb'))
+        closeMenus();
+    });
+    body.querySelectorAll('.nf-tabs [data-ttab]').forEach(
+      (b) =>
+        (b.onclick = () => {
+          if (S.ttab !== b.dataset.ttab) {
+            // a limit or stop pick lives on Trade, a stop or target pick on Bracket: leaving ends it
+            stopPick(true);
+            if (S.legPick) stopLegPick();
+          }
+          S.ttab = b.dataset.ttab;
+          wrap.dataset.ttab = S.ttab;
+          closeMenus();
+          updateTrade();
+        }),
+    );
+    const openSetups = (mode) => {
+      S.smode = mode || 'list';
+      const el = body.querySelector('#nf-smenu');
+      closeMenus('#nf-smenu');
+      el.hidden = mode ? false : !el.hidden;
+      if (!el.hidden) drawMenus(body);
+    };
+    body.querySelector('#nf-sbtn').onclick = () => openSetups();
+    body.querySelector('#nf-scar').onclick = () => openSetups();
+    body.querySelector('#nf-ssave').onclick = () => (pickedSetup() ? saveSetupChanges() : openSetups('name'));
+    body.querySelector('#nf-sync').onclick = () => setView('accounts');
+    body.querySelector('#nf-pickb').onclick = () => toggle('#nf-pmenu');
+    body.querySelectorAll('#nf-pmenu [data-pk]').forEach(
+      (b) =>
+        (b.onclick = () => {
+          closeMenus();
+          const [side, kind] = b.dataset.pk.split('|');
+          S.ladSide = side;
+          startPick(side, kind);
+        }),
+    );
+    // Buy / Sell at market; in a trade the same side adds and the other side reduces, by the share picked under Add or
+    // reduce (the Trade tab's own Add and Reduce), never a flip
+    const intentOf = (side) => {
+      const h = tradeCalc().held;
+      return !h ? 'open' : h.side === side ? 'add' : 'reduce';
+    };
+    const pressed = {};
+    const bigGo = (side) => {
+      const now = intentOf(side),
+        was = pressed[side];
+      pressed[side] = null;
+      S.ladSide = side;
+      if (was && was !== now)
+        return toast(
+          `Your position changed while the button was down: nothing sent. Click ${side === 'long' ? 'Buy' : 'Sell'} again.`,
+        );
+      if (now !== 'reduce') return placeTrade(side);
+      return reduceNow();
+    };
+    for (const [id, side] of [
+      ['#tr-buy', 'long'],
+      ['#tr-sell', 'short'],
+    ]) {
+      const b = body.querySelector(id);
+      b.addEventListener('pointerdown', () => (pressed[side] = b.dataset.intent || intentOf(side)));
+      b.addEventListener('pointerleave', () => (pressed[side] = null)); // let go elsewhere: no click to compare with
+      b.onclick = () => bigGo(side);
+    }
+    // Buy bid / Sell ask: the Trade tab's limit order, at the best bid or ask of the live book (flat only)
+    const atBook = (side) => {
+      const pr = S.price[S.trade.symbol] || {},
+        px = side === 'long' ? pr.bid : pr.ask;
+      if (!recentAt(pr.bookAt) || !(px > 0))
+        return toast("Vest's order book isn't coming through: no bid or ask to join.");
+      S.ladSide = side;
+      placeTrade(side, px);
+    };
+    body.querySelector('#nf-bid').onclick = () => atBook('long');
+    body.querySelector('#nf-ask').onclick = () => atBook('short');
+    body.querySelector('#nf-cancel').onclick = () => cancelAllHere();
+  }
+  // Cancel all: this market's waiting limits and stop entries, one after the other (each cancel copies as before)
+  let _cancelling = false;
+  async function cancelAllHere() {
+    if (_cancelling) return;
+    const sym = S.trade.symbol,
+      st = S.master && S.acctState[S.master];
+    const limits = ((st && st.orders) || []).filter((o) => o.symbol === sym).map((o) => o.id);
+    const stops = (S.stopEntries || []).filter((e) => e.symbol === sym);
+    if (!limits.length && !stops.length) return toast(`Nothing waiting on ${symLabel(sym)}.`);
+    _cancelling = true;
+    try {
+      for (const e of stops) cancelStopEntry(e, 'cancelled (Cancel all)');
+      for (const id of limits) await cancelLimitOrder(id);
+    } finally {
+      _cancelling = false;
+      updateTrade();
+    }
+  }
+  // the setup, quantity-unit and pick menus. The setup menu has three modes: the list, naming a new one, and managing
+  // (rename in place, delete with a second click).
+  function drawMenus(body, unitsOnly = false) {
+    const sym = S.trade.symbol,
+      list = setupsFor(sym),
+      cur = pickedSetup(sym),
+      edited = cur && !sameSetup(cur.d, curSetup());
+    const sm = body.querySelector('#nf-smenu');
+    if (!sm.hidden && !unitsOnly) {
+      const mode = S.smode || 'list';
+      const row = (x) =>
+        `<div class="nf-mi${cur && x.id === cur.id ? ' on' : ''}" data-sid="${esc(x.id)}"><span class="nf-mt"><b>${esc(x.name)}</b><i>${esc(setupWords(x.d, sym))}</i></span>${cur && x.id === cur.id ? '<span class="nf-ck">✓</span>' : ''}</div>`;
+      const manage = (x) =>
+        S.renaming === x.id
+          ? `<div class="nf-name"><input class="tr-in" data-rnm="${esc(x.id)}" value="${esc(x.name)}" maxlength="32" aria-label="New name"><button class="nf-mb" data-rok="${esc(x.id)}">Save</button></div>`
+          : `<div class="nf-mi nf-man"><span class="nf-mt"><b>${esc(x.name)}</b></span><button class="nf-mx" data-ren="${esc(x.id)}">Rename</button><button class="nf-mx${S.deleting === x.id ? ' sure' : ''}" data-del="${esc(x.id)}">${S.deleting === x.id ? 'Delete it' : 'Delete'}</button></div>`;
+      sm.innerHTML =
+        `<div class="nf-mh">${mode === 'manage' ? 'Rename or delete' : 'Setups'} · ${esc(symLabel(sym))}</div>` +
+        (mode === 'manage'
+          ? list.map(manage).join('') +
+            `<div class="nf-msep"></div><button class="nf-ma" data-sa="back">← Back</button>`
+          : (list.length
+              ? list.map(row).join('')
+              : `<div class="nf-mempty">None saved yet. Set your size and bracket, then save them here.</div>`) +
+            `<div class="nf-msep"></div>` +
+            (mode === 'name'
+              ? `<div class="nf-mempty" style="padding-bottom:4px">Save what's set now as</div><div class="nf-name"><input class="tr-in" data-newname placeholder="Name, e.g. NQ scalp" maxlength="32" aria-label="Setup name"><button class="nf-mb" data-sa="create">Save</button></div>`
+              : (cur && edited
+                  ? `<button class="nf-ma" data-sa="save">Save changes to ${esc(cur.name)}</button>`
+                  : '') +
+                `<button class="nf-ma" data-sa="new">Save as new setup…</button>` +
+                (list.length ? `<button class="nf-ma" data-sa="manage">Rename or delete ›</button>` : '')));
+      const keep = (e) => e.stopPropagation();
+      sm.querySelectorAll('input').forEach((inp) => {
+        ['keydown', 'keyup', 'keypress'].forEach((ev) => inp.addEventListener(ev, keep));
+        inp.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter')
+            (sm.querySelector('[data-sa="create"]') || sm.querySelector(`[data-rok="${inp.dataset.rnm}"]`)).click();
+          if (e.key === 'Escape') {
+            S.smode = 'list';
+            S.renaming = null;
+            drawMenus(body);
+          }
+        });
+      });
+      sm.querySelectorAll('[data-sid]').forEach(
+        (r) =>
+          (r.onclick = () => {
+            sm.hidden = true;
+            const x = allSetups().find((y) => y.id === r.dataset.sid);
+            if (x) applySetup(x);
+          }),
+      );
+      const redraw = () => drawMenus(body);
+      sm.querySelectorAll('[data-sa]').forEach(
+        (b) =>
+          (b.onclick = () => {
+            const a = b.dataset.sa;
+            if (a === 'save') {
+              sm.hidden = true;
+              return saveSetupChanges();
+            }
+            if (a === 'create') {
+              if (saveSetupAs(sm.querySelector('[data-newname]').value)) sm.hidden = true;
+              return;
+            }
+            S.smode = a === 'new' ? 'name' : a === 'manage' ? 'manage' : 'list';
+            S.renaming = S.deleting = null;
+            redraw();
+          }),
+      );
+      sm.querySelectorAll('[data-ren]').forEach(
+        (b) =>
+          (b.onclick = () => {
+            S.renaming = b.dataset.ren;
+            S.deleting = null;
+            redraw();
+          }),
+      );
+      sm.querySelectorAll('[data-rok]').forEach(
+        (b) =>
+          (b.onclick = () => {
+            renameSetup(b.dataset.rok, sm.querySelector(`[data-rnm="${b.dataset.rok}"]`).value);
+            S.renaming = null;
+            redraw();
+          }),
+      );
+      sm.querySelectorAll('[data-del]').forEach(
+        (b) =>
+          (b.onclick = () => {
+            if (S.deleting !== b.dataset.del) {
+              S.deleting = b.dataset.del;
+              return redraw();
+            }
+            deleteSetup(b.dataset.del);
+            S.deleting = null;
+            redraw();
+          }),
+      );
+      const focus = sm.querySelector('[data-newname], [data-rnm]');
+      if (focus) focus.focus();
+    }
+    const um = body.querySelector('#nf-umenu');
+    if (!um.hidden) {
+      const kinds = [...(MICRO_UNITS[sym] ? ['micro', 'mini'] : []), 'units', 'pct', 'risk', 'max'];
+      // drawn only when it changes: a redraw between the press and the click loses the click
+      const umHtml =
+        `<div class="nf-mh">Size by</div>` +
+        kinds
+          .map((k) => `<button class="nf-ma${qKind() === k ? ' on' : ''}" data-kind="${k}">${KIND_LONG[k]}</button>`)
+          .join('');
+      if (um.dataset.html === umHtml) return;
+      um.innerHTML = um.dataset.html = umHtml;
+      um.querySelectorAll('[data-kind]').forEach(
+        (b) =>
+          (b.onclick = () => {
+            um.hidden = true;
+            const k = b.dataset.kind,
+              vals = qbtns()[k];
+            pickQty(body, k, k === 'max' ? 0 : vals[Math.min(vals.length - 1, k === 'pct' ? 1 : 0)]);
+          }),
+      );
+    }
+  }
+  // what the face shows, after updateTrade has set the Trade tab's own parts
+  function updateFace(c, body) {
+    const wrap = body.querySelector('.trade.nf');
+    if (!wrap) return;
+    const $ = (id) => body.querySelector('#' + id),
+      h = c.held,
+      sym = c.t.symbol,
+      busy = !!(S.placing || S.adjusting || S.flattening || S.exiting);
+    wrap.dataset.ttab = S.ttab || 'main';
+    wrap.classList.toggle('held', !!h);
+    body
+      .querySelectorAll('.nf-tabs [data-ttab]')
+      .forEach((b) => b.classList.toggle('on', b.dataset.ttab === (S.ttab || 'main')));
+    // the setup
+    const cur = pickedSetup(sym),
+      d = curSetup(),
+      edited = cur && !sameSetup(cur.d, d);
+    const set = (id, v) => {
+      const el = $(id);
+      if (el && el.textContent !== v) el.textContent = v;
+    };
+    set('nf-mkt', c.meta.label || sym.split('-')[0]);
+    set('nf-sname', cur ? cur.name : 'No setup saved');
+    set('nf-ssub', setupWords(d, sym));
+    $('nf-sname').classList.toggle('edited', !!edited);
+    $('nf-sname').title = edited ? 'Changed since you saved it' : '';
+    const sv = $('nf-ssave');
+    sv.hidden = !!cur && !edited;
+    set('nf-ssave', cur ? 'Save' : 'Save as…');
+    sv.title = cur ? `Save these changes to ${cur.name}` : 'Save your size and bracket as a setup';
+    // the sync line: calm while all is well, amber when something differs, plain when copying is off
+    const sy = syncLine(h);
+    const sync = $('nf-sync');
+    if (sync.dataset.html !== sy.html) sync.innerHTML = sync.dataset.html = sy.html;
+    sync.className = 'nf-sync ' + sy.cls;
+    // flat: the day so far and the leverage; in a trade the position card takes the place
+    const dt = S.day ? dayTotals() : null;
+    const today =
+      dt && dt.known
+        ? `<span class="nf-k">Today</span><span class="mono ${dt.today >= 0 ? 'pos' : 'neg'}">${dt.today >= 0 ? '+' : '−'}${money(Math.abs(dt.today))}</span>`
+        : '';
+    const flatHtml = `<span class="nf-f">Flat${(S.stopEntries || []).some((e) => e.symbol === sym) || waitingHere(sym) ? ' · waiting' : ''}</span><span>${today}</span>`;
+    if ($('nf-flat').dataset.html !== flatHtml) $('nf-flat').innerHTML = $('nf-flat').dataset.html = flatHtml;
+    $('nf-flat').hidden = !!h;
+    // flat: the bracket the next order gets, dimmed, in the place the trade's bar takes (nothing moves on the way in)
+    const side = S.ladSide === 'short' ? 'short' : 'long',
+      plan = c[side];
+    const prevHtml =
+      !h && c.price > 0 && plan && !plan.error
+        ? bracketHtml(
+            { side, openPrice: c.price },
+            c.stopOn && plan.stop > 0 ? [{ price: plan.stop }] : [],
+            (plan.targets || []).map((p) => ({ price: p })),
+            0,
+            c.meta.tick,
+          )
+        : '';
+    const prev = $('nf-prev');
+    if (prev.dataset.html !== prevHtml) prev.innerHTML = prev.dataset.html = prevHtml;
+    prev.hidden = !!h;
+    if ((S.ttab || 'main') === 'targets') bracketPane(body, c);
+    if ((S.ttab || 'main') === 'set') sizePane(body, c);
+    // the quantity buttons (the next entry's size; in a trade Add or reduce sizes)
+    const kind = qKind(),
+      vals = qbtns()[kind] || [],
+      cur2 =
+        kind === 'pct'
+          ? +c.t.pct
+          : kind === 'risk'
+            ? +c.t.risk
+            : kind === 'max'
+              ? null
+              : +((+c.t.qty || 0) / unitSize()).toFixed(6);
+    const qHtml =
+      (kind === 'max'
+        ? `<button class="q on wide" disabled>Max${c.qty > 0 ? ' · ' + esc(fmtUnits(c.qty, sym)) : ''}</button>`
+        : vals
+            .slice(0, 5)
+            .map(
+              (v) =>
+                `<button class="q${v === cur2 ? ' on' : ''}" data-q="${v}">${kind === 'risk' ? '$' + v : kind === 'pct' ? v + '%' : v}</button>`,
+            )
+            .join('')) +
+      `<button class="q nf-unit" aria-haspopup="menu" title="Size by">${KIND_NAME[kind]}<span class="nf-car">▾</span></button>`;
+    const qbox = $('nf-qty');
+    if (qbox.dataset.html !== qHtml) {
+      qbox.innerHTML = qbox.dataset.html = qHtml;
+      qbox.querySelectorAll('[data-q]').forEach((b) => (b.onclick = () => pickQty(body, qKind(), +b.dataset.q)));
+      qbox.querySelector('.nf-unit').onclick = () => {
+        const um = body.querySelector('#nf-umenu');
+        ['#nf-smenu', '#nf-pmenu'].forEach((m) => (body.querySelector(m).hidden = true));
+        um.hidden = !um.hidden;
+        if (!um.hidden) drawMenus(body);
+      };
+    }
+    qbox.style.gridTemplateColumns = kind === 'max' ? '1fr 64px' : `repeat(${Math.min(5, vals.length)}, 1fr) 64px`;
+    qbox.classList.toggle('held', !!h);
+    qbox.title = h
+      ? 'The size of your next entry. In a trade, Buy and Sell add and reduce by the share under Add or reduce.'
+      : '';
+    // Buy / Sell: both always there, in the same place; what they send, under the word
+    const pk = S.pick;
+    $('tr-mgo').hidden = !!pk;
+    $('tr-sliprow').hidden = !(pk && pk.kind === 'stop') || !!h; // the stop entry's max slip, while placing one
+    $('tr-buy').hidden = $('tr-sell').hidden = false;
+    const qw =
+      c.qty > 0
+        ? fmtUnits(c.qty, sym)
+            .replace(/ micros?$/, ' mic')
+            .replace(/ minis?$/, ' mini')
+        : '';
+    // in a trade: the same side adds the share picked under Add or reduce, the other side reduces by it (100%: all of it)
+    const key = S.addPick || '25',
+      redQ = h ? (key === '100' ? h.qty : floorStep(h.qty * (key === '50' ? 0.5 : 0.25), c.meta.step)) : 0;
+    const lbl = (side) =>
+      !h ? qw : h.side === side ? `add ${qw}` : key === 'max' ? 'reduce: pick a share' : `reduce ${short(redQ)}`;
+    // (the Trade tab's own code writes its words into these on every redraw: the face's words go back in each time)
+    const big = (id, word, side) => {
+      $(id).dataset.intent = !h ? 'open' : h.side === side ? 'add' : 'reduce'; // what the words say it does
+      const html = `${word} MKT<small>${esc(lbl(side) || ' ')}</small>`;
+      if ($(id).dataset.html !== html || !$(id).querySelector('small')) $(id).innerHTML = $(id).dataset.html = html;
+    };
+    big('tr-buy', 'BUY', 'long');
+    big('tr-sell', 'SELL', 'short');
+    // what each sends, in words, for screen readers (and the tests): Buy 1 micro, Add 0.25, Reduce 0.25
+    const said = (side) => {
+      const word = side === 'long' ? 'Buy' : 'Sell',
+        full = c.qty > 0 ? fmtUnits(c.qty, sym) : '';
+      if (!h) return `${word} ${full}`.trim();
+      if (h.side === side) return `Add ${full}`.trim();
+      return key === 'max' ? 'Reduce' : `Reduce ${fmtUnits(redQ, sym)}`;
+    };
+    for (const [id, side] of [
+      ['tr-buy', 'long'],
+      ['tr-sell', 'short'],
+    ])
+      if ($(id).getAttribute('aria-label') !== said(side)) $(id).setAttribute('aria-label', said(side));
+    const reduceSide = h ? (h.side === 'long' ? 'tr-sell' : 'tr-buy') : null;
+    if (reduceSide) $(reduceSide).disabled = exitBlocks() || S.addPick === 'max'; // an exit: only exits hold it
+    // Buy bid / Sell ask: flat only, with a live book
+    const pr = S.price[sym] || {},
+      book = recentAt(pr.bookAt) && pr.bid > 0 && pr.ask > 0;
+    $('nf-bid').disabled = $('nf-ask').disabled = !!h || !book || busy || !!c.error || !!c.blocked;
+    $('nf-bid').title = book
+      ? `A buy limit at the bid, ${fmtPx(pr.bid, c.meta.tick)}, with your stop and targets`
+      : "Vest's order book isn't coming through";
+    $('nf-ask').title = book
+      ? `A sell limit at the ask, ${fmtPx(pr.ask, c.meta.tick)}, with your stop and targets`
+      : "Vest's order book isn't coming through";
+    $('nf-pickb').disabled = !!h || busy;
+    // Flatten / Cancel all / BE: lit when they have something to act on
+    const beTxt = $('tr-be').textContent;
+    // the Trade tab's words (Breakeven 31,200.00) go to the spoken label; its title keeps why it's off, or where it goes
+    if (beTxt !== 'BE' && $('tr-be').getAttribute('aria-label') !== beTxt) $('tr-be').setAttribute('aria-label', beTxt);
+    if ($('tr-be').textContent !== 'BE') $('tr-be').textContent = 'BE';
+    if ($('tr-close').textContent !== 'Flatten') $('tr-close').textContent = 'Flatten';
+    $('tr-addfold').hidden = true;
+    $('tr-who').hidden = true; // the sync line says it
+    $('tr-close').disabled = !h || exitBlocks() || $('tr-close').disabled;
+    $('tr-be').disabled = !h || $('tr-be').disabled; // the Trade tab's own reasons stay (already at breakeven, busy)
+    $('nf-cancel').disabled = !(waitingHere(sym) || (S.stopEntries || []).some((e) => e.symbol === sym)) || _cancelling;
+    // Add or reduce: the share picked
+    set('nf-arnow', h ? `${fmtUnits(h.qty, sym)} now` : '');
+    // the line under the buttons: what a stop-out costs and the room to the floor (flat)
+    const m = S.master && S.byId[S.master];
+    const foot =
+      !h && c.qty > 0
+        ? `<span>${c.stopOn ? `Risk <b>${esc(fmtUsd(c.risk))}</b> at stop` : '<b>No stop</b>'}</span><span>${m && !isNaN(m.room) ? `room <b>${esc(moneyShort(m.room))}</b> to floor` : ''}</span>`
+        : '';
+    if ($('nf-foot').dataset.html !== foot) $('nf-foot').innerHTML = $('nf-foot').dataset.html = foot;
+    // Targets: the setup for the next entry; in a trade, how to change this one
+    $('nf-held').hidden = !h;
+    // Set: the quantity buttons' values for the unit picked
+    const qe = $('nf-qedit');
+    const qeHtml =
+      kind === 'max'
+        ? ''
+        : `<div class="nf-qh"><span>Quantity buttons · ${KIND_LONG[kind]}</span><button class="lnk" data-qdef>Defaults</button></div><div class="nf-qrow">${vals
+            .slice(0, 5)
+            .map(
+              (v, i) =>
+                `<input class="tr-in" data-qi="${i}" inputmode="decimal" value="${v}" aria-label="Button ${i + 1}">`,
+            )
+            .join('')}</div>`;
+    if (
+      qe.dataset.html !== qeHtml &&
+      !qe.contains(document.activeElement) &&
+      !(_root && qe.contains(_root.activeElement))
+    ) {
+      qe.innerHTML = qe.dataset.html = qeHtml;
+      qe.querySelectorAll('[data-qi]').forEach((inp) =>
+        inp.addEventListener('change', () => {
+          const all = store.get(QBTN_KEY, {}) || {},
+            k = qKind(),
+            row = [...qbtns()[k]];
+          const v = +inp.value;
+          if (v > 0) row[+inp.dataset.qi] = v;
+          all[k] = row;
+          store.set(QBTN_KEY, all);
+          updateTrade();
+        }),
+      );
+      const def = qe.querySelector('[data-qdef]');
+      if (def)
+        def.onclick = () => {
+          const all = store.get(QBTN_KEY, {}) || {};
+          delete all[qKind()];
+          store.set(QBTN_KEY, all);
+          updateTrade();
+        };
+    }
+    if ($('nf-umenu').hidden === false) drawMenus(body, true);
+  }
+  // ── Bracket: stop, targets, split, breakeven, one question per row. The boxes drive the Trade tab's own fields (their
+  // handlers do the work); the row's words and dollars follow on every redraw, the boxes are only rebuilt when the
+  // shape changes (a target added or removed, the stop on or off, the breakeven mode), so typing is never interrupted.
+  const short = (q, sym = S.trade.symbol) =>
+    fmtUnits(q, sym)
+      .replace(/ micros?$/, ' mic')
+      .replace(/ minis?$/, ' mini');
+  const SPLIT_NAME = { even: 'Even', start: 'More on TP1', end: 'More on the last' };
+  function bracketPane(body, c) {
+    const br = body.querySelector('#br'),
+      t = c.t,
+      h = c.held,
+      sym = t.symbol,
+      n = t.targets.length;
+    br.hidden = !!h;
+    if (h) return;
+    const shape = [n, t.stopOn !== false, t.beMode, t.scale, S.splitOpen ? 1 : 0, sym].join('|');
+    const pv = c.meta.pointValue || 1;
+    if (br.dataset.shape !== shape) {
+      br.dataset.shape = shape;
+      const box = (attr, v, label) =>
+        `<span class="br-box"><input class="br-in" ${attr} inputmode="decimal" value="${esc(v)}" aria-label="${label}"><i>pts</i></span>`;
+      const splitOpts = ['even', 'start', 'end']
+        .map((m) => {
+          const qs = n && c.qty > 0 ? splitQty(c.qty, n, m, unitSize()).qtys || [] : [];
+          const words = qs.map((q) => fmtUnits(q, sym, false)).join(' · ');
+          return `<button class="br-opt${t.scale === m ? ' on' : ''}" data-split="${m}"><span>${SPLIT_NAME[m]}</span><i>${esc(words)}</i></button>`;
+        })
+        .join('');
+      br.innerHTML = `
+        <div class="br-sec"><span>Stop loss</span><button class="switch sm ${t.stopOn !== false ? 'on' : ''}" data-br="stopsw" role="switch" aria-checked="${t.stopOn !== false}" aria-label="Stop loss"><span class="knob"></span></button></div>
+        ${
+          t.stopOn !== false
+            ? `<div class="br-row"><span class="br-lb sl">SL</span>${box('data-br-stop', t.stopPts, 'Stop, in points')}<span class="br-mo" id="br-sm"></span><span></span></div>`
+            : `<div class="br-none">No stop: nothing sizes from it, and a stop-out has no price.</div>`
+        }
+        <div class="br-sec"><span>Take profit</span>${n > 1 ? `<button class="br-sel" data-br="split">split <b>${SPLIT_NAME[t.scale] || 'Even'}</b> ▾</button>` : ''}</div>
+        ${S.splitOpen && n > 1 ? `<div class="br-split">${splitOpts}</div>` : ''}
+        ${t.targets
+          .map(
+            (p, i) =>
+              `<div class="br-row"><span class="br-lb tp">TP${i + 1}</span>${box(`data-br-t="${i}"`, p, `Target ${i + 1}, in points`)}<span class="br-mo" id="br-tm${i}"></span><button class="br-x" data-br-del="${i}" title="Remove target ${i + 1}" aria-label="Remove target ${i + 1}">×</button></div>`,
+          )
+          .join('')}
+        ${n < 5 ? `<button class="br-add" data-br="add">+ Add a target<i>${n ? 'up to 5' : 'none: the trade goes in without one'}</i></button>` : ''}
+        <div class="br-sec"><span>Move stop to breakeven</span></div>
+        <div class="br-seg">${[
+          ['off', 'Off'],
+          ['tp1', 'After TP1'],
+          ['points', 'At + points'],
+        ]
+          .map(([v, l]) => `<button class="${t.beMode === v ? 'on' : ''}" data-br-be="${v}">${l}</button>`)
+          .join('')}</div>
+        ${
+          t.beMode === 'points'
+            ? `<div class="br-line"><span>When it's this far in profit</span>${box('data-br-trig', t.beTrigger, 'Breakeven trigger, in points')}</div>`
+            : ''
+        }
+        ${t.beMode !== 'off' ? `<div class="br-line"><span>Stop goes to entry +</span>${box('data-br-lock', t.beOffset, 'Profit to lock, in points')}</div>` : ''}
+        <div class="br-warn" id="br-warn" hidden></div>
+        <div class="br-sum" id="br-sum"></div>`;
+      // a box drives the Trade tab's own input (its handler parses, saves and redraws)
+      const drive = (sel, v) => {
+        const el = body.querySelector(sel);
+        if (!el) return;
+        el.value = v;
+        el.dispatchEvent(new Event('input'));
+      };
+      br.querySelectorAll('.br-in').forEach((inp) => {
+        ['keydown', 'keyup', 'keypress'].forEach((ev) => inp.addEventListener(ev, (e) => e.stopPropagation()));
+        inp.addEventListener('input', () => {
+          if (inp.hasAttribute('data-br-stop')) drive('#tr-stop', inp.value);
+          else if (inp.hasAttribute('data-br-trig')) drive('#tr-betrig', inp.value);
+          else if (inp.hasAttribute('data-br-lock')) drive('#tr-beoff', inp.value);
+          else drive(`#tr-targets [data-t="${inp.dataset.brT}"]`, inp.value);
+        });
+      });
+      const click = (sel) => {
+        const b = body.querySelector(sel);
+        if (b) b.click();
+      };
+      br.onclick = (e) => {
+        const b = e.target.closest('button');
+        if (!b) return;
+        if (b.dataset.br === 'stopsw') click(t.stopOn !== false ? '#tr-stopx' : '#tr-stopon');
+        else if (b.dataset.br === 'split') {
+          S.splitOpen = !S.splitOpen;
+          updateTrade();
+        } else if (b.dataset.split) {
+          S.splitOpen = false;
+          click(`[data-seg="scale"] [data-v="${b.dataset.split}"]`);
+        } else if (b.dataset.br === 'add') click('#tr-add');
+        else if (b.dataset.brDel !== undefined) click(`#tr-targets [data-del="${b.dataset.brDel}"]`);
+        else if (b.dataset.brBe) click(`[data-seg="beMode"] [data-v="${b.dataset.brBe}"]`);
+        updateTrade();
+      };
+    }
+    // the words that follow the numbers
+    const put = (id, html) => {
+      const el = br.querySelector('#' + id);
+      if (el && el.dataset.html !== html) el.innerHTML = el.dataset.html = html;
+    };
+    if (c.qty > 0) {
+      put('br-sm', `<b class="dn">−${esc(fmtUsd(c.risk))}</b> · all ${esc(short(c.qty))}`);
+      t.targets.forEach((p, i) => {
+        const q = c.qtys[i] || 0;
+        put(
+          `br-tm${i}`,
+          q > 0 ? `<b class="up">+${esc(fmtUsd(q * (+p || 0) * pv))}</b> · ${esc(short(q))}` : '<i>0 at this size</i>',
+        );
+      });
+    }
+    const side = S.ladSide === 'short' ? 'short' : 'long',
+      o = c.sides && c.sides[side];
+    const m = S.master && S.byId[S.master];
+    put(
+      'br-sum',
+      `<span>${o && o.loss > 0 ? `Stopped out <b>−${esc(fmtUsd(o.loss))}</b> with fees` : c.stopOn ? '' : 'No stop'}</span><span>${m && !isNaN(m.room) ? `room <b>${esc(moneyShort(m.room))}</b>` : ''}</span>`,
+    );
+    const w = (c.warnings || []).find((x) => x.kind === 'fail') || null,
+      wl = br.querySelector('#br-warn');
+    wl.hidden = !w;
+    if (w && wl.textContent !== w.text) wl.textContent = w.text;
+  }
+
+  // ── Size: what the quantity buttons count, their values (the editor above, nf-qedit), what you can open.
+  function sizePane(body, c) {
+    const sz = body.querySelector('#sz'),
+      sz2 = body.querySelector('#sz2'),
+      sym = c.t.symbol,
+      kind = qKind();
+    const kinds = MICRO_UNITS[sym] ? ['micro', 'mini', 'pct', 'risk'] : ['units', 'pct', 'risk', 'max'];
+    const per =
+      kind === 'micro' || kind === 'mini'
+        ? `1 ${kind} of ${esc(c.meta.label)} = <b>$${+(unitSize() * (c.meta.pointValue || 1)).toFixed(2)} a point</b>.${kind === 'micro' ? ' A mini is 10 micros.' : ''}`
+        : kind === 'pct'
+          ? "A share of the most you can open (Vest's 100%): 25 is a quarter of it."
+          : kind === 'risk'
+            ? 'Dollars lost at your stop: the size follows the stop distance.'
+            : kind === 'max'
+              ? "The most you can open (Vest's 100%)."
+              : `Contracts of ${esc(c.meta.label)}: 1 = <b>$${c.meta.pointValue || 1} a point</b>.`;
+    const html = `<div class="br-sec"><span>The buttons count</span></div>
+      <div class="br-seg">${kinds.map((k) => `<button class="${k === kind ? 'on' : ''}" data-kind="${k}">${KIND_LONG[k]}</button>`).join('')}</div>
+      <div class="sz-note">${per}</div>`;
+    if (sz.dataset.html !== html) {
+      sz.innerHTML = sz.dataset.html = html;
+      sz.querySelectorAll('[data-kind]').forEach(
+        (b) =>
+          (b.onclick = () => {
+            const k = b.dataset.kind,
+              vals = qbtns()[k] || [];
+            pickQty(body, k, k === 'max' ? 0 : vals[Math.min(vals.length - 1, k === 'pct' ? 1 : 0)]);
+          }),
+      );
+    }
+    const maxLev = S.master ? maxLeverageFor(sym, S.master) : null;
+    const mg = c.margin;
+    const html2 = `<div class="br-sec"><span>What you can open</span></div>
+      <div class="br-line"><span>Vest's leverage</span><span class="v">${c.lev ? c.lev + 'x' : '—'}${maxLev && c.lev === maxLev ? ' <i>· max</i>' : ''}</span></div>
+      <div class="br-line"><span>Most you can open now</span><span class="v">${c.maxQty > 0 ? esc(short(c.maxQty)) : '—'}</span></div>
+      <div class="br-line"><span>Margin in use</span><span class="v">${mg ? Math.round(mg.now * 100) + '%' : '—'}</span></div>
+      <div class="sz-bar"><i style="width:${mg ? Math.round(Math.min(1, mg.now) * 100) : 0}%"></i></div>
+      <div class="sz-note">Leverage is Vest's own: change it on <b>Vest's form</b> (the switch on top).</div>`;
+    if (sz2.dataset.html !== html2) sz2.innerHTML = sz2.dataset.html = html2;
+  }
+  const waitingHere = (sym) => {
+    const st = S.master && S.acctState[S.master];
+    return ((st && st.orders) || []).some((o) => o.symbol === sym);
+  };
+  // The sync line: what copying is doing right now, in one line. Calm when good; amber names who differs.
+  let _syncMissAt = 0,
+    _syncMissKey = '';
+  function syncLine(h) {
+    const nf = S.followers.size;
+    if (!S.master) return { cls: 'off', html: '<i class="d o"></i>Pick a master and followers (Menu › Accounts)' };
+    if (!S.armed)
+      return {
+        cls: 'off',
+        html: `<i class="d o"></i>Copying off · this account only${nf ? `<span class="r">${nf} follower${nf > 1 ? 's' : ''} ready</span>` : ''}`,
+      };
+    const orphans = S.orphan && S.orphan.list.length;
+    if (orphans)
+      return {
+        cls: 'warn',
+        html: `<i class="d"></i>${orphans > 1 ? `${orphans} followers need you` : `${esc(accLabel(S.orphan.list[0].accountId))} needs you`}<span class="r">Menu › Accounts</span>`,
+      };
+    const warned = Object.entries(_shareOff)
+      .filter(([k, v]) => v.warned && S.posMap[k.split('|')[0]])
+      .map(([k]) => [k.split('|')[1], 'size'])
+      .concat(
+        Object.entries(_bracketOff)
+          .filter(([k, v]) => v.warned && S.posMap[k.split('|')[0]])
+          .map(([k]) => [k.split('|')[1], 'stop or target']),
+      );
+    if (warned.length) {
+      const [acct, what] = warned[0];
+      return {
+        cls: 'warn',
+        html: `<i class="d"></i>${esc(accLabel(acct))}: ${what} differs<span class="r">${warned.length > 1 ? `+${warned.length - 1} more` : 'check on Vest'}</span>`,
+      };
+    }
+    const r = [...S.followers].map((id) => (S.byId[id] ? acctNum(S.byId[id].base) : '')).join(' ');
+    if (h) {
+      const inIt = [...S.followers].filter((id) => {
+        const st = S.acctState[id];
+        return !!st && (st.positions || []).some((p) => p.symbol === h.symbol && p.side === h.side);
+      });
+      if (inIt.length < nf) {
+        // copies take a moment to land: missing for a few seconds, then said (timed per trade)
+        const key = h.symbol + '|' + h.side + '|' + inIt.join();
+        if (_syncMissKey !== key) [_syncMissKey, _syncMissAt] = [key, Date.now()];
+        const out = [...S.followers].filter((id) => !inIt.includes(id)).map((id) => accLabel(id));
+        if (Date.now() - _syncMissAt > SHARE_SETTLE_MS)
+          return {
+            cls: 'warn',
+            html: `<i class="d"></i>${inIt.length} of ${nf} followers in the trade<span class="r">${esc(out[0])}${out.length > 1 ? ` +${out.length - 1}` : ''} not</span>`,
+          };
+        return {
+          cls: 'ok',
+          html: `<i class="d"></i>Copying to ${nf} followers…<span class="r">${inIt.length} of ${nf} in</span>`,
+        };
+      }
+    }
+    _syncMissAt = 0;
+    _syncMissKey = '';
+    return h
+      ? { cls: 'ok', html: `<i class="d"></i>${nf} of ${nf} match<span class="r">size · stop · targets</span>` }
+      : {
+          cls: 'ok',
+          html: `<i class="d"></i>Copies to ${nf} · in sync<span class="r">${esc(S.byId[S.master] ? acctNum(S.byId[S.master].base) : '')} → ${esc(r)}</span>`,
+        };
   }
 
   // Settings and Appearance: every option with one line under its name; the ? opens the full explanation in place.
@@ -15594,7 +18276,12 @@
     if (o === 'fast') toggleFast();
     else if (o === 'autoflat') toggleAutoFlatten();
     else if (o === 'capfit') toggleCapFit();
-    else if (o === 'supportapply') {
+    else if (o === 'colcard') {
+      S.colFloat = !S.colFloat;
+      store.set(COL_FLOAT_KEY, S.colFloat);
+      place();
+      render();
+    } else if (o === 'supportapply') {
       setSupportChoice(supportOn() ? 'no' : 'yes');
       render();
     } else if (o === 'updates') {
@@ -15624,6 +18311,10 @@
       S.chartBracket = !S.chartBracket;
       saveOpts();
       if (!S.chartBracket) clearBracketLines();
+      render();
+    } else if (o === 'limitclean') {
+      S.limitClean = !S.limitClean;
+      saveOpts();
       render();
     }
   }
@@ -15660,6 +18351,13 @@
           'Only on the Trade page',
           'Hidden elsewhere; it keeps copying.',
           "Hide the panel on Vest's other pages (Portfolio, Markets, Affiliate…). It keeps running and copying there, and shows on any page when something needs you.",
+        )}
+        ${option(
+          'colcard',
+          !S.colFloat,
+          "In Vest's order card",
+          "The order panel takes Vest's order card, the copier's line sits in Vest's header.",
+          "With a switch above the card to go back to Vest's own form. Off: the floating panel, as before. A window narrower than 768px always floats.",
         )}
         <div class="set-row"><button class="ghostbtn" data-tab-go="appearance">${ICON.look} Theme, chart and text size</button></div>
         <div class="set-h">Updates</div>
@@ -15713,6 +18411,14 @@
           'Bracket on the chart',
           'Entry, stop and targets drawn as you set them.',
           "While the Trade tab is open and you're not in a trade, your entry, stop, targets and fail price are drawn on Vest's chart for the side you point at (Buy or Sell). They follow the price and your points. They're a preview: nothing is sent until you click.",
+        )}
+        ${option(
+          'limitclean',
+          S.limitClean,
+          'Hide it while a limit waits',
+          'Only the waiting order’s own lines on the chart.',
+          "While a limit or a stop entry waits on this market, or while you're placing one, the market bracket isn't drawn: the waiting order already shows its entry, stop and targets. Off: both are drawn.",
+          !S.chartBracket,
         )}
         ${option(
           'hidemarks',
@@ -18153,7 +20859,9 @@
   const todayOf = (r) => {
     if (!S.day || isNaN(r.equity)) return NaN;
     if (paidToday(r.id)) return r.equity - r.size;
-    return S.day.startEq[r.id] != null ? r.equity - S.day.startEq[r.id] : NaN;
+    // no point at all in Vest's series for today: an account bought today, before Vest has recorded it (its start is
+    // its starting balance)
+    return S.day.startEq[r.id] != null ? r.equity - S.day.startEq[r.id] : r.equity - r.size;
   };
   const sp = (n) =>
     isNaN(n)
@@ -18504,7 +21212,7 @@
     checkEncoding();
     checkWasArmed();
     watchPurchaseWindow();
-    LOG(`v${VERSION} loaded.`);
+    LOG(`v${VERSION}${NEXT ? ' (next panel test)' : ''} loaded.`);
   };
   if (document.readyState === 'loading') window.addEventListener('DOMContentLoaded', boot);
   else boot();

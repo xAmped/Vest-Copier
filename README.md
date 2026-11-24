@@ -18,12 +18,12 @@ New here? Start with the [10-minute tutorial video](https://youtu.be/mFJGsJ0IInY
 
 <table>
   <tr>
-    <th>Copier</th><th>Trade</th><th>In a trade</th>
+    <th>Accounts</th><th>Trade</th><th>In a trade</th>
   </tr>
   <tr valign="top">
-    <td><img src="docs/tutorial/img/accounts.png" alt="Copier tab: copying the master to two followers, one line each" width="250"><br><sub>Who copies whom, in one sentence.</sub></td>
-    <td><img src="docs/tutorial/img/trade.png" alt="Trade tab: Market, Limit or Stop, size, and a one-sided price ladder" width="250"><br><sub>Points in, prices out.</sub></td>
-    <td><img src="docs/tutorial/img/trade-in.png" alt="In a trade: the bracket drawn to scale, Breakeven and Close" width="250"><br><sub>Your bracket on one bar.</sub></td>
+    <td><img src="docs/tutorial/img/accounts.png" alt="Accounts: copying the master to two followers, one line each" width="250"><br><sub>Who copies whom, in one sentence.</sub></td>
+    <td><img src="docs/tutorial/img/trade.png" alt="Trade tab: a saved setup, quantity buttons, Buy and Sell" width="250"><br><sub>Points in, prices out.</sub></td>
+    <td><img src="docs/tutorial/img/trade-in.png" alt="In a trade: the bracket drawn to scale, Add or reduce, BE and Flatten" width="250"><br><sub>Your bracket on one bar.</sub></td>
   </tr>
 </table>
 
@@ -77,7 +77,7 @@ minutes:
 4. **Open Vest:** log in at [next.vestmarkets.com](https://next.vestmarkets.com). The STRATUH Copier panel opens on
    Vest's chart, on the left. Read the risk notice and accept it.
 5. **Pick your accounts and start:** the panel asks you to choose accounts. Pick your lead account as the master and
-   tick each account you want copying it, then press **Start copying**. From now on, trade the lead account as usual.
+   tick each account you want copying it, then press **Turn on** (in the bar, or **Turn on copying** in Accounts). From now on, trade the lead account as usual.
    **Stop copying** stops; positions stay as they are.
 
 > [!TIP]
@@ -85,34 +85,33 @@ minutes:
 
 ## The panel
 
-On top, one sentence says who copies to whom ("Copying Account 11 to 4 followers"), with **Start copying** / **Stop
-copying** and a red **Flatten all** under it on every tab. Then three tabs:
+Since v0.42 the copier sits **inside Vest's page**. A slim bar in Vest's header says whether you're copying and who
+copies to whom (11 → 12 14 15 16), with today's P&L, **Turn on** / **Turn off**, a red **Flatten all** and **Menu**.
+The order panel takes Vest's order card, with a switch on top to go back to Vest's own form any time. Where Vest's
+card isn't there (a narrow window, Vest's other pages), it's the floating panel on the chart, as before.
 
 | Tab | What's there |
 |---|---|
-| **Copier** | Your master, the followers and anyone left out, one line each with the room left to the floor. **Edit** picks them. |
-| **Trade** | An order ticket in points for the market Vest is showing (details below). |
-| **P&L** | Today's P&L (a payout starts an account fresh) and since start, what you keep after each profit split, **Share** (a picture of your day, or of any profitable trade from the last 30 days, to paste anywhere), and **Claim all profit** in one preview and one confirm. |
+| **Trade** | Your saved setup, quantity buttons, BUY / SELL at market, Buy bid / Sell ask, limits and stop entries from the chart, Flatten, Cancel all, BE, and in a trade Add or reduce. |
+| **Bracket** | Your stop, targets (with how they split) and when the stop moves to breakeven, one row each, in points with what each is worth. |
+| **Size** | What the quantity buttons count (micros, minis, contracts, a % of the max or dollars at risk) and their values, and what the account can open. |
 
-The **⋯** menu has **Settings** (fast mode, auto-flatten, cap-to-fit, updates, the AMPED code switch),
-**Appearance** (text size, what's drawn on the chart, the theme), **Help and rules** (the risk notice, the Discord, the
-guides), **Report a problem**, docking and reload.
+**Menu** has **Accounts** (your master, the followers and anyone left out, with the room to each floor, and **Turn on
+copying**), **P&L and Share** (today's P&L, what you keep after each profit split, a picture of your day or of any
+profitable trade from the last 30 days, and **Claim all profit**), **Settings**, **Appearance**, **Help and rules**
+and **Report a problem**.
 
-**On the Trade tab:**
+**Trading from it:**
 
-- **Margin and risk bars:** how much of Vest's buying power you're using, and what your stop would cost against the
-  room to your floor, before you click.
-- **One price ladder:** targets, entry, stop and fail price in a single table, for the side you point at (Buy or Sell).
-  The same bracket is drawn on Vest's chart as you set it; drag a line to change it, and **Lines** (next to Market)
-  hides or shows it. The stop and targets are optional.
-- **Sizing:** contracts, dollars at risk, a % of the max, or the max the account allows. On NQ, ES and RTY, in units,
-  **micros** or **minis**, like Vest's own order form.
-- **Market, Limit or Stop:** with Limit or Stop, one click on Vest's chart places it. Stop orders (a buy stop over the
-  market, a sell stop under it) are kept by the copier, since Vest doesn't have them: they fire while the Vest tab is open.
-- **In a trade:** your stop, entry, price and targets on one bar; **+ Add stop** / **+ Add target** (or right-click
-  the chart at a price) when you want one, with targets split the way you placed the trade; Breakeven, Close, and
-  scaling in or out: pick 25, 50 or 100% of the position (or MAX, the most you can add), then Add or Reduce. Your stop
-  stays where it is; your targets keep their prices and their sizes follow the position.
+- **Saved setups:** size, stop, targets, split and breakeven under one name per market; pick one and it's all set.
+- **One line says if copying is in sync,** and turns amber naming the account when a follower's size or stop differs.
+- **Points in, dollars out:** your bracket shows what it costs and makes before you click, and the same bracket is
+  drawn on Vest's chart; drag a line to change it. The stop and targets are optional.
+- **Limits and stop entries:** one click on Vest's chart places them. Stop entries (a buy stop over the market, a sell
+  stop under it) are kept by the copier, since Vest doesn't have them: they fire while the Vest tab is open.
+- **In a trade:** BUY / SELL add and reduce (never a reversal), your stop, entry, price and targets on one bar,
+  **+ Add stop** / **+ Add target** (or right-click the chart at a price), BE and Flatten. Your stop stays where it is;
+  your targets keep their prices and their sizes follow the position.
 
 **Flatten all** closes everything on every account at once (no confirmation, and copying keeps running, so it doubles
 as a quick exit). At the bottom: the latest activity line (click for the log), then the code and a status dot with
@@ -140,13 +139,13 @@ copy filled, **Test connection**, Vest's build and the site check.
 |---|---|
 | No panel on the Vest page | Allow User Scripts is off (step 2 of Getting it running), or the script is disabled in Tampermonkey. Refresh after fixing. |
 | Can't tick a follower | That account is a different size from the master. Pick Cap-to-fit under Sizing in Edit. |
-| Start copying refuses | The log names the account and the reason, usually a resting order or an opposite position. Clear it on Vest and start again. |
+| Turn on refuses | The log names the account and the reason, usually a resting order or an opposite position. Clear it on Vest and start again. |
 | "did NOT fill" in the log | Vest accepted the order but didn't execute it, usually not enough margin for that size. The margin bar on the Trade tab shows how much fits. |
 | Breakeven stays grey | Price has to be clear of your entry first (Vest refuses a stop the price has already passed). Hover it for the reason. |
 | Amber status dot | Vest updated its site and the copier is checking itself. Give it a few seconds. If it says copying is off, send the file from the log's **Download** and use Vest's own panel until an update. |
 | Something looks off on Firefox | Try the same thing in Chrome. Every release is tested on Chrome; if it only happens on Firefox, say so in your report. |
 | Need a hand | Ask in the [Discord](https://discord.gg/Aa69y9KnM3). |
-| Anything else | **⋯ → Report a problem** (or **Get help** next to a problem). It saves a report file and opens a pre-filled [GitHub issue](https://github.com/xAmped/Vest-Copier/issues); drag the file in. The file has sizes, prices and balances but no login data. |
+| Anything else | **Menu › Report a problem** (or **Get help** next to a problem). It saves a report file and opens a pre-filled [GitHub issue](https://github.com/xAmped/Vest-Copier/issues); drag the file in. The file has sizes, prices and balances but no login data. |
 
 ## Updates
 
